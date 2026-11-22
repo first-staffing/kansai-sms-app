@@ -5,7 +5,7 @@
 <link rel="manifest" href='data:application/manifest+json,{"name":"応募者SMS・Gmail配信","short_name":"応募者配信","display":"standalone","background_color":"%23ffffff","theme_color":"%23205ac4"}'>
 <title>応募者SMS・Gmail配信</title>
 <style>
-:root{--bg:#f4f6fa;--surface:#fff;--muted:#eef1f6;--text:#1c2b3a;--sub:#5b6b7d;--border:#d7dee8;--accent:#205ac4;--accent2:#17478b;--ok:#177245;--warn:#b45309;--bad:#ad3030;--chip:#e8f0ff}
+:root{--bg:#f4f6fa;--surface:#fff;--muted:#eef1f6;--text:#1c2b3a;--sub:#5b6b7d;--border:#d7dee8;--accent:#1d3a5f;--accent2:#16324f;--ok:#177245;--warn:#b45309;--bad:#ad3030;--chip:#e8edf4}
 @media(prefers-color-scheme:dark){:root{--bg:#0f1722;--surface:#1a2636;--muted:#24344a;--text:#e8eef6;--sub:#a7b4c4;--border:#34465e;--accent:#5b93f5;--accent2:#8ab4ff;--chip:#243a5e}}
 *{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Hiragino Sans",sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.55;padding-bottom:env(safe-area-inset-bottom)}
 .stickyTop{position:sticky;top:0;z-index:50}
@@ -162,6 +162,14 @@ body.applicantView .stickyTop,body.applicantView #summaryBar{display:none}
 .specialFooter .primary{white-space:nowrap}
 #fSubmitStatus{min-height:24px}
 @media (max-width:640px){#summaryBar{flex-wrap:wrap;overflow-x:visible;white-space:normal;font-size:13px}}
+/* ===== UI-SIMPLE: 旧アプリ寄せ (大きな県チップ・見出し・大ボタン) ===== */
+.oldH{font-size:22px;font-weight:800;margin:4px 0 10px}
+.dbCountLine{font-size:16px;font-weight:800;margin:6px 0 10px}
+.prefBar.bigPrefs{display:grid;grid-template-columns:1fr 1fr;gap:8px;overflow:visible;padding:0}
+.prefBar.bigPrefs button{min-height:56px;font-size:16px;border-radius:12px;background:var(--surface);color:var(--text);white-space:normal}
+.prefBar.bigPrefs button:first-child{grid-column:1/-1}
+.prefBar.bigPrefs button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:800}
+.bigNavBtn{display:flex;width:100%;min-height:60px;font-size:17px;font-weight:800;background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:12px;align-items:center;justify-content:center;text-decoration:none;margin:10px 0;box-sizing:border-box}
 </style><script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script></head><body>
 <div class="stickyTop"><header><b>応募者SMS・Gmail配信</b><span id="userChip" style="font-size:12px;white-space:nowrap;opacity:.95"></span>
 <nav><a href="#/">入口</a><a href="#/list">応募者一覧</a><a href="#/mail">Gmail配信</a><a href="#/import">CSV取り込み</a><a href="#/responses">回答一覧 <span id="respNavBadge"></span></a><a href="#/settings">設定</a></nav></header>
@@ -250,7 +258,53 @@ function smsLink(phone,body){return "sms:"+String(phone||"").replace(/[^0-9+]/g,
    旧実装は example.jp のモックURLを本文へ差し込んでおり、そのまま SMS で
    送ると応募者が開けないリンクが届く事故になっていた。実URLは
    issueFormInvite の完了時に _issuedFormUrls と配信レコードへ保存される。 */
-function formUrlFor(a){if(!a)return "";if(window._issuedFormUrls&&window._issuedFormUrls[a.id])return window._issuedFormUrls[a.id];try{const ds=(state.deliveries||[]).filter(d=>d.applicant_id===a.id&&d.form_url);if(ds.length)return ds[0].form_url}catch(e){}/* R3 (E1): 未発行なら発行を開始する (モックURLは出さない。実URLは発行完了後の再描画から入る) */try{if(!window._formIssuePending)window._formIssuePending={};if(!window._formIssuePending[a.id]&&typeof issueFormInvite==="function"){window._formIssuePending[a.id]=1;issueFormInvite(a,"sms",null)}}catch(e){}return ""}
+function formUrlFor(a){if(!a)return "";if(state.attachFormSms===false)return "";if(window._issuedFormUrls&&window._issuedFormUrls[a.id])return window._issuedFormUrls[a.id];try{const ds=(state.deliveries||[]).filter(d=>d.applicant_id===a.id&&d.form_url);if(ds.length)return ds[0].form_url}catch(e){}return ""}
+/* P-T1-6: sms: リンクのタップ時（送信直前）にフォームを発行する。描画時には発行しない。
+   一覧・詳細・メールプレビューの表示だけでは issueFormToken は積まれない。
+   発行完了後に再描画されたリンク（実フォームURL入り）へ遷移する。 */
+function smsTapIssueNav_(ap,origBody,url){
+  try{
+    var anchors=document.querySelectorAll('a[href^="sms:"]');
+    for(var i=0;i<anchors.length;i++){
+      var h=anchors[i].getAttribute("href")||"";
+      var bi=h.indexOf("&body=");if(bi<0)continue;
+      var b="";try{b=decodeURIComponent(h.slice(bi+6))}catch(e){continue}
+      if(b.indexOf(url)>=0&&b.split(url).join("")===origBody){location.href=h;return true}
+    }
+  }catch(e){}
+  try{
+    var ph=(ap&&ap.phone)||"";
+    var body=origBody+"\n\n回答フォームからもご回答いただけます。\n"+url;
+    location.href="sms:"+String(ph).replace(/[^0-9+]/g,"")+"&body="+encodeURIComponent(body);
+    return true;
+  }catch(e){return false}
+}
+function smsTapIssue_(ev){
+  try{
+    var t=ev&&ev.target;var a=null;
+    while(t){if(t.tagName==="A"&&typeof t.getAttribute==="function"&&String(t.getAttribute("href")||"").indexOf("sms:")===0){a=t;break}t=t.parentNode}
+    if(!a)return;
+    var href=a.getAttribute("href")||"";
+    if(href.indexOf("form?token=")>=0)return;
+    if(state.attachFormSms===false)return;
+    var m=href.match(/^sms:([^&?]+)/);if(!m)return;
+    var phone=String(m[1]||"").replace(/[^0-9]/g,"");if(!phone)return;
+    var ap=null;try{ap=applicants.find(function(x){return String(x.phone||"").replace(/[^0-9]/g,"")===phone})}catch(e){}
+    if(!ap)return;
+    var origBody="";try{var _bi=href.indexOf("&body=");origBody=_bi>=0?decodeURIComponent(href.slice(_bi+6)):""}catch(e){}
+    var issued=(window._issuedFormUrls&&window._issuedFormUrls[ap.id])||"";
+    if(!issued){try{var ds=(state.deliveries||[]).filter(function(d){return d.applicant_id===ap.id&&d.form_url});if(ds.length)issued=ds[0].form_url}catch(e){}}
+    if(issued){ev.preventDefault();smsTapIssueNav_(ap,origBody,issued);return}
+    ev.preventDefault();
+    try{issueFormInvite(ap,"sms",null)}catch(e){location.href=href;return}
+    var n=0;var timer=setInterval(function(){
+      n++;
+      var u=(window._issuedFormUrls&&window._issuedFormUrls[ap.id])||"";
+      if(u||n>40){clearInterval(timer);if(u){smsTapIssueNav_(ap,origBody,u)}else{try{showToast("フォームURLの発行に時間がかかっています。もう一度タップしてください","warn")}catch(e){}}}
+    },200);
+  }catch(e){}
+}
+try{if(typeof document!=="undefined"&&document.addEventListener)document.addEventListener("click",smsTapIssue_)}catch(e){}
 /* フッター等のプレビュー表示用: アプリ自身の実ルート (トークンは送信時にサーバーが本人のものへ差し替える) */
 function appFormBaseUrl(){try{return location.href.split("#")[0]+"#/form"}catch(e){return "#/form"}}
 function appOptoutBaseUrl(){try{return location.href.split("#")[0]+"#/optout"}catch(e){return "#/optout"}}
@@ -272,7 +326,7 @@ function bumpDataVersion(){_dataVersion++;_aggStore={};_filtCache=null;_poolCoun
 function aggMemo(name,compute){if(_aggRef!==applicants){_aggRef=applicants;_aggStore={};_filtCache=null;_poolCountCache={pool:null,ver:-1,len:-1,result:null}}const k=name+"@"+_dataVersion+"@"+applicants.length;if(!Object.prototype.hasOwnProperty.call(_aggStore,k))_aggStore[k]=compute();return _aggStore[k]}
 function companyCounts(pool){const src=pool||applicants;if(_aggRef!==applicants)bumpDataVersion(),_aggRef=applicants;if(_poolCountCache.pool===src&&_poolCountCache.ver===_dataVersion&&_poolCountCache.len===src.length)return _poolCountCache.result;const m={};nonTestApplicants(src).forEach(a=>{const c=normalizeCompany(a.source_company);m[c]=(m[c]||0)+1});_poolCountCache={pool:src,ver:_dataVersion,len:src.length,result:m};return m}
 function csvStatusCounts(area){return aggMemo("csvStatus:"+area,()=>{const m={};nonTestApplicants().forEach(a=>{if(a.area===area)m[a.csv_status]=(m[a.csv_status]||0)+1});return m})}
-function areaSummary(area){return aggMemo("areaSummary:"+area,()=>{let total=0,sent=0,smsTarget=0;nonTestApplicants().forEach(a=>{if(a.area!==area)return;total++;if(a.sms_sent)sent++;if(a.phone&&/^0[789]0/.test(String(a.phone).replace(/[^0-9]/g,"")))smsTarget++});return {total,sent,smsTarget}})}
+function areaSummary(area){return aggMemo("areaSummary:"+area,()=>{let total=0,sent=0,smsTarget=0;nonTestApplicants().forEach(a=>{if(a.area!==area)return;total++;if(a.sms_sent)sent++;if(a.phone&&/^0?[789]0/.test(String(a.phone).replace(/[^0-9]/g,"")))smsTarget++});return {total,sent,smsTarget}})}
 function areaPrefCounts(area){return aggMemo("prefCounts:"+area,()=>{const byPref={};let total=0;nonTestApplicants().forEach(a=>{if(a.area!==area)return;total++;byPref[a.prefecture]=(byPref[a.prefecture]||0)+1});return {total,byPref}})}
 function areaMunis(area){return aggMemo("munis:"+area,()=>[...new Set(nonTestApplicants().filter(a=>a.area===area).map(a=>a.municipality))])}
 </script>
@@ -401,9 +455,9 @@ let CASES=[
 <script>
 /* ===== 状態・テンプレ・送信者 (DATA_MODEL §9) ===== */
 let state={area:LS.get("area","kansai"),mode:"first",visible:20,recSort:"score",followTab:"unsent",specialSent:LS.get("specialSent",{}),campaigns:LS.get("campaigns",[{id:"SP1",name:"サンプル特需：東淀川エリア介護スタッフ急募",body:"お世話になっております。ファーストスタッフィングです。今回、ご希望条件に近い案件がございましたので、ご案内させていただきます。\n■施設名：［施設名］\n■住所：［郵便番号・住所］\n■勤務時間：07:00〜16:00／08:30〜17:30／09:00〜17:00 など（例示です。曜日固定・時間固定・夜勤専従など、ご希望に沿って相談可能です）\n■時給：1,450〜1,800円（介護の標準帯です）\n※時給は資格・経験・勤務日数などによって異なります\nおすすめポイント3つ\n1. 詳細希望 2. 見学希望 3. 別案件希望\nご検討のうえ、ご返信いただけますと幸いです。",address:"大阪府大阪市東淀川区上新庄",lat:34.742,lon:135.535,radius:10,job_type:"kaigo"}]),responses:LS.get("responses",[{id:"R001",applicant_id:"A0005",sender:"t-sugimoto@kikari.co.jp",sender_name:"杉本卓也",intent:"見学希望",experience:"看護12年",start:"2026-12-01",tour:"2026-11-27",phone_consult:"平日午前（自由入力サンプル）",free:"よろしくお願いします（サンプル）",handled:false,status:"unhandled",source_channel:"mail",at:"2026-11-21T09:00",isNew:true},{id:"R002",applicant_id:"A0003",sender:"",sender_name:"横山渥士",intent:"詳細希望",experience:"看護12年",start:"",tour:"",phone_consult:"",free:"（サンプル）",handled:false,status:"unhandled",source_channel:"sms",at:"2026-11-21T08:10",isNew:true},{id:"R003",applicant_id:"A0006",sender:"",sender_name:"石原謙",intent:"別案件希望",experience:"介護6年",start:"",tour:"",phone_consult:"",free:"（サンプル）",handled:true,handled_by:"菅沼光輝",status:"handled",status_by:"菅沼光輝",status_at:"2026-11-20T17:40",source_channel:"mail",at:"2026-11-20T17:40",isNew:false},{id:"R004",applicant_id:"A0002",sender:"",sender_name:"",sender_unknown:true,intent:"詳細希望",experience:"介護1年",start:"",tour:"",phone_consult:"2026-11-22 午前中",free:"汎用URLから届いた回答（サンプル）",handled:false,status:"unhandled",source_channel:"generic_url",at:"2026-11-18T10:00",isNew:true},{id:"R005",applicant_id:"A0001",sender:"t-sugimoto@kikari.co.jp",sender_name:"杉本卓也",intent:"見学希望",experience:"介護8年",start:"",tour:"",interview:"2026-11-24",phone_consult:"2026-11-21 14時ごろ",free:"本日お電話希望（サンプル）",handled:false,status:"in_progress",status_by:"杉本卓也",status_at:"2026-11-21T09:30",source_channel:"sms",at:"2026-11-21T07:50",isNew:true}]),imports:LS.get("imports",[]),deliveries:LS.get("deliveries",[])};
-state.includeFormCase=LS.get("includeFormCase",false);state.reverseRadius=5;state.reverseCond="";
+state.includeFormCase=LS.get("includeFormCase",false);state.attachFormSms=LS.get("attachFormSms",true);state.attachFormMail=LS.get("attachFormMail",true);state.reverseRadius=5;state.reverseCond="";
 let templates=LS.get("templates",{sms_first:"{宛名}様\n\nご登録ありがとうございます。\nファーストスタッフィングです！\n\n{不足ヒヤリング}\n\n直近でお近くに案件が出たところです。\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\n\nご回答は下記のフォームからも可能です。\n{フォームURL}",sms_first_compact:"{宛名}様\nご登録ありがとうございます。ファーストスタッフィングです！\n直近でお近くに案件が出たところです。フォームからご回答いただけます。\n{フォームURL}\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\nよければ、{不足項目名}も分かる項目だけで返信ください（未定は「相談」でOKです）。\nお電話できる日時：○月○日 ○時〜○時ごろ ※候補をいくつか教えていただけると幸いです。",sms_follow:"{宛名}様\n\n株式会社ファーストスタッフィングです。\n先日ご案内したお仕事探しについて、その後のご状況はいかがでしょうか？\n\n1. 今すぐ相談したい\n2. 先の時期で考えている\n3. 今回は見送り\n\n番号だけでもご返信いただけます。\n1. 2. の場合、お電話できる日時と勤務開始の希望日も教えていただけると幸いです。",reply_detail:"{宛名}様\nご返信ありがとうございます。詳しい条件をご案内いたします。今回の求人で特に確認されたい点はございますか？勤務時間・週回数・お仕事内容など、気になる点をお知らせください。条件が合いそうでしたら、職場見学の日程もご相談できます。",reply_tour:"{宛名}様\nご返信ありがとうございます。職場見学のご希望、ありがとうございます。先方へ確認いたしますので、以下を教えてください。\n1. 見学可能な日時（第1〜第3希望）\n2. 勤務開始できる時期\n3. ご希望の週回数・勤務時間",reply_other:"{宛名}様\nご返信ありがとうございます。別の求人をお探しいたしますので、以下のご希望を教えてください。\n1. ご希望エリア・通勤可能な範囲\n2. ご希望の週回数・勤務時間\n3. 勤務開始できる時期\n4. 今回の求人で合わなかった条件",mail_subject:"【派遣求人】お近くのお仕事をご案内します",mail_body:"{宛名}様\n\n株式会社ファーストスタッフィングです。\nご登録いただいた内容をもとに、お近くのお仕事をご案内します。\n\n{おすすめ案件}"});
-let smsModes=LS.get("smsModes",[{id:"registration",title:"登録案内",body:templates.sms_first}]); let smsModeId="registration";
+let smsModes=LS.get("smsModes",[{id:"registration",title:"登録案内",body:templates.sms_first}]); let smsModeId="registration_compact";
 let operators=LS.get("operators",[{name:"杉本卓也",email:"t-sugimoto@kikari.co.jp",display:"株式会社ファーストスタッフィング 杉本卓也",company:"株式会社ファーストスタッフィング",phone:"",linked:true,signature:"株式会社ファーストスタッフィング\n杉本卓也",reply_to:""},{name:"横山渥士",email:"",display:"株式会社ファーストスタッフィング 横山渥士",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n横山渥士",reply_to:""},{name:"石原謙",email:"",display:"株式会社ファーストスタッフィング 石原謙",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n石原謙",reply_to:""},{name:"菅沼光輝",email:"",display:"株式会社ファーストスタッフィング 菅沼光輝",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n菅沼光輝",reply_to:""}]);
 function saveAll(){LS.set("templates",templates);LS.set("smsModes",smsModes);LS.set("operators",operators);LS.set("campaigns",state.campaigns);LS.set("responses",state.responses);LS.set("specialSent",state.specialSent);LS.set("imports",state.imports);LS.set("deliveries",state.deliveries);persistApplicants()}
 /* ===== おすすめ順位 (JOB_RECOMMENDATIONS / DATA_MODEL §12): 20km以内, 距離→取得日新→形態優先→請求単価下限(内部のみ) ===== */
@@ -427,14 +481,17 @@ function syncBadgeHtml(){var c=outboxCounts();var h="";if(c.failed)h+='<span cla
 function syncStateHtml(){var st=window._syncState||{status:"unknown"};if(st.status==="local")return "ローカル保存中（サーバー未設定）";if(st.status==="failed")return '<span class="badge bad">同期失敗・ローカル表示中</span>';if(st.status==="ok"&&st.at){var d=new Date(st.at);var p=function(n){return String(n).padStart(2,"0")};var same=d.toDateString()===new Date().toDateString();return "同期済み・最終同期 "+(same?p(d.getHours())+":"+p(d.getMinutes()):(d.getMonth()+1)+"/"+d.getDate()+" "+p(d.getHours())+":"+p(d.getMinutes()))}return "サーバー連携中（未同期）"}
 function stateHtml(kind,opts){opts=opts||{};var msg=esc(opts.msg||"");if(kind==="error")return '<div class="stateError" role="alert"><p>'+msg+'</p>'+(opts.actionHtml||"")+'</div>';if(kind==="loading")return '<div class="skel" aria-busy="true"></div><p class="small">読み込み中…</p>';return '<div class="card stateEmpty"><p>'+msg+'</p>'+(opts.actionHtml||"")+'</div>'}
 function smsCountHtml(kind,body,n){var c=smsLimitCheck(kind,body,n);var sz=smsSize(body);if(c.ok)return '<span class="small smsCount">'+c.len+'文字／上限'+c.limit+'文字・約'+sz.units+'通分</span>';return '<span class="badge bad smsCount" role="alert">'+c.len+'文字／上限'+c.limit+'文字（'+c.over+'字オーバー）・約'+sz.units+'通分</span>'}
-function renderSummary(){const _as=areaSummary(state.area);const dueN=typeof dueTodayList==="function"?dueTodayList(digPool()).length:0;const openN=state.responses.filter(r=>!r.handled).length;$("#summaryBar").innerHTML=`<a href="#/responses">回答未対応 ${openN}件</a><a href="#/dig">今日連絡 ${dueN}名</a>${syncBadgeHtml()}<span>${state.area==="kansai"?"関西":"関東"}全体DB ${_as.total}名／SMS対象 ${_as.smsTarget}名</span><span>応募者 ${_as.total}名／送信済み ${_as.sent}名／未送信 ${_as.total-_as.sent}名</span><span class="syncState">${syncStateHtml()}${window._persistFallback?"・軽量保存モード（状態のみ保存中）":""}</span>`}
+function renderSummary(){const _as=areaSummary(state.area);const dueN=typeof dueTodayList==="function"?dueTodayList(digPool()).length:0;const openN=state.responses.filter(r=>!r.handled).length;$("#summaryBar").innerHTML=`<a href="#/responses">回答未対応 ${openN}件</a>${syncBadgeHtml()}<span>${state.area==="kansai"?"関西":"関東"}全体DB ${_as.loading?"読み込み中…":_as.total+"名"}／SMS対象 ${_as.loading?"読み込み中…":_as.smsTarget+"名"}</span><span>応募者 ${_as.loading?"読み込み中…":_as.total+"名"}／送信済み ${_as.loading?"読み込み中…":_as.sent+"名"}／未送信 ${_as.loading?"―":_as.total-_as.sent+"名"}</span><span class="syncState">${syncStateHtml()}${window._persistFallback?"・軽量保存モード（状態のみ保存中）":""}</span>`}
 function route(){const _sy=window.scrollY||0;const _fid=document.activeElement&&document.activeElement.id?document.activeElement.id:"";const _same=route._lastHash===(location.hash||"#/");route._lastHash=location.hash||"#/";state._inList=(location.hash||"").startsWith("#/list");renderSummary();const h=location.hash||"#/";if(h.startsWith("#/dig"))viewDig();else if(h.startsWith("#/list"))viewList();else if(h.startsWith("#/import"))viewImport();else if(h.startsWith("#/mail"))viewMail();else if(h.startsWith("#/form"))viewForm(h);else if(h.startsWith("#/optout"))viewOptout(h);else if(h.startsWith("#/responses"))viewResponses();else if(h.startsWith("#/settings"))viewSettings();else viewHome();if(_same){window.scrollTo(0,_sy);if(_fid){const el=document.getElementById(_fid);if(el&&el.focus)el.focus()}}else window.scrollTo(0,0)}
 window.addEventListener("hashchange",route);
-function viewHome(){$("#app").innerHTML=`<div class="notice">応募者・案件データは「CSV取り込み」から最新化できます。送信・回答の状態はサーバーと連携します。</div>
-<div class="card"><h2>エリア切替</h2><div class="tabs"><button aria-pressed="${state.area==="kansai"}" onclick="setArea('kansai')">関西（${areaPrefCounts("kansai").total}名）</button><button aria-pressed="${state.area==="kanto"}" onclick="setArea('kanto')">関東（${areaPrefCounts("kanto").total}名）</button></div>
-<p>関西：大阪・京都・兵庫・奈良・滋賀・和歌山／関東：東京・神奈川・埼玉・千葉・茨城（サンプルは一部）</p>
-<div class="flex"><a class="btn primary" href="#/mail">Gmailで案件配信</a><a class="btn" href="#/import">CSV取り込み</a><a class="btn" href="#/responses">回答一覧 ${state.responses.filter(r=>!r.handled).length?'<span class="badge bad">未対応 '+state.responses.filter(r=>!r.handled).length+"</span>":""}</a><a class="btn" href="#/list">応募者一覧</a></div></div>
-<div class="card"><h3>件数サマリー（サンプル）</h3><p>応募者 ${nonTestApplicants().length}名（テスト求職者は集計から除外） ／ 案件 ${CASES.length}件 ／ 特需 ${state.campaigns.length}件 ／ 配信 ${state.deliveries.length}件 ／ 回答 ${state.responses.length}件</p></div>`}
+function viewHome(){const _as=areaSummary(state.area);const _pc=areaPrefCounts("kansai");const _prefs=["大阪府","兵庫県","奈良県","京都府","滋賀県","和歌山県"];const _short={"大阪府":"大阪","兵庫県":"兵庫","奈良県":"奈良","京都府":"京都","滋賀県":"滋賀","和歌山県":"和歌山"};$("#app").innerHTML=`<h2 class="oldH">応募者SMS一覧・関西</h2>
+<div class="prefBar bigPrefs" role="group" aria-label="都道府県で絞り込み"><button onclick="goListPref('')">関西全体 ${_pc.loading?"読み込み中…":_pc.total+"名"}</button>${_prefs.map(p=>`<button onclick="goListPref('${p}')">${_short[p]} ${_pc.loading?"…":(_pc.byPref[p]||0)+"名"}</button>`).join("")}</div>
+<p class="dbCountLine">関西全体のDB ${_as.loading?"読み込み中…":_as.total+"名"} ／ SMS送信対象 ${_as.loading?"読み込み中…":_as.smsTarget+"名"}</p>
+<div class="card"><div class="flex"><a class="btn primary" href="#/list">応募者一覧を開く</a><a class="btn" href="#/responses">回答一覧 ${state.responses.filter(r=>!r.handled).length?'<span class="badge bad">未対応 '+state.responses.filter(r=>!r.handled).length+"</span>":""}</a></div>
+<div class="flex" style="margin-top:8px"><a class="btn" href="#/mail">Gmailで案件配信</a><a class="btn" href="#/import">CSV取り込み</a><a class="btn" href="#/dig">掘り起こし</a></div></div>
+<a class="bigNavBtn" href="#/list" onclick="state.mode='reverse';state.visible=20;route()">案件から近くの求職者を探す</a>
+<div class="notice">応募者・案件データは「CSV取り込み」から最新化できます。送信・回答の状態はサーバーと連携します。</div>`}
+function goListPref(p){F.pref=p;state.visible=20;state.mode="first";location.hash="#/list";route()}
 function setArea(a){state.area=a;LS.set("area",a);route()}
 /* ===== フィルタ ===== */
 let F={q:"",muni:"",job:"",sent:"",csv:"",preset:"",from:"",to:"",companies:[],startFrom:"",startTo:"",pref:"",fsOnly:false,showTest:false};
@@ -444,20 +501,22 @@ function filteredCompute(){let list=applicants.filter(a=>a.area===state.area&&(F
 /* LIVE §8 追客タブ区分: today=直近7日の未対応／期限到来の折り返し・反響／14日以内の入職希望 */
 function followCategory(a){const today=todayStr();if(state.responses.some(r=>r.applicant_id===a.id))return "replied";const start=a.desired_start_date;const startDays=start&&/^\d{4}-\d{2}-\d{2}$/.test(start)?Math.round((new Date(start)-new Date(today))/864e5):null;const appliedDays=Math.round((new Date(today)-new Date(appliedDay(a)))/864e5);const taskDue=a.work_task&&!a.work_task.completed&&a.work_task.due_date&&a.work_task.due_date<=today;if((appliedDays<=7&&!a.sms_sent)||(a.next_contact_date&&a.next_contact_date<=today)||taskDue||(startDays!=null&&startDays>=0&&startDays<=14))return "today";if(startDays!=null&&startDays>14)return "future";if(!a.sms_sent)return "unsent";const lastRef=a.last_sms_at||a.last_contact_at;const days=lastRef?Math.round((new Date(today)-new Date(String(lastRef).slice(0,10)))/864e5):0;const cnt=a.sms_count!=null?a.sms_count:(a.events||[]).filter(e=>e.kind==="sms_sent").length;const need=cnt>=3?7:2;return days>=need?"noreact":"today"}
 function followCounts(pool){const c={today:0,unsent:0,noreact:0,replied:0,future:0,all:pool.length};pool.forEach(a=>{const k=followCategory(a);if(c[k]!=null)c[k]++});return c}
-function filterBar(list){const munis=areaMunis(state.area);const _cc=companyCounts(list);const _sc=csvStatusCounts(state.area);const tags=[];if(F.q)tags.push("検索:"+F.q);if(F.muni)tags.push(F.muni);if(F.job)tags.push(F.job==="kaigo"?"介護":"看護");if(F.sent)tags.push(F.sent==="sent"?"送信済み":"未送信");if(F.csv)tags.push(F.csv);if(F.companies.length)tags.push("会社:"+F.companies.join(","));return `<div class="card"><div class="grid">
-<input placeholder="氏名・電話・地域で検索" value="${esc(F.q)}" onchange="F.q=this.value;state.visible=20;route()">
-<select onchange="F.muni=this.value;route()"><option value="">市区町村クイック：すべて</option>${munis.map(m=>`<option ${F.muni===m?"selected":""}>${esc(m)}</option>`).join("")}</select>
-<select onchange="F.job=this.value;route()"><option value="">職種：すべて</option><option value="kaigo" ${F.job==="kaigo"?"selected":""}>介護</option><option value="kango" ${F.job==="kango"?"selected":""}>看護</option></select>
-<select onchange="F.sent=this.value;route()"><option value="">送信状態：すべて</option><option value="sent" ${F.sent==="sent"?"selected":""}>送信済み</option><option value="unsent" ${F.sent==="unsent"?"selected":""}>未送信</option></select>
-</div><details ${state._filterOpen?"open":""} ontoggle="state._filterOpen=this.open"><summary>詳細な絞り込み（応募日・会社・入職希望日）</summary><select onchange="F.csv=this.value;route()"><option value="">CSVステータス：すべて</option>${CSV_STATUSES.map(s=>`<option ${F.csv===s?"selected":""}>${s}（${_sc[s]||0}）</option>`).join("")}</select>
+function filterBar(list){const munis=areaMunis(state.area);const _cc=companyCounts(list);const _sc=csvStatusCounts(state.area);const tags=[];if(F.q)tags.push("検索:"+F.q);if(F.muni)tags.push(F.muni);if(F.pref)tags.push(F.pref);if(F.job)tags.push(F.job==="kaigo"?"介護":"看護");if(F.sent)tags.push(F.sent==="sent"?"送信済み":"未送信");if(F.csv)tags.push(F.csv);if(F.companies.length)tags.push("会社:"+F.companies.join(","));return `<div class="card"><h3>市区町村で求職者を絞る</h3><div class="flex"><select style="flex:1" onchange="F.muni=this.value;route()"><option value="">市区町村：すべて</option>${munis.map(m=>`<option ${F.muni===m?"selected":""}>${esc(m)}</option>`).join("")}</select>
+<select style="flex:1" onchange="F.job=this.value;route()"><option value="">職種：すべて</option><option value="kaigo" ${F.job==="kaigo"?"selected":""}>介護</option><option value="kango" ${F.job==="kango"?"selected":""}>看護</option></select></div>
+<div class="flex" style="margin-top:8px"><button onclick="clearMuniPref()">地域を解除</button></div></div>
+<div class="card"><input placeholder="氏名・電話番号・地域で検索" value="${esc(F.q)}" onchange="F.q=this.value;state.visible=20;route()">
+<details ${state._filterOpen?"open":""} ontoggle="state._filterOpen=this.open"><summary>絞り込み（送信状態・応募日・会社・入職希望日）</summary><select onchange="F.sent=this.value;route()"><option value="">送信状態：すべて</option><option value="sent" ${F.sent==="sent"?"selected":""}>送信済み</option><option value="unsent" ${F.sent==="unsent"?"selected":""}>未送信</option></select>
+<select onchange="F.csv=this.value;route()"><option value="">CSVステータス：すべて</option>${CSV_STATUSES.map(s=>`<option ${F.csv===s?"selected":""}>${s}（${_sc[s]||0}）</option>`).join("")}</select>
 <select onchange="F.preset=this.value;route()"><option value="">応募日：すべて</option><option value="today">今日</option><option value="7d">7日以内</option></select>
 <label>応募日範囲</label><div class="flex"><input type="date" value="${F.from}" onchange="F.from=this.value;route()"><input type="date" value="${F.to}" onchange="F.to=this.value;route()"></div>
 <label>会社（複数選択・正規化後の会社名＋件数）</label><div class="flex">${COMPANIES.map(c=>`<button aria-pressed="${F.companies.includes(c)}" onclick="toggleCo('${esc(c)}')">${esc(c)}（${_cc[c]||0}）</button>`).join("")}</div>
 <label>入職希望日範囲</label><div class="flex"><input type="date" value="${F.startFrom}" onchange="F.startFrom=this.value;route()"><input type="date" value="${F.startTo}" onchange="F.startTo=this.value;route()"></div>
-<label class="chk"><input type="checkbox" data-fkey="mf:fsOnly" ${F.fsOnly?"checked":""} onchange="F.fsOnly=this.checked;state.visible=20;route()">ファーストスタッフィング登録歴あり</label> <label class="chk"><input type="checkbox" data-fkey="mf:showTest" ${F.showTest?"checked":""} onchange="F.showTest=this.checked;state.visible=20;route()">テスト求職者を表示（E2E確認用・通常は集計から除外）</label></details>${tags.length?`<div class="tagbar">${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}<button onclick="clearF()">全クリア</button></div>`:""}</div>`}
+<label class="chk"><input type="checkbox" data-fkey="mf:fsOnly" ${F.fsOnly?"checked":""} onchange="F.fsOnly=this.checked;state.visible=20;route()">ファーストスタッフィング登録歴あり</label> <label class="chk"><input type="checkbox" data-fkey="mf:showTest" ${F.showTest?"checked":""} onchange="F.showTest=this.checked;state.visible=20;route()">テスト求職者を表示（E2E確認用・通常は集計から除外）</label></details>
+<details><summary>返信別の切り返し文</summary><div class="flex" style="margin-top:8px">${[["reply_detail","詳細希望"],["reply_tour","見学希望"],["reply_other","別案件希望"]].map(([k,v])=>`<button onclick="copyReplyPattern('${k}')">${v}をコピー</button>`).join("")}</div><p class="small">求職者から返信が来たときに使う定型文です。相手の名前入りでコピーしたいときは、各カード（追客・詳細モード）の「返信切り返し」からどうぞ。</p></details>${tags.length?`<div class="tagbar">${tags.map(t=>`<span class="tag">${esc(t)}</span>`).join("")}<button onclick="clearF()">全クリア</button></div>`:""}</div>`}
+function clearMuniPref(){F.muni="";F.pref="";state.visible=20;route()}
 function toggleCo(c){F.companies=F.companies.includes(c)?F.companies.filter(x=>x!==c):[...F.companies,c];route()}
 function clearF(){F={q:"",muni:"",job:"",sent:"",csv:"",preset:"",from:"",to:"",companies:[],startFrom:"",startTo:"",pref:"",fsOnly:false,showTest:false};route()}
-function prefButtons(){const prefs=state.area==="kansai"?["大阪府","京都府","兵庫県","奈良県","滋賀県","和歌山県"]:["東京都","神奈川県","埼玉県","千葉県","茨城県"];const _pc=areaPrefCounts(state.area);/* R3 パリティ: 選択中の府県の要約行 (DB人数 / SMS送信対象) を即時表示する */const _sel=F.pref?nonTestApplicants().filter(a=>a.area===state.area&&a.prefecture===F.pref):null;const _selSms=_sel?_sel.filter(a=>a.phone&&/^0[789]0/.test(String(a.phone).replace(/[^0-9]/g,""))).length:0;const _selHtml=_sel?`<p class="small" style="margin:4px 0">${esc(F.pref)}: DB ${_sel.length}名 / SMS送信対象 ${_selSms}名</p>`:"";return `<div class="prefBar" role="group" aria-label="都道府県で絞り込み"><button aria-pressed="${!F.pref}" onclick="F.pref='';state.visible=20;route()">${state.area==="kansai"?"関西全体":"関東全体"}（${_pc.total}）</button>${prefs.map(p=>`<button aria-pressed="${F.pref===p}" onclick="F.pref='${p}';state.visible=20;route()">${p}（${_pc.byPref[p]||0}）</button>`).join("")}</div>${_selHtml}`}
+function prefButtons(){const prefs=state.area==="kansai"?["大阪府","兵庫県","奈良県","京都府","滋賀県","和歌山県"]:["東京都","神奈川県","埼玉県","千葉県","茨城県"];const _short={"大阪府":"大阪","兵庫県":"兵庫","奈良県":"奈良","京都府":"京都","滋賀県":"滋賀","和歌山県":"和歌山"};const _pc=areaPrefCounts(state.area);const _sel=F.pref?nonTestApplicants().filter(a=>a.area===state.area&&a.prefecture===F.pref):null;const _selSms=_sel?_sel.filter(a=>a.phone&&/^0?[789]0/.test(String(a.phone).replace(/[^0-9]/g,""))).length:0;const _selHtml=_sel?`<p class="small" style="margin:4px 0">${esc(F.pref)}: DB ${_sel.length}名 / SMS送信対象 ${_selSms}名</p>`:"";return `<div class="prefBar bigPrefs" role="group" aria-label="都道府県で絞り込み"><button aria-pressed="${!F.pref}" onclick="F.pref='';state.visible=20;route()">${state.area==="kansai"?"関西全体":"関東全体"} ${_pc.loading?"読み込み中…":_pc.total+"名"}</button>${prefs.map(p=>`<button aria-pressed="${F.pref===p}" onclick="F.pref='${p}';state.visible=20;route()">${_short[p]||p} ${_pc.loading?"…":(_pc.byPref[p]||0)+"名"}</button>`).join("")}</div>${_selHtml}`}
 </script>
 <script>
 /* ===== 追補7: 15社割当・FS履歴・接触管理データ拡張（ダミー） =====
@@ -489,29 +548,30 @@ function funnel(pool){pool=nonTestApplicants(pool);const n=pool.length;const con
 </script>
 <script>
 /* ===== 一覧・5モード＋掘り起こし (DESIGN_V2 §6.1/§8, 追補6, 追補7) ===== */
-const MODES=[["first","初回SMS"],["recommend","おすすめ案件配信"],["special","特需SMS"],["follow","追客・詳細"],["reverse","案件から探す"],["dig","掘り起こし（例外案件）"]];
+const MODES=[["first","初回SMS"],["recommend","おすすめ案件"],["special","特需SMS"],["follow","追客・詳細"],["reverse","案件から探す"],["dig","掘り起こし（例外案件）"]];
 function viewList(){if(!window._smsSegFilter){try{const sh=JSON.parse(sessionStorage.getItem("smsHandoff")||"null");if(sh&&sh.segment)window._smsSegFilter=sh.segment}catch(e){}}let list=filtered();if(window._smsSegFilter)list=list.filter(a=>segmentOf(a)===window._smsSegFilter);const slice=list.slice(0,state.visible);
  let body="";
  if(state.mode==="special")body=specialView(list);
  else if(state.mode==="reverse")body=reverseView(list);
  else if(state.mode==="dig")body=digView(list);
- else body=`<p class="small">絞込 ${list.length}件／表示 ${slice.length}件／送信済み ${areaSummary(state.area).sent}名（応募日新しい順・20件ずつ追加）</p>`+slice.map(a=>cardHtml(a)).join("")+(list.length>state.visible?`<button class="primary" style="width:100%" onclick="state.visible+=20;route()">さらに20件表示</button>`:"")+(list.length===0?`<div class="card">0件です。理由: 現在の絞り込み条件に一致しません。<button onclick="clearF()">条件を全クリア</button></div>`:"");
- $("#app").innerHTML=`<div class="tabs" role="group" aria-label="モード">${MODES.map(([k,v])=>`<button aria-pressed="${state.mode===k}" onclick="state.mode='${k}';state.visible=20;route()">${v}</button>`).join("")}<a class="btn" href="#/dig">掘り起こし専用ビュー</a></div>`+(window._smsSegFilter?`<div class="notice">掘り起こしから引き継ぎ: セグメント「${esc(window._smsSegFilter)}」で絞り込み中 <button onclick="window._smsSegFilter='';try{sessionStorage.removeItem('smsHandoff')}catch(e){};route()">解除</button></div>`:"")+filterBar(list)+body}
+ else body=`<p class="small"><span id="listTotal">絞込 ${list.length}件</span>／表示 ${slice.length}件／送信済み ${areaSummary(state.area).sent}名（応募日新しい順・20件ずつ追加）</p>`+slice.map(a=>cardHtml(a)).join("")+(list.length>state.visible?`<button class="primary" style="width:100%" onclick="state.visible+=20;route()">さらに20件表示</button>`:"")+(list.length===0?`<div class="card">0件です。理由: 現在の絞り込み条件に一致しません。<button onclick="clearF()">条件を全クリア</button></div>`:"");
+ $("#app").innerHTML=`<h2 class="oldH">応募者SMS一覧・関西</h2><p class="dbCountLine">関西全体のDB ${areaSummary(state.area).loading?"読み込み中…":areaSummary(state.area).total+"名"} ／ SMS送信対象 ${areaSummary(state.area).loading?"読み込み中…":areaSummary(state.area).smsTarget+"名"}</p><div class="tabs" role="group" aria-label="モード">${MODES.filter(([k])=>k!=="reverse").map(([k,v])=>`<button aria-pressed="${state.mode===k}" onclick="state.mode='${k}';state.visible=20;route()">${v}</button>`).join("")}<a class="btn" href="#/mail">Gmail配信</a></div><a class="bigNavBtn" href="#/list" onclick="state.mode='reverse';state.visible=20;route()">案件から近くの求職者を探す</a>`+(window._smsSegFilter?`<div class="notice">掘り起こしから引き継ぎ: セグメント「${esc(window._smsSegFilter)}」で絞り込み中 <button onclick="window._smsSegFilter='';try{sessionStorage.removeItem('smsHandoff')}catch(e){};route()">解除</button></div>`:"")+filterBar(list)+body}
 function cardHtml(a){const age=ageOf(a.birth_date);let extra="";
- if(state.mode==="first"){const tpl=smsModes.find(m=>m.id===smsModeId)||smsModes[0];const txt=personalize(tpl.body.replace("{不足ヒヤリング}",missingHearing(a)).replace("{不足ヒヤリング}",missingHearing(a)),a);const full=personalize(tpl.body,a).replace("{不足ヒヤリング}",missingHearing(a));try{rememberSmsBody(a.id,full,[])}catch(e){}extra=`<div class="card" style="background:var(--muted)"><b>SMS本文プレビュー（${esc(tpl.title)}）</b><p class="kv">${esc(full)}</p><p>${smsCountHtml("first",full)}<span class="small">（回答フォームURL差し込み込み）</span></p><div class="flex">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,full,(tpl.id==="registration_compact"?"first_compact":"first"))}">SMS作成を開く（端末の作成画面）</a>`}<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" ${a.sms_sent?"checked":""} ${isOptoutForSms(a)?"disabled":""} onchange="markSms('${a.id}',this.checked)">送信済み（明示操作で記録）</label></div><p class="small">リンクを開いただけでは送信済みになりません。</p></div>`}
+ if(state.mode==="first"){const tpl=smsModes.find(m=>m.id===smsModeId)||smsModes[0];const full=personalize(tpl.body,a).replace("{不足ヒヤリング}",missingHearing(a));try{rememberSmsBody(a.id,full,[])}catch(e){}extra=`<div class="flex" style="margin-top:8px">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,full,(tpl.id==="registration_compact"?"first_compact":"first"))}">SMS作成を開く（端末の作成画面）</a>`}<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" ${a.sms_sent?"checked":""} ${isOptoutForSms(a)?"disabled":""} onchange="markSms('${a.id}',this.checked)">送信済み（明示操作で記録）</label></div><p class="small">リンクを開いただけでは送信済みになりません。本文は「SMS作成を開く」から端末の作成画面で確認できます。</p>`}
  if(state.mode==="recommend")extra=recommendHtml(a,false);
  if(state.mode==="follow")extra=followHtml(a);
+ const prog=progressHtml(a).replace(/<br><span class="badge term">現在の終了状態：[\s\S]*?<\/span>/,"");
  return `<article class="card" data-anchor="app:${a.id}"><div class="flex cardHead"><b style="font-size:17px">${esc(smsRecipientName(a.name))} 様</b><span class="small">${esc(a.name)}</span>${isTestApplicant(a)?'<span class="badge term">テスト</span>':""}${a.new_application?'<span class="badge warn">新規応募あり</span>':""}${hasFsHistory(a)&&normalizeCompany(a.source_company)!=="ファーストスタッフィング"?'<span class="badge">過去FS応募あり</span>':""}<span class="statusBadge">${progressBadgeHtml(a)}</span></div>
- <p class="small">${a.job_type==="kaigo"?"介護":"看護"} ／ ${age!=null?age+"歳":"年齢未確認"} ／ ${esc(a.prefecture)}${esc(a.municipality)} ／ 応募 ${esc(appliedDay(a))}（${relDays(a.applied_at)}） ／ ${esc(normalizeCompany(a.source_company))}<br>資格: ${esc(a.qualifications||"未確認")} ／ 経験: ${a.experience_years==null||a.experience_years===""?"未確認":a.experience_years+"年"} ／ 最寄駅: ${esc(a.nearest_station||"未確認")} ／ セグメント: ${segmentOf(a)}</p>
- ${progressHtml(a)}${responseBadgesHtml(a)}
- <div><span class="badge ${a.sms_sent?"ok":"warn"}">${a.sms_sent?"SMS送信済み":"SMS未送信"}</span><span class="badge">${esc(a.csv_status)}</span>${a.app_status?`<span class="badge ok">${esc(a.app_status)}</span>`:""}<span class="small">最終接触: ${esc(a.last_contact_at||"未記録")}${a.next_contact_date?" ／ 次回連絡: "+esc(a.next_contact_date):""}</span></div>
+ <p class="small">${a.job_type==="kaigo"?"介護":"看護"} ／ ${age!=null?age+"歳":"年齢未確認"} ／ ${esc(a.prefecture)}${esc(a.municipality)} ／ 応募 ${esc(appliedDay(a))}（${relDays(a.applied_at)}） ／ ${esc(normalizeCompany(a.source_company))}</p>
+ ${prog}${responseBadgesHtml(a)}
+ <div><span class="badge ${a.sms_sent?"ok":"warn"}">${a.sms_sent?"SMS送信済み":"SMS未送信"}</span></div>
  ${extra}<div class="flex" style="margin-top:8px"><button onclick="openDetail('${a.id}')">詳細</button>${state.mode!=="recommend"?`<button onclick="state.mode='recommend';route()">おすすめ案件を見る</button>`:""}<a class="btn" href="tel:${esc(a.phone)}">電話</a></div></article>`}
 function recommendHtml(a,expanded){const recs=recommend(a);const show=expanded?recs:recs.slice(0,5);if(!recs.length)return `<p class="small">おすすめ案件なし（20km以内・同職種の募集中案件がありません。20km超・距離不明は表示しません）</p>`;
  return `<div><b>おすすめ案件（上位${Math.min(5,recs.length)}件表示／全${recs.length}件・20km圏内）</b> <span class="small">並び:</span><button aria-pressed="${state.recSort==="score"}" onclick="state.recSort='score';route()">新着 × 近さ</button><button aria-pressed="${state.recSort==="distance"}" onclick="state.recSort='distance';route()">近さ優先</button><label style="display:inline-flex;gap:6px;align-items:center;font-weight:400"><input type="checkbox" ${state.includeFormCase?"checked":""} onchange="state.includeFormCase=this.checked;LS.set('includeFormCase',this.checked);route()">回答フォームURLを差し込む</label>
  ${show.map(c=>{const d=displayCase(c);const body=caseSmsBody(a,c,{withForm:state.includeFormCase});try{rememberSmsBody(a.id,body,[c.id])}catch(e){}const fresh=c.acquired&&Math.round((new Date(todayStr())-new Date(c.acquired))/864e5)<=7;const conds=[d.address,d.hours,d.days].filter(Boolean).join("／");return `<div class="rec"><b>${esc(d.facility)}</b> <span class="badge">${esc(SERVICE_FULL[facilityCode(d)]||facilityCode(d)||d.service)}</span> ${fresh?'<span class="badge ok">新着</span>':""} ${c.dist<=3?'<span class="badge ok">近距離</span>':""} <span class="small">${c.dist!=null?"約"+c.dist.toFixed(1)+"km":"距離不明（同一市区町村）"}</span><br><span class="small">${esc(conds)}／${c.salary?"募集時給":"時給の目安"} ${esc(salaryRange(a,c))}</span><p>${smsCountHtml("case",body)}</p><label style="display:inline-flex;gap:6px;align-items:center;font-weight:700"><input type="checkbox" ${((state.multiSel||{})[a.id]||[]).includes(c.id)?"checked":""} ${isOptoutForSms(a)?"disabled":""} onchange="toggleMultiCase('${a.id}','${c.id}',this.checked)">まとめて配信に選ぶ（最大3件）</label><div class="flex"><button onclick="openCase('${c.id}')">詳細を見る</button>${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,body,"case")}">SMS作成を開く</a>`}<button onclick="editCaseBody('${a.id}','${c.id}')">本文を確認・編集</button></div></div>`}).join("")}
  ${isOptoutForSms(a)?`<div class="flex">${optoutSmsBadge(a)}</div>`:`<div class="flex"><button class="primary" onclick="sendMultiCases('${a.id}')">選択した案件をまとめてSMS作成（最大3件）</button><span class="small">選択中: ${((state.multiSel||{})[a.id]||[]).length}件</span></div>`}
  ${!expanded&&recs.length>5?`<button onclick="openDetail('${a.id}')">その他の案件を見る（${recs.length-5}件・詳細内）</button>`:""}</div>`}
-function followHtml(a){const followBody=personalize(templates.sms_follow||"",a);try{rememberSmsBody(a.id,followBody,[])}catch(e){}const last=a.last_contact_at;const days=last?Math.round((new Date(todayStr())-new Date(last))/864e5):null;const status=!a.sms_sent?"未送信・まずは初回連絡":(state.responses.some(r=>r.applicant_id===a.id)?"送信済み・反応を確認":"追客対象・最終送信から"+(days!=null?days+"日":"―"));return `<div class="card" style="background:var(--muted)"><b>送信状態</b> <span class="badge">${esc(status)}</span> <span class="small">最終SMS: ${esc(last||"なし")} ／ 記録回数: ${(a.events||[]).filter(e=>e.kind==="sms_sent").length}回</span><p class="kv small">${esc(followBody)}</p><div class="flex">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,followBody,"follow")}">追客SMSを開く</a>`}<button onclick="markSms('${a.id}',true)" ${isOptoutForSms(a)?"disabled":""}>送ったので記録する（日時を記録）</button><button onclick="markReplied('${a.id}')">返信あり</button><button onclick="openWorkTask('${a.id}')">折り返し・反響予定</button></div><details><summary>次回連絡・配信停止・履歴</summary><label>この日まで保留（次回連絡日）</label><input type="date" id="snooze_${a.id}" value="${esc(a.next_contact_date||"")}"><div class="flex"><button onclick="saveSnooze('${a.id}')">この日まで保留にする</button>${a.mail_optout?'<span class="badge bad">配信停止済み'+(a.optout_date?"（"+esc(a.optout_date)+"）":"")+'</span>':`<button onclick="setOptout('${a.id}')">配信停止にする</button>`}</div><h4>送信・対応履歴</h4>${(a.events||[]).length?(a.events||[]).map(e=>`<p class="small">・${esc(String(e.at).slice(0,10))} ${esc(e.kind)} — ${esc(e.detail)}</p>`).join(""):'<p class="small">履歴はまだありません</p>'}</details></div><div class="flex"><span class="small">返信切り返し（コピー用）:</span>${[["reply_detail","詳細希望"],["reply_tour","見学希望"],["reply_other","別案件希望"]].map(([k,v])=>`<button onclick="copyTpl('${k}','${a.id}')">${v}をコピー</button>`).join("")}</div>`}
+function followHtml(a){const followBody=personalize(templates.sms_follow||"",a);try{rememberSmsBody(a.id,followBody,[])}catch(e){}const last=a.last_contact_at;const days=last?Math.round((new Date(todayStr())-new Date(last))/864e5):null;const status=!a.sms_sent?"未送信・まずは初回連絡":(state.responses.some(r=>r.applicant_id===a.id)?"送信済み・反応を確認":"追客対象・最終送信から"+(days!=null?days+"日":"―"));return `<div class="card" style="background:var(--muted)"><b>送信状態</b> <span class="badge">${esc(status)}</span> <span class="small">最終SMS: ${esc(last||"なし")} ／ 記録回数: ${(a.events||[]).filter(e=>e.kind==="sms_sent").length}回</span><div class="flex">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,followBody,"follow")}">追客SMSを開く</a>`}<button onclick="markSms('${a.id}',true)" ${isOptoutForSms(a)?"disabled":""}>送ったので記録する（日時を記録）</button><button onclick="markReplied('${a.id}')">返信あり</button><button onclick="openWorkTask('${a.id}')">折り返し・反響予定</button></div><details><summary>次回連絡・配信停止・履歴</summary><label>この日まで保留（次回連絡日）</label><input type="date" id="snooze_${a.id}" value="${esc(a.next_contact_date||"")}"><div class="flex"><button onclick="saveSnooze('${a.id}')">この日まで保留にする</button>${a.mail_optout?'<span class="badge bad">配信停止済み'+(a.optout_date?"（"+esc(a.optout_date)+"）":"")+'</span>':`<button onclick="setOptout('${a.id}')">配信停止にする</button>`}</div><h4>送信・対応履歴</h4>${(a.events||[]).length?(a.events||[]).map(e=>`<p class="small">・${esc(String(e.at).slice(0,10))} ${esc(e.kind)} — ${esc(e.detail)}</p>`).join(""):'<p class="small">履歴はまだありません</p>'}</details></div><div class="flex"><span class="small">返信切り返し（コピー用）:</span>${[["reply_detail","詳細希望"],["reply_tour","見学希望"],["reply_other","別案件希望"]].map(([k,v])=>`<button onclick="copyTpl('${k}','${a.id}')">${v}をコピー</button>`).join("")}</div>`}
 function markReplied(id){state.responses.unshift({id:"R"+Date.now(),applicant_id:id,sender:"t-sugimoto@kikari.co.jp",intent:"返信あり（手動記録）",experience:"",start:"",tour:"",phone_consult:"",free:"",handled:false,at:new Date().toISOString(),isNew:true});saveAll();enqueue("response_received",{applicant_id:id});alert("返信ありを記録しました");route()}
 function copyTpl(k,id){const a=applicants.find(x=>x.id===id);const t=personalize(templates[k],a);if(navigator.clipboard)navigator.clipboard.writeText(t);alert("コピーしました:\n"+t)}
 function rememberSmsBody(aid,body,caseIds,key){
@@ -585,23 +645,19 @@ state.reverseCase=CASES[0].id;
 /* ===== 掘り起こし専用ビュー #/dig（追補7） ===== */
 function digPool(){return applicants.filter(a=>a.area===state.area&&!isTestApplicant(a)&&hasFsHistory(a))}
 function digView(list){const pool=digPool();return digHtml(pool)}
-function digHtml(pool){const due=dueTodayList(pool);const fn=funnel(pool);const max=Math.max(...fn.map(x=>x[1]),1);let segFilter=state.seg||"";
+function digHtml(pool){let segFilter=state.seg||"";
  const segPool=segFilter?pool.filter(a=>segmentOf(a)===segFilter):pool;
- return ` <div class="card"><h3>今日連絡すべき人（${due.length}名）</h3><p class="small">次回連絡日が今日以前／入職希望日から逆算した予定が到来／前回接触から14日以上、を理由つきで表示。</p>
- ${due.length?due.map(({a,reasons})=>`<div class="rec"><b>${esc(smsRecipientName(a.name))} 様</b> <span class="small">${esc(a.municipality)}・${segmentOf(a)}</span><br><span class="badge warn">${esc(reasons.join("／"))}</span><div class="flex"><a class="btn primary" href="${smsLink(a.phone,personalize(templates.sms_first,a).replace("{不足ヒヤリング}",missingHearing(a)),"first")}">SMS作成</a><a class="btn" href="tel:${esc(a.phone)}">電話</a><button onclick="openDetail('${a.id}')">詳細</button></div></div>`).join(""):'<p class="small">今日が期限の人はいません。</p>'}</div>
- <div class="card"><h3>セグメント別件数 → 配信導線</h3><div class="flex">${SEGMENTS.map(s=>`<button aria-pressed="${segFilter===s}" onclick="state.seg='${s}';route()">${s}: ${pool.filter(a=>segmentOf(a)===s).length}名</button>`).join("")}<button onclick="state.seg='';route()">すべて: ${pool.length}名</button></div>
+ return ` <div class="card"><h3>セグメント別件数 → 配信導線</h3><div class="flex">${SEGMENTS.map(s=>`<button aria-pressed="${segFilter===s}" onclick="state.seg='${s}';route()">${s}: ${pool.filter(a=>segmentOf(a)===s).length}名</button>`).join("")}<button onclick="state.seg='';route()">すべて: ${pool.length}名</button></div>
  <p class="small">判定: 連絡停止（配信停止/接触NG/登録辞退）＞稼働中＞選考中（FIX/アテンド/職見/内定）＞時期先（希望日まで60日超）＞条件確認待ち（不足ヒヤリングあり）＞即提案可能。</p>
  <p class="small">セグメント条件: この掘り起こしタブ自体が「ファーストスタッフィング登録歴あり」の人だけを対象にしています（登録歴は永続フラグ has_fs_history で保持）。</p>
  ${segFilter?(segFilter==="連絡停止"?`<p class="small">連絡停止の人には送信できません</p>`:`<div class="flex"><button class="primary" onclick="handoffSms('${esc(segFilter)}')">この人たちにSMS作成（初回/おすすめモードへ引き継ぎ）</button><button onclick="handoffMail('${esc(segFilter)}')">Gmail配信へ（条件を引き継いで #/mail へ）</button></div>`):""}
  ${segPool.slice(0,50).map(a=>cardHtml(a)).join("")}</div>
- <div class="card"><h3>成果ファネル（掘り起こし経由・ダミー集計）</h3><p class="small">本番は applicant_events の種別（sms_sent / mail_sent / response_received / status_change）を掘り起こしコホートで数えます。</p>
- ${fn.map(([k,v])=>`<div class="flex"><span style="min-width:90px">${k}</span><div class="progress" style="flex:1"><i style="width:${Math.round(v/max*100)}%"></i></div><b>${v}</b></div>`).join("")}</div>
  <div class="card"><h3>逆算予定の説明</h3><p class="small">希望日の60日前=状況確認、30日前=案件提案、14日前=選考状況確認を自動生成（詳細画面にも表示）。希望日未定の人は対象外と明示しています。対象 ${pool.length}名中、希望日あり ${pool.filter(a=>contactSchedule(a).length).length}名。</p></div><div class="notice">掘り起こしは「例外案件」扱いです。通常の15社混在リストとは別に、過去にファーストスタッフィングへ応募がある人だけを浮き上がらせます（最新応募が他社経由でも、応募履歴にFS応募が1件あれば対象）。</div>`}
 function handoffSms(seg){/* R4 10-#1: セグメント条件を一覧の表示フィルタとして引き継ぐ (従来はモード切替のみで条件が落ちていた) */try{sessionStorage.setItem("smsHandoff",JSON.stringify({segment:seg}))}catch(e){}window._smsSegFilter=seg;state.mode="recommend";location.hash="#/list";setTimeout(route,50)}
 function handoffMail(seg){try{sessionStorage.setItem("mailHandoff",JSON.stringify({segment:seg,fsOnly:true}))}catch(e){}try{if(typeof MF!=="undefined"){MF.segment=seg||"";MF.handoffSeg=seg||"";MF.fsOnly=true}}catch(e){}location.hash="#/mail"}
 function viewDig(){state.mode="dig";$("#app").innerHTML=`<div class="tabs">${MODES.map(([k,v])=>`<button aria-pressed="${k==="dig"}" onclick="state.mode='${k}';location.hash='#/list'"> ${v}</button>`).join("")}</div>`+digHtml(digPool());renderSummary()}
 /* ===== 初回SMSテンプレ切替UI補助（SMS_MODES: 案件名30字・本文6000字・30件まで） ===== */
-function smsModeBar(){return `<div class="card"><b>保存済み案件文面への切替</b><div class="tabs">${smsModes.map(m=>`<button aria-pressed="${smsModeId===m.id}" onclick="smsModeId='${m.id}';route()">${esc(m.title)}</button>`).join("")}</div><button onclick="addSmsMode()">＋案件を追加（30件まで）</button> <button onclick="openReplyPatterns()">返信別の切り返し文</button><p class="small">案件名は30字まで、本文は6000字まで。切り返し文は返信パターン別の定型返信です。</p></div>`}
+function smsModeBar(){return `<div class="card"><b>保存済み案件文面への切替</b><div class="tabs">${smsModes.map(m=>`<button aria-pressed="${smsModeId===m.id}" onclick="smsModeId='${m.id}';route()">${esc(m.title)}</button>`).join("")}</div><button onclick="addSmsMode()">＋案件を追加（30件まで）</button> <button onclick="openReplyPatterns()">返信別の切り返し文</button><div class="flex" style="margin-top:8px"><label style="display:inline-flex;gap:6px;align-items:center;font-weight:700"><input type="checkbox" ${state.attachFormSms?"checked":""} onchange="state.attachFormSms=this.checked;LS.set('attachFormSms',this.checked);route()">回答フォームを付ける</label></div><p class="small">案件名は30字まで、本文は6000字まで。切り返し文は返信パターン別の定型返信です。</p></div>`}
 /* R3 パリティ: 返信パターン別の定型返信を一覧画面から開ける (旧アプリ仕様)。
    文面そのものは設定テンプレート (reply_detail / reply_tour / reply_other) が正本 */
 function openReplyPatterns(){const items=[["reply_detail","詳細希望への返信"],["reply_tour","見学希望への返信"],["reply_other","別案件希望への返信"]];showModal(`<h3>返信別の切り返し文</h3><p class="small">求職者から返信が来たときに使う定型文です。各カードの「返信切り返し」からは、相手の名前入りでコピーできます。</p>${items.map(([k,v])=>`<div class="rec"><b>${v}</b><p class="kv">${esc(templates[k]||"")}</p><button onclick="copyReplyPattern('${k}')">この文面をコピー</button></div>`).join("")}<button onclick="closeModal()">閉じる</button>`)}
@@ -687,10 +743,41 @@ function viewImport(){$("#app").innerHTML=`<div class="card"><h2>CSV取り込み
 <div class="card"><h3>取り込み履歴</h3>${state.imports.length?state.imports.map(h=>`<p class="small">・${esc(h.at)} ${esc(h.file)} — 新規${h.new}／最新応募${h.latest}／更新${h.updated}／スキップ${h.skip}／除外${h.excluded}${h.unclassified?"／未分類"+h.unclassified:""}${h.hash?"／ハッシュ "+esc(h.hash):""}</p>`).join(""):'<p class="small">まだ履歴がありません。サンプルCSVを試せます: 下のボタンでダミー3行を生成します。</p>'}<div id="coCand"></div><button onclick="demoImport()">サンプルCSVで試す（ダミー3行）</button></div>`;
  const dz=$("#dropZone");dz.addEventListener("dragover",e=>e.preventDefault());dz.addEventListener("drop",async e=>{e.preventDefault();const items=e.dataTransfer.items;let files=[];if(items&&items[0]&&items[0].webkitGetAsEntry){for(const it of items){const en=it.webkitGetAsEntry&&it.webkitGetAsEntry();if(en&&en.isFile)files.push(it.getAsFile())}}else files=[...e.dataTransfer.files];/* R3 (Z5-a): ドロップしたファイルをそのまま取り込み対象にしてプレビューまで進める (従来は破棄していた) */const inp=$("#impFiles");if(inp&&files.length){try{const dt=new DataTransfer();files.forEach(f=>{if(f)dt.items.add(f)});inp.files=dt.files}catch(err){}}if(files.length){previewImport()}else{alert("取り込めるファイルがありませんでした")}})}
 async function previewImport(){const inp=$("#impFiles");const files=[...(inp?inp.files:[])];if(!files.length){alert("ファイルを選んでください（またはサンプルCSVボタン）");return}window._importDemo=false;let all=[];const perFile=[];for(const f of files){if(isExcelFile(f.name)){if(typeof XLSX==="undefined"||!XLSX||typeof XLSX.read!=="function"||!XLSX.utils||typeof XLSX.utils.sheet_to_json!=="function"){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}let erows=null;try{const data=await f.arrayBuffer();const wb=XLSX.read(data,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];erows=excelRowsToRows(XLSX.utils.sheet_to_json(ws,{header:1,defval:""}))}catch(e){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}if(!erows.length){perFile.push({file:f.name,rows:0,note:"シートにデータがありません"});continue}const ehash=importRowsHash(erows);const eHeadOk=erows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>erows[0].map(x=>String(x).trim()).includes(s)));window._importSources=window._importSources||[];const eMapped=eHeadOk?mapRows(erows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(erows,f.name.replace(/\.[^.]+$/,""));all.push(...eMapped);window._importSources.push({file:f.name,rows2d:erows,mode:eHeadOk?"synonym":"generic",mapping:eHeadOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:eMapped});perFile.push({file:f.name,rows:eMapped.length,hash:ehash,same:state.imports.some(x=>x.hash===ehash),generic:!eHeadOk});continue}let text="";try{text=await decodeFile(f)}catch(e){perFile.push({file:f.name,rows:0,note:"読み込みに失敗しました（文字コードを確認してください）"});continue}let h=0;for(let i=0;i<text.length;i++)h=(h*31+text.charCodeAt(i))>>>0;const rows=parseCsvText(text);/* R3 (Z5-d): 空・空白だけのファイルはそのファイルだけを隔離し、他のファイルの取り込みを巻き込まない */if(!rows.length){perFile.push({file:f.name,rows:0,note:"空のファイルです（データ行がありません）"});continue}const headOk=rows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>rows[0].map(x=>String(x).trim()).includes(s)));let mapped=null;try{mapped=headOk?mapRows(rows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(rows,f.name.replace(/\.[^.]+$/,""))}catch(e){perFile.push({file:f.name,rows:0,note:"列の判定に失敗しました"});continue}all.push(...mapped);(window._importSources=window._importSources||[]).push({file:f.name,rows2d:rows,mode:headOk?"synonym":"generic",mapping:headOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:mapped});perFile.push({file:f.name,rows:mapped.length,hash:"H"+h.toString(16),same:state.imports.some(x=>x.hash==="H"+h.toString(16)),generic:!headOk})}window._importSources=(window._importSources||[]);window._importPerFile=perFile;window._importHash=perFile.map(x=>x.hash||"").join(",");
- renderImportPreview(all,files.map(f=>f.name).join(","))}
+ if(window._r6ServerMode&&CONFIG.API_URL&&typeof apiCall==="function"){
+    try{
+      var _srvResults=[];
+      for(var _fi=0;_fi<(window._importSources||[]).length;_fi++){
+        var _src=window._importSources[_fi];
+        var _pf=(perFile||[]).filter(function(p){return p.file===_src.file})[0];
+        var _res=await apiCall({action:"importPreview",file_name:_src.file,kind:"applicants",rows:(_src.mapped||[]).map(importRowToServer),client_op_id:(_pf&&_pf.hash)||"",chunk_seq:0});
+        if(!_res||typeof _res!=="object"||typeof _res.added!=="number"||typeof _res.updated!=="number"||typeof _res.skipped!=="number"||typeof _res.latest_application!=="number")throw new Error("importPreview: invalid response");
+        _res.file_name=_src.file;_srvResults.push(_res);
+      }
+      renderImportPreviewServer(_srvResults,files.map(function(f){return f.name}).join(","));
+    }catch(e){
+      try{showToast("サーバー照合に失敗したため端末照合（参考値）を表示しています","warn")}catch(_e){}
+      renderImportPreview(all,files.map(f=>f.name).join(","));
+    }
+  }else{
+    renderImportPreview(all,files.map(f=>f.name).join(","));
+  }
+}
 function renderImportPreview(rows,fname){const counts={new:0,latest:0,updated:0,skip:0,excluded:0};const reasons={};const judged=judgeImportRowsSequential(rows,applicants,state.area).map(function(x){const j=x.j;const r=x.r;if(j.category==="new")counts.new++;else if(j.category==="latest")counts.latest++;else if(j.category==="updated")counts.updated++;else if(j.category==="skip")counts.skip++;else counts.excluded++;reasons[j.label]=(reasons[j.label]||0)+1;return{r,j}});
  importPreview={judged,fname};const unknownStatus=rows.filter(r=>r.csv_status&&!CSV_STATUSES.includes(r.csv_status)).length;const perFileHtml=(window._importPerFile||[]).map(x=>`<p class="small">・${esc(x.file)}: ${x.rows}行${x.hash?" ／ 内容ハッシュ "+x.hash:""}${x.same?" ／ 前回と同一ファイル（再取り込みでも二重登録されません）":""}${x.generic?" ／ 未知の列構成のため汎用自動判定で取り込み":""}${x.note?" ／ "+esc(x.note):""}</p>`).join("");const mapHtml=(window._importSources||[]).map(function(src,fi){if(!src.mapping)return "";var mp=src.mapping;return '<div class="card"><h4>列マッピング確認（汎用自動判定）: '+esc(src.file||"")+'</h4><p class="small">曖昧な列: '+(mp.ambiguous.length?esc(mp.ambiguous.join("、"))+"（先に一致した列を採用。プレビューで確認してください）":"なし")+'</p>'+Object.entries(mp.idx).map(function(e){var k=e[0],i=e[1];return '<label>'+esc(k)+'</label><select onchange="remapImportColumn('+fi+',\''+k+'\',this.value)"><option value="-1">使わない</option>'+mp.headers.map(function(h,hi){return '<option value="'+hi+'"'+(i===hi?" selected":"")+'>'+esc(h)+'</option>'}).join("")+'</select>'}).join("")+'<p class="small">列を変えると、その場でプレビューを再計算します。この取り込みに反映されます。</p></div>'}).join("");$("#impResult").innerHTML=`<p class="small">手順: 1 ファイルを選ぶ → 2 取り込み内容を確認 → 3 内訳（差分）を確認 → 4 確定で反映</p><h3>確認画面（まだ反映していません）</h3>${window._importDemo?"":'<button class="primary" style="min-height:48px" onclick="commitImport()">確定で反映</button>'}<p>新規追加 ${counts.new} ／ 最新応募として登録 ${counts.latest} ／ 更新 ${counts.updated} ／ スキップ ${counts.skip} ／ 除外 ${counts.excluded}</p><p class="small">前回との差分: 追加 ${counts.new}件 ／ 更新（最新応募） ${counts.latest}件 ／ 更新（属性のみ） ${counts.updated}件 ／ 変化なし ${counts.skip}件 ／ 除外 ${counts.excluded}件${unknownStatus?" ／ 未分類ステータス "+unknownStatus+"件（黙って捨てず「未分類」として取り込みます）":""}</p>${perFileHtml}${mapHtml}${(window._importUnassigned&&window._importUnassigned.length)?`<p class="small">取り込まれなかった列: ${esc(window._importUnassigned.join("、"))}（対応する項目がないため保存されません）</p>`:""}<p class="small">理由別: ${Object.entries(reasons).map(([k,v])=>esc(k)+" "+v+"件").join(" ／ ")||"なし"}</p>${window._importDemo?'<p class="badge warn">これは表示確認用のサンプルです。実際のデータには反映できません。取り込むときは CSV ファイルを選んでください。</p>':'<button class="primary" onclick="commitImport()">確定で反映</button>'}`}
-function importRowToServer(r){r=r||{};const s=function(v){return v==null?"":v};const pref=String(s(r.prefecture)||"");const muni=String(s(r.municipality)||"");let rest=String(s(r.address)||"");if(pref&&rest.indexOf(pref)===0)rest=rest.slice(pref.length);if(muni&&rest.indexOf(muni)===0)rest=rest.slice(muni.length);const jobTxt=String(s(r.job)||"");const jobType=jobTxt.indexOf("\u770b\u8b77")>=0?"kango":jobTxt.indexOf("\u4ecb\u8b77")>=0?"kaigo":((s(r.job_type)==="kaigo"||s(r.job_type)==="kango")?s(r.job_type):"");let area="";try{if(typeof KANSAI!=="undefined"&&KANSAI.indexOf(pref)>=0)area="kansai";else if(typeof KANTO!=="undefined"&&KANTO.indexOf(pref)>=0)area="kanto"}catch(e){area=""}const nameStr=String(s(r.name)||"");const surname=String(s(r.surname)||"")||(nameStr?nameStr.split(/[\s\u3000]+/)[0]:"");return{phone:normalizeNumericString(s(r.phone)),email:s(r.email),name:s(r.name),birth_date:s(r.birth_date),age:s(r.age),applied_at:s(r.applied_at),source_company:s(r.source_company),job_type:jobType,csv_status:s(r.csv_status),area:area,name_raw:nameStr,surname:surname,postal_code:s(r.postal_code),prefecture:s(r.prefecture),municipality:s(r.municipality),address_rest:rest,nearest_station:s(r.nearest_station),lat:s(r.lat),lon:s(r.lon),qualifications:s(r.qualifications),experience_years:s(r.experience_years),desired_days_per_week:s(r.desired_days),desired_time_slots:s(r.desired_slots),desired_start_date:s(r.desired_start_date),is_active_target:s(r.is_active_target)}}
+function renderImportPreviewServer(serverResults,fileNames){
+  var totals={new:0,latest:0,updated:0,skip:0,excluded:0,unclassified:0};
+  var perFileHtml=(serverResults||[]).map(function(r){
+    var latest=(typeof r.latest_application==="number")?r.latest_application:Math.max(0,(r.updated||0)-(r.attr_updated||0));
+    var excl=r.excluded||r.skipped_reasons||{};
+    var exclN=Object.keys(excl).reduce(function(a,k){return a+Number(excl[k]||0)},0);
+    totals.new+=Number(r.added||0);totals.latest+=latest;totals.updated+=(Number(r.updated||0)-latest);totals.skip+=Number(r.skipped||0);totals.excluded+=exclN;totals.unclassified+=Number(r.unclassified||0);
+    return '<p class="small">・'+esc(r.file_name||"")+'： 新規 '+(r.added||0)+' ／ 最新応募 '+latest+' ／ 更新 '+((r.updated||0)-latest)+' ／ スキップ '+(r.skipped||0)+' ／ 除外 '+exclN+' ／ 未分類 '+(r.unclassified||0)+'</p>';
+  }).join("");
+  importPreview={judged:null,serverCounts:{added:totals.new,updated:totals.latest+totals.updated,skipped:totals.skip,latest_application:totals.latest,new:totals.new,latest:totals.latest,skip:totals.skip,excluded:totals.excluded,unclassified:totals.unclassified},perFile:serverResults,fname:fileNames,rows:(window._importSources||[]).reduce(function(a,s){return a.concat(s.mapped||[])},[])};
+  var el=document.getElementById("impResult");if(!el)return;
+  el.innerHTML='<p class="small">手順: 1 ファイルを選ぶ → 2 取り込み内容を確認 → 3 内訳（差分）を確認 → 4 確定で反映</p><h3>確認画面（サーバー照合・まだ反映していません）</h3><button class="primary" style="min-height:48px" onclick="commitImport()">確定で反映</button><p>新規追加 '+totals.new+' ／ 最新応募として登録 '+totals.latest+' ／ 更新 '+totals.updated+' ／ スキップ '+totals.skip+' ／ 除外 '+totals.excluded+' ／ 未分類 '+totals.unclassified+'</p>'+perFileHtml+'<button class="primary" onclick="commitImport()">確定で反映</button>';
+}
+function importRowToServer(r){r=r||{};const s=function(v){return v==null?"":v};const pref=String(s(r.prefecture)||"");const muni=String(s(r.municipality)||"");let rest=String(s(r.address)||"");var prefEff=pref;if(!prefEff&&rest){var _allPrefs=(typeof KANSAI!=="undefined"?KANSAI:[]).concat(typeof KANTO!=="undefined"?KANTO:[]);for(var _pi=0;_pi<_allPrefs.length;_pi++){if(rest.indexOf(_allPrefs[_pi])===0){prefEff=_allPrefs[_pi];break}}}if(pref&&rest.indexOf(pref)===0)rest=rest.slice(pref.length);if(muni&&rest.indexOf(muni)===0)rest=rest.slice(muni.length);const jobTxt=String(s(r.job)||"");const jobType=jobTxt.indexOf("\u770b\u8b77")>=0?"kango":jobTxt.indexOf("\u4ecb\u8b77")>=0?"kaigo":((s(r.job_type)==="kaigo"||s(r.job_type)==="kango")?s(r.job_type):"");let area="";try{if(typeof KANSAI!=="undefined"&&KANSAI.indexOf(prefEff)>=0)area="kansai";else if(typeof KANTO!=="undefined"&&KANTO.indexOf(prefEff)>=0)area="kanto"}catch(e){area=""}const nameStr=String(s(r.name)||"");const surname=String(s(r.surname)||"")||(nameStr?nameStr.split(/[\s\u3000]+/)[0]:"");return{phone:normalizeNumericString(s(r.phone)),email:s(r.email),name:s(r.name),birth_date:s(r.birth_date),age:s(r.age),applied_at:s(r.applied_at),source_company:s(r.source_company),job_type:jobType,csv_status:s(r.csv_status),area:area,name_raw:nameStr,surname:surname,postal_code:s(r.postal_code),prefecture:prefEff,municipality:s(r.municipality),address_rest:rest,nearest_station:s(r.nearest_station),lat:s(r.lat),lon:s(r.lon),qualifications:s(r.qualifications),experience_years:s(r.experience_years),desired_days_per_week:s(r.desired_days),desired_time_slots:s(r.desired_slots),desired_start_date:s(r.desired_start_date),is_active_target:s(r.is_active_target)}}
 function splitJudgedByFile(judged,perFile){const all=Array.isArray(judged)?judged:[];if(!Array.isArray(perFile)||!perFile.length)return[{rows:all.slice()}];let total=0;for(const pf of perFile){const c=pf&&pf.rows;if(typeof c!=="number"||!isFinite(c)||c<0||Math.floor(c)!==c)return[{rows:all.slice()}];total+=c}if(total!==all.length)return[{rows:all.slice()}];const groups=[];let pos=0;for(const pf of perFile){const rows=all.slice(pos,pos+pf.rows);pos+=pf.rows;groups.push({file:(pf&&pf.file)||"",file_name:(pf&&pf.file)||"",rows:rows})}return groups}
 var importCommitting=false;
 
@@ -721,7 +808,7 @@ function mailDateDaysAgo(n){const parts=String(todayStr()).split("-").map(Number
    完全一致 / 看護師×正看護師 / 正看護師×看護師 / 保有側が希望を含む (准看護師は看護師に含めない) */
 function qualMatch(haveStr,want){const w=String(want||"").normalize("NFKC").replace(/\s/g,"");if(!w)return false;const tokens=String(haveStr||"").split(/[,、\/／・]/).map(s=>s.normalize("NFKC").replace(/\s/g,"")).filter(Boolean);return tokens.some(t=>t===w||(w==="看護師"&&t==="正看護師")||(w==="正看護師"&&t==="看護師")||(t.includes(w)&&!(w==="看護師"&&t==="准看護師")))}
 function mailFilterToServer(mf){mf=mf||MF;const f={};/* R3 (Z4-3a): 対象エリアを必ず送る (サーバー側の地域判定と一致させる) */f.area=(typeof state!=="undefined"&&state.area)||"kansai";if(mf.fsOnly)f.has_fs_history=true;if(mf.segment)f.segment=mf.segment;if(Array.isArray(mf.companies)&&mf.companies.length)f.source_companies=mf.companies.slice();const ageMin=(mf.ageMin===""||mf.ageMin==null)?NaN:Number(mf.ageMin);if(Number.isFinite(ageMin))f.age_min=ageMin;const ageMax=(mf.ageMax===""||mf.ageMax==null)?NaN:Number(mf.ageMax);if(Number.isFinite(ageMax))f.age_max=ageMax;if(mf.includeNoAge)f.age_include_unknown=true;if(Array.isArray(mf.prefs)&&mf.prefs.length)f.prefectures=mf.prefs.slice();else if(mf.pref)f.prefecture=mf.pref;const munis=(Array.isArray(mf.munis)&&mf.munis.length)?mf.munis:(Array.isArray(mf.muni)&&mf.muni.length)?mf.muni:(typeof mf.muni==="string"&&mf.muni)?[mf.muni]:null;if(munis)f.municipalities=munis.slice();if(mf.addrKw)f.address_keyword=mf.addrKw;if(mf.job)f.job_type=mf.job;if(Array.isArray(mf.quals)&&mf.quals.length){f.qualifications=mf.quals.slice();if(mf.includeNoQual)f.include_no_qual=true}if(Array.isArray(mf.csvStatuses)&&mf.csvStatuses.length)f.csv_statuses=mf.csvStatuses.slice();const appliedDays=(mf.appliedDays===""||mf.appliedDays==null)?NaN:Number(mf.appliedDays);if(Number.isFinite(appliedDays)&&appliedDays>=0)f.applied_from=mailDateDaysAgo(appliedDays);if(mf.wantCond)f.desired_keyword=mf.wantCond;return f}
-function buildMailServerParams(mf){mf=mf||MF;return{filter:mailFilterToServer(mf),top_n:mf.topN,recommend_count:mf.recCount,mode:(mf.mode==="same"?"same_body":"per_person"),include_active:!!mf.includeActive,include_response_in_progress:!!mf.includeRespInProgress}}
+function buildMailServerParams(mf){mf=mf||MF;return{filter:mailFilterToServer(mf),top_n:mf.topN,recommend_count:mf.recCount,mode:(mf.mode==="same"?"same_body":"per_person"),include_active:!!mf.includeActive,include_response_in_progress:!!mf.includeRespInProgress,include_form:state.attachFormMail!==false}}
 function isTerminalForMail(a){try{if(!a)return false;if(a.app_status==="NG"||a.app_status==="譲渡")return true;const st=statusStage(a.csv_status);return !!(st&&st.terminal)}catch(e){return false}}
 /* R4 O-03: メール正規化 (サーバー normalizeEmail_ と同一仕様: trim + NFKC + 小文字化) */
 function normalizeEmail(v){let s=String(v||"");try{s=s.normalize("NFKC")}catch(e){}return s.replace(/^[\s　]+|[\s　]+$/g,"").toLowerCase()}
@@ -731,7 +818,7 @@ function computeMailTargets(pool,filters,topN,recCount){pool=pool||applicants;fi
  cand.sort((x,y)=>appliedAtStr(y).localeCompare(appliedAtStr(x)));cand=cand.slice(0,topN||700);const targets=cand.map(a=>{const recs=filters.mode==="same"?[]:recommend(a,recCount);if(filters.mode!=="same"&&!recs.length)breakdown.noRecommend++;return{applicant:a,recommended:recs}}).filter(t=>filters.mode==="same"||t.recommended.length);breakdown.recentResponders=matched.filter(function(a){return _respRecent.has(a.id)}).length;breakdown.sendable=targets.length;return{targets,breakdown}}
 function mailFooter(op){return "\n\n----\n回答フォーム: "+appFormBaseUrl()+"?token=（送信時に差し替わります）\n配信停止: "+appOptoutBaseUrl()+"?token=（送信時に差し替わります）\n送信者: "+(op?op.display+" <"+(op.email||"未登録")+">":"")+"\n特定電子メール法に基づく表示: 送信者 "+(op?op.company:"株式会社ファーストスタッフィング")+"（サンプル）"}
 function viewMail(){const op=operators.find(o=>o.email===MF.sender);const handoff=MF.handoffSeg?`<div class="notice">掘り起こしから引き継ぎ: セグメント「${esc(MF.handoffSeg)}」の条件を適用中（送信時にサーバーが再判定します）</div>`:"";
- $("#app").innerHTML=`<h2>Gmailで案件配信</h2>${handoff}<div class="flex"><span class="badge stepNow" id="mailStep1">1 対象</span><span class="badge" id="mailStep2">2 文面</span><span class="badge" id="mailStep3">3 送信</span></div><div class="card"><h3>絞り込み（項目内OR・項目間AND）</h3>
+ $("#app").innerHTML=`<h2>Gmailで案件配信</h2>${handoff}<div class="flex"><span class="badge stepNow" id="mailStep1">1 対象</span><span class="badge" id="mailStep2">2 文面</span><span class="badge" id="mailStep3">3 送信</span></div><div class="flex" style="margin:6px 0"><button onclick="testMail()">自分宛てテスト送信（確認用・本番送信ではありません）</button><p class="small" id="testBlockReason"></p></div><div class="card"><h3>絞り込み（項目内OR・項目間AND）</h3>
  <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" ${MF.fsOnly?"checked":""} onchange="MF.fsOnly=this.checked">ファーストスタッフィング登録あり（応募履歴にFSあり）</label>
  <label>登録会社（複数・15社対応: 検索つきチップ）</label><input placeholder="会社名で絞る" oninput="document.querySelectorAll('.cochip').forEach(c=>c.style.display=c.textContent.includes(this.value)?'':'none')">
  <div class="flex" style="max-height:150px;overflow:auto">${COMPANIES.map(c=>`<button class="cochip" aria-pressed="${MF.companies.includes(c)}" onclick="MF.companies=MF.companies.includes('${esc(c)}')?MF.companies.filter(x=>x!=='${esc(c)}'):[...MF.companies,'${esc(c)}'];route()">${esc(c)}</button>`).join("")}</div>
@@ -747,10 +834,11 @@ function viewMail(){const op=operators.find(o=>o.email===MF.sender);const handof
  <div class="card"><h3>メール作成（2 文面）</h3><label>モード</label><select onchange="MF.mode=this.value"><option value="per" ${MF.mode==="per"?"selected":""}>1人ずつおすすめ差し込み</option><option value="same" ${MF.mode==="same"?"selected":""}>全員同じ本文</option></select>
  <label>おすすめ件数（1〜3・Gmail側は最大3件）</label><input type="number" min="1" max="5" value="${MF.recCount}" onchange="MF.recCount=Math.min(3,Math.max(1,Number(this.value||3)))">
  <label>件名</label><input id="mSubj" value="${esc(templates.mail_subject)}"><label>本文テンプレ（{宛名} {おすすめ案件}）</label><textarea id="mBody">${esc(templates.mail_body)}</textarea><p class="small">末尾自動付加: 回答フォームリンク（トークン付き）／配信停止案内／特定電子メール法フッター（送信者情報）。プレビュー: <button onclick="previewMailForm()">メール内リンクのプレビュー（回答フォームを開く）</button></p>
+ <label style="display:flex;gap:8px;align-items:center;font-weight:700"><input type="checkbox" ${state.attachFormMail?"checked":""} onchange="state.attachFormMail=this.checked;LS.set('attachFormMail',this.checked);route()">回答フォームを付ける</label>
  <label>送信者（operators）</label><select onchange="MF.sender=this.value;route()">${operators.map(o=>`<option value="${esc(o.email)}" ${MF.sender===o.email?"selected":""}>${esc(o.name)}（${esc(o.email||"メール未登録")}・${o.linked?"連携済み":"未連携"}）</option>`).join("")}</select>
  <label>送信タイミング</label><select onchange="MF.timing=this.value"><option value="now">今すぐ</option><option value="sched">日時指定</option></select><input type="datetime-local" onchange="MF.when=this.value">
  <div class="flex" style="justify-content:flex-end"><button onclick="testMail()">自分宛てテスト送信（確認用・本番送信ではありません）</button></div><div class="flex stickyAction"><span class="small" id="sendCountNear"></span><button class="primary" ${!op||!op.linked||!op.email?"disabled":""} onclick="sendMail()">送信実行</button></div>${!op||!op.linked?'<p class="badge bad">未連携の送信者では送信できません</p>':""}<div id="mailProg"></div></div>`}
-function mailSnapshot(){return JSON.stringify([MF.fsOnly,MF.companies,MF.ageMin,MF.ageMax,MF.pref,MF.muni,MF.prefs,MF.munis,MF.job,MF.quals,MF.csvStatuses,MF.topN,MF.recCount,MF.mode,MF.sender,MF.addrKw,MF.includeActive,MF.includeRespInProgress,MF.includeNoAge,MF.includeNoQual,MF.appliedDays,MF.wantCond,MF.timing,MF.when,MF.handoffSeg,MF.segment,templates.mail_subject,templates.mail_body,($("#mSubj")?$("#mSubj").value:""),($("#mBody")?$("#mBody").value:"")])}
+function mailSnapshot(){return JSON.stringify([MF.fsOnly,MF.companies,MF.ageMin,MF.ageMax,MF.pref,MF.muni,MF.prefs,MF.munis,MF.job,MF.quals,MF.csvStatuses,MF.topN,MF.recCount,MF.mode,MF.sender,MF.addrKw,MF.includeActive,MF.includeRespInProgress,MF.includeNoAge,MF.includeNoQual,MF.appliedDays,MF.wantCond,MF.timing,MF.when,MF.handoffSeg,MF.segment,templates.mail_subject,templates.mail_body,($("#mSubj")?$("#mSubj").value:""),($("#mBody")?$("#mBody").value:""),state.attachFormMail])}
 function invalidateMailTargets(){window._mailTargets=null;window._mailSnapshot=null}
 /* R4 01-#2: Gmail画面での変更はすべて対象確認を無効化する (陳腐化検出の補助。
    本筋は mailSnapshot の網羅 + doSendMail 冒頭の最終ガード) */
@@ -840,7 +928,7 @@ ${rows.map(r=>{const a=applicants.find(x=>x.id===r.applicant_id);return `<div cl
 function handleResp(id){const r=state.responses.find(x=>x.id===id);r.handled=true;r.handled_by=(operators.find(o=>o.email===MF.sender)||operators[0]).name;r.isNew=false;saveAll();enqueue("response_handled",{id});route()}
 function unhandleResp(id){const r=state.responses.find(x=>x.id===id);if(!r)return;r.handled=false;r.handled_by="";saveAll();enqueue("response_unhandled",{id});showToast("未対応に戻しました");route()}
 /* ===== 設定 ===== */
-function viewSettings(){$("#app").innerHTML=`<h2>設定</h2><div class="card"><h3>テスト送信先（固定）</h3><p>Gmailテスト送信先: <b>${TEST_SEND_EMAIL}</b></p><p class="small">施設メーラーと同じ固定テスト宛先です。テスト送信はこの宛先だけに送り、通常の配信対象（求職者）には送りません。本番では settings の test_send_email（既定値 ${TEST_SEND_EMAIL}）が正です。</p></div><div class="card"><h3>送信者（operators）管理</h3><p class="small">@kikari.co.jp 以外のメールは送信者として保存できません（画面側バリデーション＋本番はサーバー側でも必須チェック）。</p>
+function viewSettings(){$("#app").innerHTML=`<h2>設定</h2><div class="card"><h3>テスト送信先（固定）</h3><p>Gmailテスト送信先: <b>${TEST_SEND_EMAIL}</b></p><div class="flex"><button onclick="testMail()">自分宛てテスト送信（確認用・本番送信ではありません）</button></div><p class="small">施設メーラーと同じ固定テスト宛先です。テスト送信はこの宛先だけに送り、通常の配信対象（求職者）には送りません。本番では settings の test_send_email（既定値 ${TEST_SEND_EMAIL}）が正です。</p></div><div class="card"><h3>送信者（operators）管理</h3><p class="small">@kikari.co.jp 以外のメールは送信者として保存できません（画面側バリデーション＋本番はサーバー側でも必須チェック）。</p>
 ${operators.map((o,i)=>`<div class="rec"><b>${esc(o.name)}</b> <span class="badge ${o.linked?"ok":"bad"}">${o.linked?"Google連携済み":"未連携"}</span>
 <label>メール（未登録はプレースホルダ・編集可）</label><input id="opMail${i}" value="${esc(o.email)}" placeholder="例: t-xxx@kikari.co.jp">
 <label>表示名</label><input id="opDisp${i}" value="${esc(o.display)}"><label>会社名</label><input id="opCo${i}" value="${esc(o.company)}"><label>電話</label><input id="opTel${i}" value="${esc(o.phone)}"><label>署名</label><textarea id="opSig${i}">${esc(o.signature)}</textarea><label>返信先</label><input id="opReply${i}" value="${esc(o.reply_to)}"><button onclick="saveOp(${i})">この送信者を保存</button></div>`).join("")}</div>
@@ -864,7 +952,7 @@ function bulkPreview(){const tpl=(smsModes.find(m=>m.id===smsModeId)||smsModes[0
 function markSmsBulk(id){markSms(id,true)}
 function bulkMark(){if(!confirm("選択中の全員分を、実際に送信済みとして記録します。よろしいですか？"))return;/* R4 O-06: 配信停止中の人は一括記録からも除外する */const blockedIds=[...selected].filter(id=>{const a=applicants.find(x=>x.id===id);return a&&isOptoutForSms(a)});const targetIds=[...selected].filter(id=>!blockedIds.includes(id));if(!targetIds.length){showToast("選択中の全員が配信停止中のため記録できません","bad");return}const tpl=(smsModes.find(m=>m.id===smsModeId)||smsModes[0]);const items=targetIds.map(id=>{const a=applicants.find(x=>x.id===id);if(!a)return {applicant_id:id};let caseIds=[];try{caseIds=recommend(a,5).map(c=>c.id)}catch(e){}return {applicant_id:id,body_snapshot:personalize(tpl.body,a).replace("{不足ヒヤリング}",missingHearing(a)),case_ids:caseIds}});targetIds.forEach(id=>{const a=applicants.find(x=>x.id===id);a.sms_sent=true;a.last_contact_at=todayStr();a.last_sms_at=todayStr();a.sms_count=(a.sms_count||0)+1;a.events.push({at:new Date().toISOString(),kind:"sms_sent",detail:"一括記録（未検証）: 一括選択から送信済み記録"})});enqueue("bulk_sms_sent",{ids:targetIds,items});selected.clear();showToast(blockedIds.length?("送信済みを記録しました（反映待ち）。配信停止中の "+blockedIds.length+" 名は記録しませんでした"):"送信済みを記録しました（反映待ち）");route()}
 /* 追補8-3: 入口ダッシュボード — ファネル＋掘り起こし成果 */
-const _viewHome=viewHome;viewHome=function(){_viewHome();const pool=nonTestApplicants().filter(a=>a.area===state.area);const fn=funnel(pool);const due=dueTodayList(digPool());const max=Math.max(...fn.map(x=>x[1]),1);const dash=`<div class="card"><h3>送信コンソール・ダッシュボード（候補者→送信→返信→アテンド→FIX→内定→稼働開始）</h3>${fn.map(([k,v])=>`<div class="flex"><span style="min-width:90px">${k}</span><div class="progress" style="flex:1"><i style="width:${Math.round(v/max*100)}%"></i></div><b>${v}</b></div>`).join("")}<p class="small">掘り起こし成果: 今日連絡すべき人 ${due.length}名 ／ 掘り起こし対象 ${digPool().length}名 ／ 回答未対応 ${state.responses.filter(r=>!r.handled).length}件</p><div class="flex"><a class="btn primary" href="#/dig">掘り起こしへ</a><a class="btn" href="#/responses">返信管理（回答一覧）へ</a></div></div>`;$("#app").insertAdjacentHTML("afterbegin",dash)};
+const _viewHome=viewHome;viewHome=function(){_viewHome()};
 /* ===== 自動テスト用 純粋ロジック公開 window.__APP_LOGIC__（UIに影響なし） ===== */
 function buildFirstSmsBody(applicant,templateBody){const tpl=templateBody||templates.sms_first;return personalize(tpl,applicant).split("{不足ヒヤリング}").join(missingHearing(applicant))}
 /* rankCasesForApplicant は順位ロジック部（LIVE §6減衰スコア式）で定義 */
@@ -1053,7 +1141,7 @@ function resolveCaseCoord(r,j){var la=Number(r&&r.lat),lo=Number(r&&r.lon);
 function countCaseCoords(judged){var c={coord:0,rep:0,none:0};(judged||[]).forEach(function(x){if(!x.j||!x.j.ok)return;var k=resolveCaseCoord(x.r,x.j).kind;c[k==="coord"?"coord":k==="rep"?"rep":"none"]++});return c}
 function previewCaseImport(){const inp=document.getElementById("caseFiles");const files=inp?[...inp.files]:[];if(!files.length){alert("案件CSVファイルを選んでください");return}(async()=>{let all=[];for(const f of files){const text=await decodeFile(f);all.push(...parseCaseCsv(text))}const judged=all.map(r=>({r,j:judgeCaseRow(r)}));caseImportPreview={judged};const ok=judged.filter(x=>x.j.ok),dups=ok.filter(x=>x.j.dup),news=ok.filter(x=>!x.j.dup);const ng=judged.filter(x=>!x.j.ok);/* R3 (検証 #33): 座標の内訳をプレビューで明示する (確定時の解決方式と同じ判定) */let coordHas=0,coordRep=0,coordNone=0,coordDown=0;const downReasons={};for(const x of ok){const r=x.r;const chk=coordBasicCheck(r.lat,r.lon);if(chk.state==="ok"){const pc=coordPrecisionCheck(chk.lat,chk.lon,muniRepPoint(x.j.pref,x.j.muni),null);if(pc.precise){coordHas++;continue}coordDown++;downReasons[pc.reason]=(downReasons[pc.reason]||0)+1;continue}if(chk.state==="invalid"){coordDown++;downReasons[chk.reason]=(downReasons[chk.reason]||0)+1;continue}const rep=muniRepPoint(x.j.pref,x.j.muni);if(rep)coordRep++;else coordNone++}document.getElementById("caseImpResult").innerHTML=`<h3>案件取り込み 確認画面（まだ反映していません）</h3><p>読込 ${judged.length}件 ／ 新規 ${news.length}件 ／ 既存と重複（既存を優先・追加しない） ${dups.length}件 ／ 除外 ${ng.length}件</p><p class="small">座標の内訳（取り込み対象 ${ok.length}件）: 精密座標あり ${coordHas}件 ／ 検証で降格 ${coordDown}件${coordDown?`（${Object.entries(downReasons).map(([k,v])=>k+" "+v+"件").join("・")}）`:""} ／ 市区町村代表点で補完 ${coordRep}件 ／ 座標不明 ${coordNone}件（座標不明の案件は距離が測れないため、おすすめでは「距離不明」として扱います）</p><p class="small">除外理由別: ${ng.map(x=>x.j.reason).filter((v,i,arr)=>arr.indexOf(v)===i).map(k=>k+" "+ng.filter(x=>x.j.reason===k).length+"件").join(" ／ ")||"なし"}。地域は住所（都道府県）から自動判定しています。</p><button class="primary" onclick="commitCaseImport()">確定で反映（新規のみ追加）</button>`})()}
 var caseCommitting=false;
-function commitCaseImport(){if(caseCommitting)return;if(!caseImportPreview)return;caseCommitting=true;try{let n=0;const addedCases=[];for(const{r,j}of caseImportPreview.judged){if(!j.ok||j.dup)continue;const _chk=coordBasicCheck(r.lat,r.lon);const _precise=_chk.state==="ok"&&coordPrecisionCheck(_chk.lat,_chk.lon,muniRepPoint(j.pref,j.muni),null).precise;const _rLat=_precise?_chk.lat:null;const _rLon=_precise?_chk.lon:null;const _hasCoord=_precise;const _rep=_hasCoord?null:muniRepPoint(j.pref,j.muni);const _lat=_hasCoord?_rLat:(_rep?_rep.lat:null);const _lon=_hasCoord?_rLon:(_rep?_rep.lon:null);const _prec=_hasCoord?"町名":(_rep?"市区町村代表点":"不明");CASES.unshift({id:"CIMP"+Date.now()+"_"+n,facility:r.facility,service:r.service||"",prefecture:j.pref, municipality:j.muni,address:r.address,lat:_lat,lon:_lon,precision:_prec,job_type:j.job_type,hours:"",days:"",salary:r.salary,billing:null,acquired:r.acquired||todayStr(),open:true,source:"excel"});addedCases.push({facility_name:r.facility,prefecture:j.pref,municipality:j.muni,address:r.address,job_type:j.job_type,service_type:r.service||"",salary_text:r.salary||"",lat:_rLat!=null?_rLat:"",lon:_rLon!=null?_rLon:"",precision:_prec,is_open:true,source:"csv",source_case_key:String(r.facility||"").replace(/[\s\u3000]/g,"")+"|"+(r.address||"")+"|"+j.job_type});n++}if(addedCases.length)enqueue("case_import",{cases:addedCases});showToast("案件を "+n+" 件追加しました（既存案件を優先し、重複は追加していません）");caseImportPreview=null;route()}finally{caseCommitting=false}}
+function commitCaseImport(){if(caseCommitting)return;if(!caseImportPreview)return;caseCommitting=true;try{let n=0;const addedCases=[];for(const{r,j}of caseImportPreview.judged){if(!j.ok||j.dup)continue;const _chk=coordBasicCheck(r.lat,r.lon);const _precise=_chk.state==="ok"&&coordPrecisionCheck(_chk.lat,_chk.lon,muniRepPoint(j.pref,j.muni),null).precise;const _rLat=_precise?_chk.lat:null;const _rLon=_precise?_chk.lon:null;const _hasCoord=_precise;const _rep=_hasCoord?null:muniRepPoint(j.pref,j.muni);const _lat=_hasCoord?_rLat:(_rep?_rep.lat:null);const _lon=_hasCoord?_rLon:(_rep?_rep.lon:null);const _prec=_hasCoord?"町名":(_rep?"市区町村代表点":"不明");CASES.unshift({id:"CIMP"+Date.now()+"_"+n,facility:r.facility,service:r.service||"",prefecture:j.pref, municipality:j.muni,address:r.address,lat:_lat,lon:_lon,precision:_prec,job_type:j.job_type,hours:"",days:"",salary:r.salary,billing:null,acquired:r.acquired||todayStr(),open:true,source:"excel"});addedCases.push({facility_name:r.facility,prefecture:j.pref,municipality:j.muni,address:r.address,job_type:j.job_type,service_type:r.service||"",salary_text:r.salary||"",lat:_rLat!=null?_rLat:"",lon:_rLon!=null?_rLon:"",precision:_prec,is_open:true,source:"csv",source_case_key:String(r.facility||"").replace(/[\s\u3000]/g,"")+"|"+(r.address||"")+"|"+j.job_type+"|"+(r.service||"")+"|"+(r.salary||"")});n++}if(addedCases.length)enqueue("case_import",{cases:addedCases});showToast("案件を "+n+" 件追加しました（既存案件を優先し、重複は追加していません）");caseImportPreview=null;route()}finally{caseCommitting=false}}
 function remapImportColumn(fileIdx,k,v){var srcs=window._importSources||[];var src=srcs[fileIdx];
   if(!src||!src.mapping){if(window._importMapping){if(Number(v)<0)delete window._importMapping.idx[k];else window._importMapping.idx[k]=Number(v)}showToast("列マッピングを更新しました");return}
   var before=importPreview?importPreview.judged.reduce(function(acc,x){acc[x.j.category]=(acc[x.j.category]||0)+1;return acc},{}):{};
@@ -1073,7 +1161,7 @@ function saveCompanyRow(i){const reg=companyRegistry();reg[i].name=document.getE
 function deleteCompanyRow(i){const reg=companyRegistry();reg.splice(i,1);saveCompanyRegistry(reg);route()}
 function addCompanyRow(){const v=document.getElementById("coNewName").value.trim();if(!v)return;const reg=companyRegistry();reg.push({name:normalizeCompany(v),aliases:[]});saveCompanyRegistry(reg);showToast("会社を追加しました");route()}
 /* --- 画面への差し込み: 一覧上部の府県ボタン＋凡例 / 取り込みタブ / 設定の会社レジストリ / 掘り起こし・配信の進捗統一 --- */
-const _viewListR3=viewList;viewList=function(){_viewListR3();const app=document.getElementById("app");if(app){app.insertAdjacentHTML("afterbegin",prefButtons()+`<div class="flex"><button onclick="showBadgeLegend()">？ バッジの色の意味</button></div>`);const tabBtn=app.querySelector('.tabs button[aria-pressed="true"]');if(tabBtn&&tabBtn.scrollIntoView)tabBtn.scrollIntoView({inline:"center"})}};
+const _viewListR3=viewList;viewList=function(){_viewListR3();const app=document.getElementById("app");if(app){app.insertAdjacentHTML("afterbegin",prefButtons());const tabBtn=app.querySelector('.tabs button[aria-pressed="true"]');if(tabBtn&&tabBtn.scrollIntoView)tabBtn.scrollIntoView({inline:"center"})}};
 /* 空間設計 §3.1-1: バッジ凡例は常時表示せず、必要時にダイアログで出す (最初のカードまでの積み上げ削減) */
 function showBadgeLegend(){showModal(`<h3>バッジの色の意味</h3><p class="kv">緑 = 完了・送信済み
 橙 = 注意・期限接近・新着
@@ -1164,7 +1252,8 @@ function setResponseStatus(id,st){
   var r=state.responses.find(function(x){return x.id===id});if(!r)return;
   /* R4 04-05: capture the state the operator saw, before local overwrite */
   var expectedStatus=respStatus(r);var expectedAt=r.status_at||"";
-  if(st==="handled"&&expectedStatus==="in_progress"&&r.status_by&&r.status_by!==currentOpName()){
+  var _myIds=[];try{_myIds=[currentOpName(),currentOpEmail()].filter(Boolean)}catch(e){}
+  if(st==="handled"&&expectedStatus==="in_progress"&&r.status_by&&_myIds.indexOf(r.status_by)<0){
     if(typeof confirm==="function"&&!confirm(r.status_by+"\u3055\u3093\u304c\u5bfe\u5fdc\u4e2d\u3067\u3059\u3002\u5bfe\u5fdc\u6e08\u307f\u306b\u3057\u307e\u3059\u304b\u3002"))return;
   }
   r.status=st;r.status_by=currentOpName();r.status_at=new Date().toISOString();
@@ -1213,6 +1302,7 @@ function registerPhoneAppointment(id){
 /* --- ボタン起点フロー: issueFormToken のモック (配信レコードをボタン生成/送信時点で作り、提示案件を残す) --- */
 function issueFormInvite(a,channel,caseIds,campaignId){
   if(!a)return null;
+  if(channel==="sms"&&state.attachFormSms===false)return null;
   var ids=(caseIds&&caseIds.length)?caseIds.slice():rankCasesForApplicant(a).slice(0,channel==="sms"?5:5).map(function(c){return c.id});
   var key=a.id+"|"+channel+"|"+ids.join(",");
   var ex=state.deliveries.find(function(d){return d.form_invite&&d.form_key===key});if(ex)return ex;
@@ -1225,13 +1315,11 @@ var _smsLink20=smsLink;
 smsLink=function(phone,body){
   var url=_smsLink20(phone,body);
   try{var _ra=applicants.find(function(x){return x.phone===phone});if(_ra&&body)rememberSmsBody(_ra.id,String(body),[])}catch(e){}
-  try{if(String(body||"").indexOf("example.jp/form")>=0){var a=applicants.find(function(x){return x.phone===phone});if(a)issueFormInvite(a,"sms",null)}}catch(e){}
   return url;
 };
 var _buildMailBody20=buildMailBody;
 buildMailBody=function(a,tpl,recs){
   var out=_buildMailBody20(a,tpl,recs);
-  try{if(String(out||"").indexOf("example.jp/form")>=0)issueFormInvite(a,"mail",(recs||[]).map(function(c){return c.id}))}catch(e){}
   return out;
 };
 function formContextFor(h){
@@ -1438,12 +1526,10 @@ personalize=function(tpl,a){return _personalizeR4(expandTags(tpl,a),a)};
 var SMS_LIMITS={case:340,first:560,multi:function(n){return Math.min(670,170+120*(n||1))},hard:670};
 function smsLimitCheck(kind,body,n){var lim=kind==="multi"?SMS_LIMITS.multi(n):(SMS_LIMITS[kind]!=null?SMS_LIMITS[kind]:SMS_LIMITS.hard);var len=smsSize(body).len;return {len:len,limit:lim,ok:len<=lim,over:Math.max(0,len-lim)}}
 
-/* ---------- 熱量 (革新1.5) と 掘り起こしスコア (革新2) ---------- */
+/* ---------- 掘り起こしスコア (革新2) ---------- */
 var TERMINAL_CSV=["不通","選考NG","他社決定","登録辞退","応募除外","接触NG","対象外","退職済み"];
 function stageNumOf(a){var st=statusStage(a.furthest_status?a.furthest_status.status:a.csv_status);if(st.terminal)return 0;return st.rank?st.rank/10:0}
 function daysAgo(iso){if(!iso)return null;return Math.round((new Date(todayStr())-new Date(String(iso).slice(0,10)))/864e5)}
-function heatFor(a){if(!a||a.mail_optout||TERMINAL_CSV.includes(a.csv_status)||statusStage(a.csv_status).terminal)return {score:null,band:"対象外",reasons:"終了/例外系または配信停止のため対象外"};var appliedDays=daysAgo(a.applied_at);var R=appliedDays==null?0:Math.max(0,30-appliedDays)/30;var stage=stageNumOf(a);var S=stage/8;var rs=state.responses.filter(function(r){return r.applicant_id===a.id});var recent=rs.filter(function(r){var d=daysAgo(r.at);return d!=null&&d<=90});var lastResp=recent.length?Math.min.apply(null,recent.map(function(r){return daysAgo(r.at)})):null;var A=recent.length?Math.min(1,0.5*Math.min(recent.length,2)/2+0.5*Math.max(0,30-lastResp)/30):0;var score=Math.round(100*(0.45*R+0.35*S+0.20*A));var band=score>=60?"高":score>=30?"中":"低";refreshProgress(a);var reasons="\u6700\u7d42\u5fdc\u52df "+String(a.applied_at).slice(5,10).replace("-","\u6708")+"\u65e5\uff08"+(appliedDays==null?"-":appliedDays)+"\u65e5\u524d\uff09\uff0f\u9032\u3093\u3060\u6bb5\u968e: "+(a.furthest_status?a.furthest_status.status:"-")+"\uff0f"+(recent.length?"\u56de\u7b54 "+recent.length+"\u56de\uff08\u76f4\u8fd1 "+(lastResp==null?"-":lastResp)+"\u65e5\u524d\uff09":"\u56de\u7b54\u5c65\u6b74\u306a\u3057");return {score:score,band:band,reasons:reasons,parts:{R:R,S:S,A:A}}}
-function heatBadgeHtml(a){var h=heatFor(a);if(h.score==null)return '<span class="badge term">熱量: 対象外</span>';var cls=h.band==="高"?"ok":h.band==="中"?"warn":"";return '<span class="badge '+cls+'" title="'+esc(h.reasons)+'">熱量: '+h.band+" ("+h.score+")</span>"}
 function startProximity(a){var d=a.desired_start_date;if(!d||!/^\d{4}-\d{2}-\d{2}$/.test(d))return 0;var diff=Math.round((new Date(d)-new Date(todayStr()))/864e5);if(diff<=14)return 1;if(diff<=30)return 0.8;if(diff<=60)return 0.5;if(diff<=90)return 0.25;return 0.1}
 function digScore(a,today){today=today||todayStr();if(!a||isTestApplicant(a))return {score:null,excluded_reason:"test"};if(TERMINAL_CSV.includes(a.csv_status)||statusStage(a.csv_status).terminal||a.app_status==="NG"||a.app_status==="譲渡")return {score:null,excluded_reason:"terminal"};if(a.mail_optout||segmentOf(a)==="連絡停止")return {score:null,excluded_reason:"optout"};refreshProgress(a);if(a.furthest_status&&a.furthest_status.status==="稼働中")return {score:null,excluded_reason:"already_started"};var appliedDays=daysAgo(a.applied_at);var freshness=appliedDays==null?0:Math.max(0,1-appliedDays/90);var stage=stageNumOf(a)/8;var prox=startProximity(a);var lastC=a.last_contact_at||String(a.applied_at).slice(0,10);var gapDays=daysAgo(lastC);var gap=(gapDays!=null&&gapDays>=14)?Math.min(1,(gapDays-14)/46):0;var score=Math.round(35*freshness+25*stage+30*prox+10*gap);var parts=[];if(appliedDays!=null)parts.push("\u6700\u7d42\u5fdc\u52df "+String(a.applied_at).slice(5,10).replace("-","\u6708")+"\u65e5\uff08"+appliedDays+"\u65e5\u524d\uff09");if(a.furthest_status)parts.push("\u6b62\u307e\u3063\u3066\u3044\u308b\u6bb5\u968e: "+a.furthest_status.status);var sched=contactSchedule(a);var dueS=sched.filter(function(s){return s.date<=today});if(dueS.length&&a.desired_start_date){var remain=Math.round((new Date(a.desired_start_date)-new Date(today))/864e5);parts.push("\u5165\u8077\u5e0c\u671b "+String(a.desired_start_date).slice(5,10).replace("-","\u6708")+"\u65e5\u307e\u3067"+remain+"\u65e5\uff08"+dueS[dueS.length-1].label+"\u306e\u6642\u671f\uff09")}if(gapDays!=null&&gapDays>=14)parts.push("\u524d\u56de\u63a5\u89e6\u304b\u3089"+gapDays+"\u65e5");var flags={next_due:!!(a.next_contact_date&&a.next_contact_date<=today),response_open:state.responses.some(function(r){return r.applicant_id===a.id&&respStatus(r)!=="handled"})};if(flags.next_due)parts.unshift("\u6b21\u56de\u9023\u7d61\u65e5 "+a.next_contact_date+" \u3092\u904e\u304e\u3066\u3044\u307e\u3059");if(flags.response_open)parts.unshift("\u672a\u5bfe\u5fdc\u306e\u56de\u7b54\u3042\u308a");return {score:score,parts:{freshness:freshness,stage:stage,startProximity:prox,contactGap:gap},reason_text:parts.join("\uff0f"),flags:flags,applied_at:a.applied_at}}
 function digTodaySorted(pool){var rows=[];(pool||[]).forEach(function(a){var d=digScore(a);if(d.score!=null)rows.push({a:a,dig:d})});rows.sort(function(x,y){return ((y.dig.flags.response_open?1:0)-(x.dig.flags.response_open?1:0))||((y.dig.flags.next_due?1:0)-(x.dig.flags.next_due?1:0))||(y.dig.score-x.dig.score)||String(y.a.applied_at).localeCompare(String(x.a.applied_at))});return rows}
@@ -1492,9 +1578,9 @@ function showServerSnapshot(i){var s=(window._tlSnaps||[])[i];var sv=s&&s.server
 
 /* ---------- Gmail本文: §12案件ブロック + 本文/フォーム分離 ---------- */
 var _buildMailBodyR4=buildMailBody;
-buildMailBody=function(a,tpl,recs){var recText=(recs||[]).map(function(c,i){return (i+1)+". "+publicCaseLine(c)}).join("\n\n")||"（現在ご紹介できる案件はありません）";var b=String(tpl||"");b=b.split("{おすすめ案件}").join(recText);b=personalize(b,a);b=b.split("{フォームURL}").join(formUrlFor(a));try{if(String(b||"").indexOf("example.jp/form")>=0)issueFormInvite(a,"mail",(recs||[]).map(function(c){return c.id}))}catch(e){}return b};
+buildMailBody=function(a,tpl,recs){var recText=(recs||[]).map(function(c,i){return (i+1)+". "+publicCaseLine(c)}).join("\n\n")||"（現在ご紹介できる案件はありません）";var b=String(tpl||"");b=b.split("{おすすめ案件}").join(recText);b=personalize(b,a);b=b.split("{フォームURL}").join(formUrlFor(a));return b};
 var _mailFooterR4=mailFooter;
-mailFooter=function(op,footerInfo){return "\n\n----\n\u3010回答フォームのご案内\u3011\n回答フォーム: "+appFormBaseUrl()+"?token=（送信時に差し替わります）\n配信停止: "+appOptoutBaseUrl()+"?token=（送信時に差し替わります）\n送信者: "+(op?op.display+" <"+(op.email||"未登録")+">":"")+"\n特定電子メール法に基づく表示: 送信者 "+(op?op.company:"株式会社ファーストスタッフィング")+"（サンプル）"+"\n住所: "+((footerInfo&&footerInfo.address)||"(送信時にサーバー設定から付加されます)")+((footerInfo&&footerInfo.phone)?"\n連絡先: "+(op?(op.email||""):"")+" / 電話: "+footerInfo.phone:"")};
+mailFooter=function(op,footerInfo){var _ff=(typeof state!=="undefined"&&state.attachFormMail===false)?"":"\n【回答フォームのご案内】\n回答フォーム: "+appFormBaseUrl()+"?token=（送信時に差し替わります）";return "\n\n----"+_ff+"\n配信停止: "+appOptoutBaseUrl()+"?token=（送信時に差し替わります）\n送信者: "+(op?op.display+" <"+(op.email||"未登録")+">":"")+"\n特定電子メール法に基づく表示: 送信者 "+(op?op.company:"株式会社ファーストスタッフィング")+"（サンプル）"+"\n住所: "+((footerInfo&&footerInfo.address)||"(送信時にサーバー設定から付加されます)")+((footerInfo&&footerInfo.phone)?"\n連絡先: "+(op?(op.email||""):"")+" / 電話: "+footerInfo.phone:"")};
 
 /* ---------- issueFormInvite にスナップショットを持たせる (G) ---------- */
 var _issueFormInviteR4=issueFormInvite;
@@ -1509,13 +1595,13 @@ progressBadgeHtml=function(a){refreshProgress(a);var f=a.furthest_status,t=a.ter
 var _progressHtmlR4=progressHtml;
 progressHtml=function(a){return _progressHtmlR4(a).replace('class="small"','class="keyline"')};
 
-/* ---------- カード: 熱量・ブレーキ・経過 + 別案件の降格 + dualStatus除去 (H2-1/H2-2/L2-4) ---------- */
+/* ---------- カード: ブレーキ・経過 + 別案件の降格 + dualStatus除去 (H2-1/H2-2/L2-4) ---------- */
 var _cardHtmlR4=cardHtml;
-cardHtml=function(a){var h=_cardHtmlR4(a);h=h.replace(/<p style="margin:6px 0"><span class="badge[^"]*">最新応募[\s\S]*?<\/p>/,"");h=h.replace('class="primary" onclick="openAltCases','onclick="openAltCases');var badges='<div class="flex">'+heatBadgeHtml(a)+brakeBadgeHtml(a)+'<span class="badge">応募から '+(daysAgo(a.applied_at)==null?"-":daysAgo(a.applied_at))+"日</span></div>";var i=h.lastIndexOf("</article>");if(i>0)h=h.slice(0,i)+badges+h.slice(i);return h};
+cardHtml=function(a){var h=_cardHtmlR4(a);h=h.replace(/<p style="margin:6px 0"><span class="badge[^"]*">最新応募[\s\S]*?<\/p>/,"");h=h.replace('class="primary" onclick="openAltCases','onclick="openAltCases');var badges=brakeBadgeHtml(a)?'<div class="flex">'+brakeBadgeHtml(a)+"</div>":"";var i=h.lastIndexOf("</article>");if(i>0)h=h.slice(0,i)+badges+h.slice(i);return h};
 
 /* ---------- 詳細: 要点パネル + 統合タイムライン + 固定フッター (H2-3/H2-4/M2-13) ---------- */
 var _openDetailR4=openDetail;
-openDetail=function(id){window._detailOpenId=id;_openDetailR4(id);var a=applicants.find(function(x){return x.id===id});var dlg=document.querySelector("#dlg");if(!dlg||!a)return;var heat=heatFor(a);var openResps=state.responses.filter(function(r){return r.applicant_id===a.id&&respStatus(r)!=="handled"});var panel='<div class="card" style="margin-top:8px"><h3>要点</h3>'+progressHtml(a)+'<p class="keyline">熱量: '+esc(heat.band)+(heat.score!=null?" ("+heat.score+")":"")+'<br><span class="small">'+esc(heat.reasons)+'</span></p><p>希望条件: '+esc(tagDesired(a)||"未確認")+'<br>連絡先: 電話 '+esc(a.phone||"-")+"／メール "+esc(a.email||"なし")+'<br>最終接触: '+esc(a.last_contact_at||"未記録")+(a.next_contact_date?"／次回連絡: "+esc(a.next_contact_date):"")+"</p>"+responseBadgesHtml(a)+brakeBadgeHtml(a)+openResps.map(function(r){return phoneBadgeHtml(r)+" "+calBadgeHtml(r)}).join("")+(a.fs_status?dualStatusHtml(a):"")+"</div>";var head=dlg.querySelector(".dlgHead");if(head)head.insertAdjacentHTML("afterend",panel);dlg.insertAdjacentHTML("beforeend",'<h4>タイムライン（応募・送信・回答・配信の統合）</h4>'+timelineHtml(a)+'<div class="specialFooter"><b>操作</b><button class="primary" onclick="openAltCases(\''+a.id+'\')">別案件（全候補）</button><a class="btn" href="tel:'+esc(a.phone)+'">電話</a><button onclick="closeModal()">閉じる</button></div>');fetchServerDetail(a)};
+openDetail=function(id){window._detailOpenId=id;var _pdA=applicants.find(function(x){return x.id===id});if(!_pdA&&window._r6ServerMode&&CONFIG.API_URL&&typeof apiCall==="function"){apiCall({action:"getApplicant",applicant_id:id}).then(function(res){var _sv=res&&res.applicant?serverApplicantToLocal(res.applicant):null;if(_sv){_sv._serverFetched=true;applicants.unshift(_sv)}openDetail(id);try{var _a2=applicants.find(function(x){return x.id===id});if(_a2)fetchServerDetail(_a2)}catch(e){}}).catch(function(){showToast("応募者が見つかりません（ID: "+id+"）","bad")});return}_openDetailR4(id);var a=applicants.find(function(x){return x.id===id});var dlg=document.querySelector("#dlg");if(!dlg||!a)return;var openResps=state.responses.filter(function(r){return r.applicant_id===a.id&&respStatus(r)!=="handled"});var panel='<div class="card" style="margin-top:8px"><h3>要点</h3>'+progressHtml(a)+'<p>希望条件: '+esc(tagDesired(a)||"未確認")+'<br>連絡先: 電話 '+esc(a.phone||"-")+"／メール "+esc(a.email||"なし")+'<br>最終接触: '+esc(a.last_contact_at||"未記録")+(a.next_contact_date?"／次回連絡: "+esc(a.next_contact_date):"")+"</p>"+responseBadgesHtml(a)+brakeBadgeHtml(a)+openResps.map(function(r){return phoneBadgeHtml(r)+" "+calBadgeHtml(r)}).join("")+(a.fs_status?dualStatusHtml(a):"")+"</div>";var head=dlg.querySelector(".dlgHead");if(head)head.insertAdjacentHTML("afterend",panel);dlg.insertAdjacentHTML("beforeend",'<h4>タイムライン（応募・送信・回答・配信の統合）</h4>'+timelineHtml(a)+'<div class="specialFooter"><b>操作</b><button class="primary" onclick="openAltCases(\''+a.id+'\')">別案件（全候補）</button><a class="btn" href="tel:'+esc(a.phone)+'">電話</a><button onclick="closeModal()">閉じる</button></div>');fetchServerDetail(a)};
 
 /* R3 (検証 #38): 詳細はサーバーの getApplicant でも更新する。
    サーバーのイベント (スナップショット付き) をローカルへ冪等にマージし、
@@ -1557,11 +1643,11 @@ openAltSms=function(aid,cid){var a=applicants.find(function(x){return x.id===aid
 
 /* ---------- 掘り起こし: スコア順リスト (革新2) ---------- */
 var _digHtmlR4=digHtml;
-digHtml=function(pool){var h=_digHtmlR4(pool);var rows=digTodaySorted(pool).slice(0,10);var card='<div class="card"><h3>優先アプローチ候補（スコア順）</h3><p class="small">スコア=応募の新しさ35＋進捗段階25＋入職希望日の近さ30＋接触の空白10。根拠を必ず併記します。</p>'+(rows.length?rows.map(function(r){return '<div class="rec"><b>'+esc(smsRecipientName(r.a.name))+' 様</b> <span class="badge warn">スコア '+r.dig.score+"</span> "+heatBadgeHtml(r.a)+brakeBadgeHtml(r.a)+'<br><span class="small">'+esc(r.dig.reason_text)+'</span><div class="flex"><button class="primary" onclick="openDetail(\''+r.a.id+'\')">詳細</button><a class="btn" href="tel:'+esc(r.a.phone)+'">電話</a></div></div>'}).join(""):'<p class="small">対象はいません。</p>')+"</div>";var _h2=h.replace("成果ファネル（掘り起こし経由・ダミー集計）","ファネル（接触・返信）");var _mk='<div class="card"><h3>セグメント別件数';var _ix=_h2.indexOf(_mk);return _ix>=0?_h2.slice(0,_ix)+card+_h2.slice(_ix):card+_h2};
+digHtml=function(pool){var h=_digHtmlR4(pool);var rows=digTodaySorted(pool).slice(0,10);var card='<div class="card"><h3>優先アプローチ候補（スコア順）</h3><p class="small">スコア=応募の新しさ35＋進捗段階25＋入職希望日の近さ30＋接触の空白10。根拠を必ず併記します。</p>'+(rows.length?rows.map(function(r){return '<div class="rec"><b>'+esc(smsRecipientName(r.a.name))+' 様</b> <span class="badge warn">スコア '+r.dig.score+"</span> "+brakeBadgeHtml(r.a)+'<br><span class="small">'+esc(r.dig.reason_text)+'</span><div class="flex"><button class="primary" onclick="openDetail(\''+r.a.id+'\')">詳細</button><a class="btn" href="tel:'+esc(r.a.phone)+'">電話</a></div></div>'}).join(""):'<p class="small">対象はいません。</p>')+"</div>";var _h2=h.replace("成果ファネル（掘り起こし経由・ダミー集計）","ファネル（接触・返信）");var _mk='<div class="card"><h3>セグメント別件数';var _ix=_h2.indexOf(_mk);return _ix>=0?_h2.slice(0,_ix)+card+_h2.slice(_ix):card+_h2};
 
-/* ---------- 入口: 8段チップ / 滞留 / 今日連絡リスト / 提案 / outbox再提示 (H2-7/M2-7/革新4/革新5/F-04) ---------- */
+/* ---------- 入口: 滞留 / 提案 / outbox再提示 (H2-7/M2-7/革新4/革新5/F-04) ---------- */
 var _viewHomeR4=viewHome;
-viewHome=function(){_viewHomeR4();var app=$("#app");if(!app)return;var due=dueTodayList(digPool()).slice(0,5);var todayHtml='<div class="card"><h3>今日連絡（上位5名）</h3>'+(due.length?due.map(function(x){return '<div class="rec"><b>'+esc(smsRecipientName(x.a.name))+' 様</b> <span class="badge warn">'+esc(x.reasons.join("／"))+'</span><div class="flex"><a class="btn primary" href="tel:'+esc(x.a.phone)+'">電話</a><button onclick="openDetail(\''+x.a.id+'\')">詳細</button></div></div>'}).join(""):'<p class="small">今日連絡すべき人はいません。</p>')+'<p><a href="#/dig">全員を見る（掘り起こしへ）</a></p></div>';var _discards=[];try{_discards=LS.get("outboxDiscards",[])}catch(e){}var _discHtml=_discards.length?("<p class=\"small\">破棄した操作: 直近"+Math.min(_discards.length,5)+"件（"+_discards.slice(-5).reverse().map(function(x){return esc(x.type||"")+"・"+esc(String(x.at||"").slice(0,16).replace("T"," "))}).join("／")+"）</p>"):"";var pending=outbox.filter(function(o){return o.status==="pending"||o.status==="failed"});var obHtml=pending.length?'<div class="card" style="border:2px solid var(--warn)"><h3>未送信のまま残っている操作（'+pending.length+'件）</h3><p class="small">前回セッションで確定しなかった操作です。再送しない限りサーバーへは届きません。再送するか、破棄してください。</p>'+pending.map(function(o){return '<p class="small">・'+esc(o.type)+"／"+esc(String(o.at).slice(0,16).replace("T"," "))+"／"+esc(o.status)+(o.error?"／"+esc(o.error):"")+' <button onclick="retryOutbox(\''+o.opId+'\')">再送する</button> <button onclick="discardOutbox(\''+o.opId+'\')">破棄</button></p>'}).join("")+"</div>":"";if(_discHtml){if(obHtml)obHtml=obHtml.replace("</h3>","</h3>"+_discHtml);else obHtml='<div class="card" style="border:2px solid var(--warn)">'+"<h3>破棄した操作</h3>"+_discHtml+"</div>"}app.insertAdjacentHTML("afterbegin",obHtml+pipelineChipsHtml()+proposalsHtml());var firstCard=null;try{firstCard=app.querySelector(".card")}catch(e){}if(firstCard)firstCard.insertAdjacentHTML("afterend",stuckHtml()+todayHtml);else app.insertAdjacentHTML("beforeend",stuckHtml()+todayHtml)};
+viewHome=function(){_viewHomeR4();var app=$("#app");if(!app)return;var _discards=[];try{_discards=LS.get("outboxDiscards",[])}catch(e){}var _discHtml=_discards.length?("<p class=\"small\">破棄した操作: 直近"+Math.min(_discards.length,5)+"件（"+_discards.slice(-5).reverse().map(function(x){return esc(x.type||"")+"・"+esc(String(x.at||"").slice(0,16).replace("T"," "))}).join("／")+"）</p>"):"";var pending=outbox.filter(function(o){return o.status==="pending"||o.status==="failed"});var obHtml=pending.length?'<div class="card" style="border:2px solid var(--warn)"><h3>未送信のまま残っている操作（'+pending.length+'件）</h3><p class="small">前回セッションで確定しなかった操作です。再送しない限りサーバーへは届きません。再送するか、破棄してください。</p>'+pending.map(function(o){return '<p class="small">・'+esc(o.type)+"／"+esc(String(o.at).slice(0,16).replace("T"," "))+"／"+esc(o.status)+(o.error?"／"+esc(o.error):"")+' <button onclick="retryOutbox(\''+o.opId+'\')">再送する</button> <button onclick="discardOutbox(\''+o.opId+'\')">破棄</button></p>'}).join("")+"</div>":"";if(_discHtml){if(obHtml)obHtml=obHtml.replace("</h3>","</h3>"+_discHtml);else obHtml='<div class="card" style="border:2px solid var(--warn)">'+"<h3>破棄した操作</h3>"+_discHtml+"</div>"}app.insertAdjacentHTML("afterbegin",obHtml+proposalsHtml());var firstCard=null;try{firstCard=app.querySelector(".card")}catch(e){}if(firstCard)firstCard.insertAdjacentHTML("afterend",stuckHtml());else app.insertAdjacentHTML("beforeend",stuckHtml())};
 function retryOutbox(opId){var op=outbox.find(function(o){return o.opId===opId});if(!op)return;op.status="pending";LS.set("outbox",outbox);API.commit(op).then(function(){showToast("再送しました: "+op.type);route()})}
 function discardOutbox(opId){
   var op=outbox.find(function(o){return o.opId===opId});
@@ -1590,7 +1676,7 @@ filtered=function(){var list=_filteredR4();if(F.furthest)list=list.filter(functi
 var _clearFR4=clearF;
 clearF=function(){_clearFR4();F.furthest="";route()};
 var _viewListR4b=viewList;
-viewList=function(){_viewListR4b();var app=$("#app");if(!app||!app.querySelector)return;app.insertAdjacentHTML("afterbegin",'<div class="card"><h2>応募者一覧</h2><div class="flex">'+segmentChipsHtml("list")+'<button onclick="saveListSegment()">現在の条件をビューとして保存</button>'+(F.furthest?'<span class="tag">段: '+esc(F.furthest)+'</span><button onclick="F.furthest=\'\';route()">段の絞り込みを解除</button>':"")+"</div></div>");var input=app.querySelector('input[placeholder*="氏名"]');if(input){input.id="r4Search";input.removeAttribute("onchange");input.addEventListener("input",function(){clearTimeout(window._r4SearchTm);window._r4SearchTm=setTimeout(function(){F.q=input.value;state.visible=20;route()},150)})}};
+viewList=function(){_viewListR4b();var app=$("#app");if(!app||!app.querySelector)return;app.insertAdjacentHTML("afterbegin",'<div class="flex" style="margin:2px 0 8px">'+segmentChipsHtml("list")+'<button onclick="saveListSegment()">現在の条件をビューとして保存</button>'+(F.furthest?'<span class="tag">段: '+esc(F.furthest)+'</span><button onclick="F.furthest=\'\';route()">段の絞り込みを解除</button>':"")+"</div>");var input=app.querySelector('input[placeholder*="氏名"]');if(input){input.id="r4Search";input.addEventListener("input",function(){clearTimeout(window._r4SearchTm);window._r4SearchTm=setTimeout(function(){var _cur=null;try{_cur=document.getElementById("r4Search")}catch(e){}F.q=_cur?_cur.value:input.value;state.visible=20;route()},150)})}};
 
 /* ---------- 一括バー: 先頭の人への主アクション (H2-8) ---------- */
 var _renderBulkBarR4=renderBulkBar;
@@ -1690,7 +1776,7 @@ submitForm=function(){if(window._formSubmitting)return;window._formSubmitting=tr
 var _routeR4=route;
 route=function(){_routeR4();var app=document.getElementById?document.getElementById("app"):$("#app");if(app&&app.classList&&!/^#\/(form|optout)/.test(String(location.hash||"")))app.classList.remove("formWarm");document.querySelectorAll("header nav a").forEach(function(aEl){var href=aEl.getAttribute("href")||"";var cur=(location.hash||"#/").startsWith(href)&&href!=="#/"||(href==="#/"&&(location.hash==="#/"||location.hash===""));if(cur)aEl.setAttribute("aria-current","page");else aEl.removeAttribute("aria-current")});document.querySelectorAll("#app button").forEach(function(b){var t=b.textContent||"";if(/削除|配信停止にする|募集終了にする/.test(t))b.classList.add("danger-ghost");else if(/元に戻す/.test(t))b.classList.add("danger-ghost")});if(String(location.hash||"").startsWith("#/settings")&&app){app.oninput=function(){var d=document.getElementById?document.getElementById("r4Dirty"):null;if(!d){app.insertAdjacentHTML("afterbegin",'<p id="r4Dirty"><span class="badge warn">未保存の変更があります</span></p>')}}}if(window._lsError){showToast("保存に失敗しました（容量超過の可能性があります）。操作は画面上に保持されています","bad");window._lsError=false}};
 route();
-if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{SMS_LIMITS:SMS_LIMITS,smsLimitCheck:smsLimitCheck,publicSalaryBandText:publicSalaryBandText,publicSalaryText:publicSalaryText,publicHoursText:publicHoursText,publicHoursShort:publicHoursShort,publicCaseItem:publicCaseItem,publicCaseLine:publicCaseLine,expandTags:expandTags,tagNearest:tagNearest,tagDesired:tagDesired,tagFreshCase:tagFreshCase,heatFor:heatFor,digScore:digScore,digTodaySorted:digTodaySorted,brakeFor:brakeFor,stuckCalc:stuckCalc,stage8Of:stage8Of,segmentsAll:segmentsAll,saveSegmentRec:saveSegmentRec,applySegmentRec:applySegmentRec,proposalsAll:proposalsAll,setProposalStatus:setProposalStatus,snapshotCasesOf:snapshotCasesOf,timelineHtml:timelineHtml,hearingMissing:hearingMissing,formCasesFor:formCasesFor,retryOutbox:retryOutbox,issueFormInvite:issueFormInvite,buildMailBody:buildMailBody,mailFooter:mailFooter,opToRequests:opToRequests,apiCall:apiCall,smsSnapshotFor:smsSnapshotFor,distKm:distKm,parseCaseCsv:parseCaseCsv,snapCaseView:snapCaseView,showServerSnapshot:showServerSnapshot,showEventSnapshot:showEventSnapshot,rememberSmsBody:rememberSmsBody,coordBasicCheck:coordBasicCheck,coordPrecisionCheck:coordPrecisionCheck,discardOutbox:discardOutbox,resendRespNotify:resendRespNotify,mailFilterToServer:mailFilterToServer,buildMailServerParams:buildMailServerParams,mailDateDaysAgo:mailDateDaysAgo,importRowToServer:importRowToServer,splitJudgedByFile:splitJudgedByFile,getOutbox:function(){return outbox}})}
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{SMS_LIMITS:SMS_LIMITS,smsLimitCheck:smsLimitCheck,publicSalaryBandText:publicSalaryBandText,publicSalaryText:publicSalaryText,publicHoursText:publicHoursText,publicHoursShort:publicHoursShort,publicCaseItem:publicCaseItem,publicCaseLine:publicCaseLine,expandTags:expandTags,tagNearest:tagNearest,tagDesired:tagDesired,tagFreshCase:tagFreshCase,digScore:digScore,digTodaySorted:digTodaySorted,brakeFor:brakeFor,stuckCalc:stuckCalc,stage8Of:stage8Of,segmentsAll:segmentsAll,saveSegmentRec:saveSegmentRec,applySegmentRec:applySegmentRec,proposalsAll:proposalsAll,setProposalStatus:setProposalStatus,snapshotCasesOf:snapshotCasesOf,timelineHtml:timelineHtml,hearingMissing:hearingMissing,formCasesFor:formCasesFor,retryOutbox:retryOutbox,issueFormInvite:issueFormInvite,buildMailBody:buildMailBody,mailFooter:mailFooter,opToRequests:opToRequests,apiCall:apiCall,smsSnapshotFor:smsSnapshotFor,distKm:distKm,parseCaseCsv:parseCaseCsv,snapCaseView:snapCaseView,showServerSnapshot:showServerSnapshot,showEventSnapshot:showEventSnapshot,rememberSmsBody:rememberSmsBody,coordBasicCheck:coordBasicCheck,coordPrecisionCheck:coordPrecisionCheck,discardOutbox:discardOutbox,resendRespNotify:resendRespNotify,mailFilterToServer:mailFilterToServer,buildMailServerParams:buildMailServerParams,mailDateDaysAgo:mailDateDaysAgo,importRowToServer:importRowToServer,splitJudgedByFile:splitJudgedByFile,getOutbox:function(){return outbox}})}
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{stepBadgeStates:stepBadgeStates,buildMailConfirmInfo:buildMailConfirmInfo,paintMailSteps:paintMailSteps,getMailStep:function(){return window._mailStep||1}})}
 </script>
 
@@ -2669,7 +2755,6 @@ buildMailBody=function(a,tpl,recs){
     recText=lines.join("\n\n");
   }
   var b=String(tpl||"");b=b.split("{おすすめ案件}").join(recText);b=personalize(b,a);b=b.split("{フォームURL}").join(formUrlFor(a));
-  try{if(String(b||"").indexOf("example.jp/form")>=0)issueFormInvite(a,"mail",all.map(function(c){return c.id}))}catch(e){}
   return b;
 };
 
@@ -2685,7 +2770,7 @@ function fetchMailPreviewBody_(){
   var first=(window._mailTargets||[])[0];if(!first)return;
   var subj=($("#mSubj")?$("#mSubj").value:templates.mail_subject);
   var tpl=($("#mBody")?$("#mBody").value:templates.mail_body);
-  apiCall({action:"mailPreviewBody",applicant_id:first.applicant.id,subject:subj,body_template:tpl,recommended_case_ids:(first.recommended||[]).map(function(c){return c.id}),sender_email:MF.sender}).then(function(res){
+  apiCall({action:"mailPreviewBody",applicant_id:first.applicant.id,subject:subj,body_template:tpl,recommended_case_ids:(first.recommended||[]).map(function(c){return c.id}),sender_email:MF.sender,include_form:state.attachFormMail!==false}).then(function(res){
     var el=document.getElementById("mailPreviewCard");if(!el)return;
     if(res&&res.body){
       window._mailPreviewServer={applicant_id:first.applicant.id,subject:res.subject||"",body:res.body};
@@ -2842,15 +2927,15 @@ function paintSendCountNear(){
 }
 function paintTestMailAvailability(){
   try{
-    var btn=null; try{btn=[].slice.call(document.querySelectorAll("button")).find(function(b){return b.getAttribute&&b.getAttribute("onclick")==="testMail()"})}catch(e){}
-    if(!btn)return;
+    var btns=[]; try{btns=[].slice.call(document.querySelectorAll("button")).filter(function(b){return b.getAttribute&&b.getAttribute("onclick")==="testMail()"})}catch(e){}
+    if(!btns.length)return;
     var waiting=0; try{waiting=queueWarningModel(window._queueStats).waiting||0}catch(e){}
     var dis="",why="";
     if(window._sendRun&&window._sendRun.active){dis="1";why="送信中です"}
     else if(waiting>0){dis="1";why="未送信の本番配信が "+waiting+"件残っているため、テスト送信はできません。先に送信を再開して送り切ってください"}
-    btn.disabled=!!dis;
+    btns.forEach(function(btn){btn.disabled=!!dis});
     var slot=document.getElementById("testBlockReason");
-    if(!slot&&btn.parentNode){slot=document.createElement("p");slot.id="testBlockReason";slot.className="small";btn.parentNode.appendChild(slot)}
+    if(!slot&&btns[0].parentNode){slot=document.createElement("p");slot.id="testBlockReason";slot.className="small";btns[0].parentNode.appendChild(slot)}
     if(slot)slot.innerHTML=why?'<span class="badge warn">'+esc(why)+"</span>":"";
   }catch(e){}
 }
@@ -3019,7 +3104,7 @@ viewHome=function(){
       var sc=(typeof respSummaryCalc==="function")?respSummaryCalc():{open_count:state.responses.filter(function(r){return !r.handled}).length};
       var due=(typeof dueTodayList==="function")?dueTodayList(digPool()):[];
       var card=document.createElement("div"); card.className="card"; card.setAttribute("data-d2-today","1"); card.setAttribute("data-home-slot","today");
-      card.innerHTML="<h3>今日やること</h3><div class=\"rec\">回答未対応 <b>"+sc.open_count+'</b>件 <a class="btn primary" href="#/responses">回答一覧（未対応タブ）を開く</a></div><div class="rec">今日連絡 <b>'+due.length+"</b>名 "+due.slice(0,5).map(function(x){return esc(smsRecipientName(x.a.name))+" 様"}).join("、")+' <a href="#/dig">全員を見る（掘り起こしへ）</a></div>';
+      card.innerHTML="<h3>今日やること</h3><div class=\"rec\">回答未対応 <b>"+sc.open_count+'</b>件 <a class="btn primary" href="#/responses">回答一覧（未対応タブ）を開く</a></div>';
       var fail=app.querySelector(".opFailBar"); var qw=document.getElementById("queueWarning");
       var anchor=fail||(qw?qw.parentNode:null);
       if(anchor&&anchor.nextSibling)app.insertBefore(card,anchor.nextSibling); else app.insertBefore(card,app.firstChild);
@@ -3246,12 +3331,14 @@ areaSummary=function(area){
   var sm=window._r6ApplicantSummary;
   if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[area]){var x=sm.areas[area];return {total:x.total,sent:x.sent,smsTarget:x.sms_target}}
   if(window._r6ServerMode&&sm&&sm.area===area&&typeof sm.total==="number")return {total:sm.total,sent:sm.sent,smsTarget:sm.sms_target};
+  if(window._r6ServerMode) return {total:null, sent:null, smsTarget:null, loading:true};
   return _r6LocalAreaSummary(area);
 };
 var _r6LocalPrefCounts=areaPrefCounts;
 areaPrefCounts=function(area){
   var sm=window._r6ApplicantSummary;
   if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[area])return {total:sm.areas[area].total,byPref:sm.areas[area].pref_counts||{}};
+  if(window._r6ServerMode) return {total:null, byPref:{}, loading:true};
   return _r6LocalPrefCounts(area);
 };
 var _r6LocalCsvCounts=csvStatusCounts;
@@ -3290,7 +3377,7 @@ viewList=function(){
   try{
     var app=document.getElementById?document.getElementById("app"):null;
     if(app&&cache.total!=null&&state.mode!=="follow"){
-      app.innerHTML=app.innerHTML.replace("\u7d5e\u8fbc "+cache.items.length+"\u4ef6","\u7d5e\u8fbc "+cache.total+"\u4ef6\uff08\u30b5\u30fc\u30d0\u30fc\u691c\u7d22\uff09");
+      var _lt=document.getElementById("listTotal");if(_lt){_lt.textContent="\u7d5e\u8fbc "+cache.total+"\u4ef6\uff08\u30b5\u30fc\u30d0\u30fc\u691c\u7d22\uff09"}else{app.innerHTML=app.innerHTML.replace("\u7d5e\u8fbc "+cache.items.length+"\u4ef6","\u7d5e\u8fbc "+cache.total+"\u4ef6\uff08\u30b5\u30fc\u30d0\u30fc\u691c\u7d22\uff09")}
       if(cache.total>(state.visible||20)&&cache.items.length>=(state.visible||20)&&app.innerHTML.indexOf("\u3055\u3089\u306b20\u4ef6\u8868\u793a")<0){
         app.insertAdjacentHTML("beforeend",'<button class="primary" style="width:100%" onclick="state.visible+=20;route()">\u3055\u3089\u306b20\u4ef6\u8868\u793a</button>');
       }
@@ -3365,11 +3452,13 @@ commitImport=function(){
   importCommitting=true;
   var snap=importPreview;importPreview=null;
   var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
-  snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});
-  var unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length;
+  var unclassified=0;
+  var _serverPreview=!snap.judged&&!!snap.serverCounts;
+  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:_sc.updated||0,skip:_sc.skip||0,excluded:_sc.excluded||0};unclassified=_sc.unclassified||0}
+  else{snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length}
   state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending"});
   saveAll();
-  var groups=[];try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}
+  var groups=[];if(_serverPreview){try{var _raw=snap.rows||[];var _pos=0;(window._importPerFile||[]).forEach(function(pf){var _n=pf.rows||0;groups.push({file_name:pf.file||"",rows:_raw.slice(_pos,_pos+_n).map(function(r){return{r:r}})});_pos+=_n});if(_pos!==_raw.length||!groups.length)groups=[{file_name:snap.fname||"",rows:_raw.map(function(r){return{r:r}})}]}catch(e){groups=[{file_name:snap.fname||"",rows:(snap.rows||[]).map(function(r){return{r:r}})}]}}else{try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}}
   var totalChunks=0;var ops=[];
   groups.forEach(function(g){
     var srows=(g.rows||[]).map(function(x){return importRowToServer(x&&x.r?x.r:x)});
@@ -3782,23 +3871,32 @@ commitImport=function(){
   importCommitting=true;
   var snap=importPreview;importPreview=null;
   var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
-  snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});
-  var unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length;
+  var unclassified=0;
+  var _serverPreview=!snap.judged&&!!snap.serverCounts;
+  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:_sc.updated||0,skip:_sc.skip||0,excluded:_sc.excluded||0};unclassified=_sc.unclassified||0}
+  else{snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length}
   state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending",preview_counts:{new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded}});
   saveAll();
-  var groups=[];try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}
+  var groups=[];if(_serverPreview){try{var _raw=snap.rows||[];var _pos=0;(window._importPerFile||[]).forEach(function(pf){var _n=pf.rows||0;groups.push({file_name:pf.file||"",rows:_raw.slice(_pos,_pos+_n).map(function(r){return{r:r,j:null}})});_pos+=_n});if(_pos!==_raw.length||!groups.length)groups=[{file_name:snap.fname||"",rows:_raw.map(function(r){return{r:r,j:null}})}]}catch(e){groups=[{file_name:snap.fname||"",rows:(snap.rows||[]).map(function(r){return{r:r,j:null}})}]}}else{try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}}
   var groupData=[];
   groups.forEach(function(g){
     var srows=(g.rows||[]).map(function(x){return importRowToServer(x&&x.r?x.r:x)});
     if(!srows.length)return;
     var pcbc=[];
-    for(var s=0;s<srows.length;s+=500){
-      var pc={added:0,updated:0,skipped:0};
-      (g.rows||[]).slice(s,s+500).forEach(function(x){
-        var c=x&&x.j?x.j.category:"";
-        if(c==="new")pc.added++;else if(c==="latest"||c==="updated")pc.updated++;else pc.skipped++;
-      });
-      pcbc.push(pc);
+    if(_serverPreview){
+      var _srv=null;try{_srv=(snap.perFile||[]).filter(function(pr){return pr&&(pr.file_name===(g.file_name||g.file||"")||pr.file===(g.file_name||g.file||""))})[0]}catch(e){}
+      if(_srv&&Array.isArray(_srv.preview_counts_by_chunk)&&_srv.preview_counts_by_chunk.length){pcbc=_srv.preview_counts_by_chunk.map(function(pc){return{added:pc.added||0,updated:pc.updated||0,skipped:pc.skipped||0}})}
+      else if(_srv){pcbc=[{added:_srv.added||0,updated:_srv.updated||0,skipped:_srv.skipped||0}]}
+      else{pcbc=[{added:0,updated:0,skipped:0}]}
+    }else{
+      for(var s=0;s<srows.length;s+=500){
+        var pc={added:0,updated:0,skipped:0};
+        (g.rows||[]).slice(s,s+500).forEach(function(x){
+          var c=x&&x.j?x.j.category:"";
+          if(c==="new")pc.added++;else if(c==="latest"||c==="updated")pc.updated++;else pc.skipped++;
+        });
+        pcbc.push(pc);
+      }
     }
     groupData.push({file_name:g.file_name||g.file||"",target_area:state.area,srows:srows,pcbc:pcbc});
   });
@@ -3961,5 +4059,651 @@ if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
   R65_QUEUE_THRESHOLD:R65_QUEUE_THRESHOLD,commitImportViaQueue65:commitImportViaQueue65_
 })}
 
+</script>
+<script>
+/* ===== ラウンド7: 特需・逆引き・掘り起こしのサーバー検索化 =====
+   R6 で一覧・集計・回答はサーバー化されたが、特需SMS (special)・案件から探す
+   (reverse)・掘り起こし (dig) の3ビューは端末側プール (applicants 全件) を
+   前提に残っていた。サーバーモードでは端末に全件が無いため、3ビューは
+   サーバー検索 (searchSpecialCandidates / searchReverseCandidates /
+   getDigTodayList / getDigSegment / getDigStats) でページ単位に取得する。
+   業務ルール (絞り込み・除外・並び・逆算理由) はサーバー側が正本で、
+   フロント現行実装と同一にしてある (Code.gs の各アクションのコメント参照)。
+   サーバーモードでない場合は従来の端末プール実装をそのまま使う。 */
+window._r7Special={key:"",counts:{},items:[],total:null,loading:false,error:""};
+window._r7Reverse={key:"",items:[],total:null,facets:null,loading:false,error:""};
+window._r7Dig={key:"",today:null,seg:null,stats:null,loading:false,error:""};
+window._r7Facets={};
+window._r7SpecialWant=50;
+window._r7ReverseWant=100;
+window._r7DigWant=50;
+window._r7MergedIds=[];
+var R7_POOL_CAP=600;
+/* サーバーのカード用アイテム (電話つき) を端末レコード形へ変換する */
+function r7ToLocal(it){
+  if(!it||typeof it!=="object")return null;
+  var a=serverApplicantToLocal(it);if(!a)return null;
+  if(it.phone!=null)a.phone=String(it.phone||"");
+  if(it.dist!=null&&it.dist!=="")a.dist=Number(it.dist);
+  if(it.match!=null&&it.match!=="")a.match=Number(it.match);
+  if(it.age!=null&&it.age!=="")a._r7Age=Number(it.age);
+  if(Array.isArray(it.reasons))a._digReasons=it.reasons.slice();
+  return a;
+}
+/* 取得したページ分だけを端末プールへ寄せる (詳細・送信記録などの既存ハンドラが
+   applicants.find で引けるようにするため)。全件は保持せず、R7 で寄せた分が
+   上限を超えたら古い順に外す。サーバーモードでは永続化されない。 */
+function r7MergePool(items){
+  if(!Array.isArray(items))return;
+  var byId={};for(var i=0;i<applicants.length;i++)byId[applicants[i].id]=applicants[i];
+  items.forEach(function(a){
+    if(!a||!a.id)return;
+    var ex=byId[a.id];
+    if(ex){Object.keys(a).forEach(function(k){ex[k]=a[k]})}
+    else{applicants.push(a);byId[a.id]=a;window._r7MergedIds.push(a.id)}
+  });
+  while(window._r7MergedIds.length>R7_POOL_CAP){
+    var dropId=window._r7MergedIds.shift();var ix=-1;
+    for(var j=0;j<applicants.length;j++)if(applicants[j].id===dropId){ix=j;break}
+    if(ix>=0)applicants.splice(ix,1);
+  }
+}
+function r7MaxAgeOf(c){return (c.maxAge===""||c.maxAge==null)?null:c.maxAge}
+function r7CampaignCountKey(c){return [state.area,c.id,c.lat,c.lon,c.radius,c.job_type,r7MaxAgeOf(c)].join("|")}
+function r7SpecialKey(c){return r7CampaignCountKey(c)+"|"+window._r7SpecialWant}
+function fetchSpecialR7_(){
+  if(typeof apiCall!=="function")return null;
+  var cache=window._r7Special;
+  var jobs=[];
+  state.campaigns.forEach(function(c){
+    var ck=r7CampaignCountKey(c);
+    if(cache.counts[ck]==null&&!cache["cload:"+ck]){
+      cache["cload:"+ck]=true;
+      jobs.push(apiCall({action:"searchSpecialCandidates",lat:c.lat,lon:c.lon,radius_km:c.radius,job_type:c.job_type,area:state.area,max_age:r7MaxAgeOf(c),count_only:true}).then(function(res){
+        cache.counts[ck]=(res&&typeof res.total==="number")?res.total:0;
+      }).catch(function(){cache.counts[ck]=0}).then(function(){delete cache["cload:"+ck]}));
+    }
+  });
+  var sel=state.campaigns.find(function(x){return x.id===state.selectedCampaignId})||state.campaigns[0];
+  if(sel){
+    var key=r7SpecialKey(sel);
+    if(cache.key!==key){cache={key:key,counts:cache.counts,items:[],total:null,loading:false,error:""};window._r7Special=cache}
+    if(!cache.loading&&cache.total==null){
+      cache.loading=true;
+      var want=window._r7SpecialWant;var acc=[];var total=null;
+      var step=function(page){
+        return apiCall({action:"searchSpecialCandidates",lat:sel.lat,lon:sel.lon,radius_km:sel.radius,job_type:sel.job_type,area:state.area,max_age:r7MaxAgeOf(sel),page:page,page_size:50}).then(function(res){
+          var raw=(res&&Array.isArray(res.items))?res.items:[];
+          if(res&&typeof res.total==="number")total=res.total;
+          raw.forEach(function(it){var a=r7ToLocal(it);if(a)acc.push(a)});
+          if(acc.length<want&&raw.length===50&&(total==null||acc.length<total))return step(page+1);
+          return {items:acc.slice(0,want),total:(total==null?acc.length:total)};
+        });
+      };
+      jobs.push(step(1).then(function(res){
+        cache.items=res.items;cache.total=res.total;cache.loading=false;r7MergePool(res.items);
+      }).catch(function(e){cache.loading=false;cache.error=String(e&&e.message||e)}));
+    }
+  }
+  if(jobs.length)return Promise.all(jobs).then(function(){if((location.hash||"").indexOf("#/list")===0)route()});
+  return null;
+}
+var _r7PrevSpecialView=specialView;
+specialView=function(list){
+  if(!window._r6ServerMode)return _r7PrevSpecialView(list);
+  fetchSpecialR7_();
+  var cache=window._r7Special;
+  var sel=state.campaigns.find(function(x){return x.id===state.selectedCampaignId})||state.campaigns[0];
+  var prevSC=specialCandidates;
+  specialCandidates=function(c){
+    if(sel&&c&&c.id===sel.id){
+      return cache.items.map(function(a){var o={};Object.keys(a).forEach(function(k){o[k]=a[k]});o.dist=a.dist;o.age=(a._r7Age!=null?a._r7Age:ageOf(a.birth_date));return o});
+    }
+    var n=cache.counts[r7CampaignCountKey(c)];
+    return n==null?[]:new Array(n);
+  };
+  var html;
+  try{html=_r7PrevSpecialView(list)}finally{specialCandidates=prevSC}
+  if(cache.total!=null&&cache.total!==cache.items.length){
+    html=html.split("の対象 "+cache.items.length+"名（直近応募順").join("の対象 "+cache.total+"名（直近応募順");
+    html=html.split("対象 "+cache.items.length+"名／未記録").join("対象 "+cache.total+"名／未記録");
+  }
+  if(cache.loading)html='<p class="small">サーバーから対象を読み込み中…</p>'+html;
+  if(cache.error)html='<div class="card"><p>サーバー検索に失敗しました: '+esc(cache.error)+'</p><button onclick="window._r7Special={key:\'\',counts:{},items:[],total:null,loading:false,error:\'\'};route()">再試行</button></div>'+html;
+  if(sel&&cache.total!=null&&cache.total>cache.items.length){
+    html+='<button class="primary" style="width:100%" onclick="window._r7SpecialWant+=50;route()">さらに50件表示（対象 '+cache.total+'名中 '+cache.items.length+'名を表示中）</button>';
+  }
+  return html;
+};
+/* --- 逆引き --- */
+function r7ReverseCaseKey(c){return [c.id,c.lat,c.lon,c.job_type,c.prefecture].join("|")}
+function r7ReverseKey(c){return [r7ReverseCaseKey(c),state.reverseRadius||5,state.reverseCond||"",state.reverseMuni||"",state.reverseWideMuni?1:0,state.reverseIncludeConsult?1:0,window._r7ReverseWant].join("|")}
+function fetchReverseR7_(c){
+  if(typeof apiCall!=="function")return;
+  var cache=window._r7Reverse;var key=r7ReverseKey(c);
+  if(cache.key!==key){cache={key:key,items:[],total:null,facets:null,loading:false,error:""};window._r7Reverse=cache}
+  if(cache.loading||cache.total!=null)return;
+  cache.loading=true;
+  var want=window._r7ReverseWant;var acc=[];var total=null;var facets=null;
+  var step=function(page){
+    return apiCall({action:"searchReverseCandidates",case:{lat:c.lat,lon:c.lon,job_type:c.job_type,prefecture:c.prefecture},radius_km:state.reverseRadius||5,cond:state.reverseCond||"",include_consult:!!state.reverseIncludeConsult,municipality:state.reverseMuni||"",wide_muni:!!state.reverseWideMuni,page:page,page_size:100}).then(function(res){
+      var raw=(res&&Array.isArray(res.items))?res.items:[];
+      if(res&&typeof res.total==="number")total=res.total;
+      if(res&&res.facets&&Array.isArray(res.facets.municipalities))facets=res.facets.municipalities;
+      raw.forEach(function(it){var a=r7ToLocal(it);if(a)acc.push(a)});
+      if(acc.length<want&&raw.length===100&&(total==null||acc.length<total))return step(page+1);
+      return {items:acc.slice(0,want),total:(total==null?acc.length:total),facets:facets};
+    });
+  };
+  step(1).then(function(res){
+    cache.items=res.items;cache.total=res.total;cache.facets=res.facets;cache.loading=false;
+    if(res.facets)window._r7Facets[r7ReverseCaseKey(c)]=res.facets;
+    r7MergePool(res.items);
+    if((location.hash||"").indexOf("#/list")===0)route();
+  }).catch(function(e){
+    cache.loading=false;cache.error=String(e&&e.message||e);
+    if((location.hash||"").indexOf("#/list")===0)route();
+  });
+}
+var _r7PrevReverseView=reverseView;
+reverseView=function(list){
+  if(!window._r6ServerMode)return _r7PrevReverseView(list);
+  var c=CASES.find(function(x){return x.id===state.reverseCase})||CASES[0];
+  var facets=c?window._r7Facets[r7ReverseCaseKey(c)]:null;
+  if(c&&facets){
+    var saved=applicants;
+    applicants=facets.map(function(m){return {id:"__r7facet",job_type:c.job_type,prefecture:c.prefecture,municipality:m,is_test:false}});
+    try{return _r7PrevReverseView(list)}finally{applicants=saved}
+  }
+  return _r7PrevReverseView(list);
+};
+var _r7PrevReverseResults=reverseResults;
+reverseResults=function(cid){
+  if(!window._r6ServerMode)return _r7PrevReverseResults(cid);
+  var c=CASES.find(function(x){return x.id===cid})||CASES[0];
+  if(!c)return _r7PrevReverseResults(cid);
+  fetchReverseR7_(c);
+  var cache=window._r7Reverse;
+  var r=state.reverseRadius||5;
+  if(cache.error)return '<div class="card"><p>サーバー検索に失敗しました: '+esc(cache.error)+'</p><button onclick="window._r7Reverse={key:\'\',items:[],total:null,facets:null,loading:false,error:\'\'};route()">再試行</button></div>';
+  if(cache.total==null)return '<p class="small">サーバーから候補を読み込み中…</p>';
+  var rows=cache.items;
+  window._reverseRowIds=rows.map(function(a){return a.id});
+  var dc=displayCase(c);var caseMissing=[];if(!dc.days)caseMissing.push("勤務日数");if(!dc.hours)caseMissing.push("勤務時間");
+  var html='<p class="small">'+esc(c.facility)+' — 府県境をまたいで同職種を検索・'+r+'km以内・条件の一致が多い順: '+cache.total+'名</p>'
+    +(caseMissing.length?'<p class="small"><span class="badge warn">案件側の未登録: '+esc(caseMissing.join("・"))+'</span> 候補へ送る前に案件条件の確認が必要です</p>':"")
+    +(rows.length?'<div class="flex"><button class="primary" onclick="startSequentialReverse(\''+c.id+'\')">表示中の'+rows.length+'名へ順番にSMS</button></div>':"")
+    +rows.map(function(a){
+      var orig=applicants.find(function(x){return x.id===a.id})||a;
+      var body=reverseSmsBody(orig,c);
+      var need=[];if(!a.qualifications)need.push("資格");if(!a.desired_days)need.push("週回数");if(!a.desired_slots)need.push("時間帯");
+      return '<article class="card"><b>'+esc(smsRecipientName(a.name))+' 様</b> <span class="small">'+distLabel(a.dist)+'・精度:'+esc(a.precision||"")+'・'+esc(a.prefecture)+esc(a.municipality)+'</span> '+(a.match>=3?'<span class="badge ok">条件が一致</span>':"")
+      +'<p class="small">条件: 資格 '+esc(a.qualifications||"未確認")+' ／ 週 '+esc(a.desired_days||"未確認")+' ／ 時間帯 '+esc(a.desired_slots||"未確認")+' ／ 最寄駅 '+esc(a.nearest_station||"未確認")+'（一致 '+a.match+'/4'+(a.match?": "+[["資格",a.qualifications],["週日数",a.desired_days],["時間帯",a.desired_slots],["最寄駅",a.nearest_station]].filter(function(x){return x[1]}).map(function(x){return x[0]}).join("・")+"が一致":"")+'）</p>'
+      +(need.length?'<p class="small"><span class="badge warn">確認が必要な項目: '+esc(need.join("・"))+'（求職者側が未登録）</span></p>':"")
+      +'<div class="flex"><a class="btn primary" href="'+smsLink(a.phone,body,"case")+'">この案件のSMSを直接開く</a><button onclick="previewReverseBody(\''+a.id+'\',\''+c.id+'\')">配信する本文を確認・編集</button><button onclick="openDetail(\''+a.id+'\')">詳細</button></div></article>';
+    }).join("");
+  if(cache.total>rows.length)html+='<button class="primary" style="width:100%" onclick="window._r7ReverseWant+=100;route()">さらに表示（'+cache.total+'名中 '+rows.length+'名を表示中）</button>';
+  return html;
+};
+/* --- 掘り起こし --- */
+function r7DigKey(){return [state.area,state.seg||"",window._r7DigWant].join("|")}
+function fetchDigR7_(){
+  if(typeof apiCall!=="function")return;
+  var cache=window._r7Dig;var key=r7DigKey();
+  if(cache.key!==key){cache={key:key,today:null,seg:null,stats:null,loading:false,error:""};window._r7Dig=cache}
+  if(cache.loading||(cache.today&&cache.seg&&cache.stats))return;
+  cache.loading=true;
+  var seg=state.seg||"";
+  Promise.all([
+    apiCall({action:"getDigTodayList",area:state.area,page:1,page_size:200}).catch(function(){return null}),
+    apiCall({action:"getDigSegment",area:state.area,segment:seg,page:1,page_size:window._r7DigWant}).catch(function(){return null}),
+    apiCall({action:"getDigStats",area:state.area}).catch(function(){return null})
+  ]).then(function(rs){
+    cache.loading=false;
+    var t=rs[0],s=rs[1],st=rs[2];
+    if(t&&Array.isArray(t.items)){cache.today={total:t.total,items:t.items.map(r7ToLocal).filter(Boolean)};r7MergePool(cache.today.items)}
+    if(s&&Array.isArray(s.items)){cache.seg={total:s.total,total_all:s.total_all,counts:s.counts||{},with_start:s.with_start||0,items:s.items.map(r7ToLocal).filter(Boolean)};r7MergePool(cache.seg.items)}
+    if(st&&st.funnel)cache.stats=st.funnel;
+    if(!cache.today&&!cache.seg)cache.error="サーバーから掘り起こしデータを取得できませんでした";
+    var h=location.hash||"";
+    if(h.indexOf("#/list")===0||h.indexOf("#/dig")===0)route();
+  }).catch(function(e){cache.loading=false;cache.error=String(e&&e.message||e)});
+}
+function r7DigHtml_(){
+  fetchDigR7_();
+  var cache=window._r7Dig;
+  if(cache.error&&!cache.seg)return '<div class="card"><p>サーバー検索に失敗しました: '+esc(cache.error)+'</p><button onclick="window._r7Dig={key:\'\',today:null,seg:null,stats:null,loading:false,error:\'\'};route()">再試行</button></div>';
+  if(!cache.seg)return '<div class="card"><p class="small">サーバーから掘り起こしデータを読み込み中…</p></div>';
+  var due=cache.today?cache.today.items:[];
+  var dueTotal=cache.today?cache.today.total:0;
+  var segData=cache.seg;
+  var segFilter=state.seg||"";
+  var fn=cache.stats;
+  var funnelRows=[];
+  if(fn){
+    var pct=function(v,base){return base?Math.round(v/base*100):0};
+    funnelRows=[["対象人数",fn.target,100],["接触済み",fn.contacted,pct(fn.contacted,fn.target)],["返信あり",fn.replied,pct(fn.replied,fn.contacted)],["アテンド",fn.attend,pct(fn.attend,fn.contacted)],["FIX",fn.fix,pct(fn.fix,fn.contacted)],["内定",fn.offer,pct(fn.offer,fn.contacted)],["稼働開始",fn.started,pct(fn.started,fn.contacted)]].map(function(r){return [r[0]+"（前段比 "+r[2]+"%）",r[1]]});
+  }
+  var max=1;funnelRows.forEach(function(x){if(x[1]>max)max=x[1]});
+  /* 表示撤去（ユーザー指示 2026-11-22 18:10）: 今日連絡カードと成果ファネル（KPI）カードは描画しない。getDigTodayList / getDigStats のデータ取得は従来どおり（表示層のみの撤去）。マージ時に MERGE_DEPLOY_PLAN §1.2 競合注意に基づき除去。 */
+  return ' <div class="card"><h3>セグメント別件数 → 配信導線</h3><div class="flex">'+SEGMENTS.map(function(s){return '<button aria-pressed="'+(segFilter===s)+'" onclick="state.seg=\''+s+'\';route()">'+s+': '+(segData.counts[s]||0)+'名</button>'}).join("")+'<button onclick="state.seg=\'\';route()">すべて: '+segData.total_all+'名</button></div>'
+  +' <p class="small">判定: 連絡停止（配信停止/接触NG/登録辞退）＞稼働中＞選考中（FIX/アテンド/職見/内定）＞時期先（希望日まで60日超）＞条件確認待ち（不足ヒヤリングあり）＞即提案可能。</p>'
+  +' <p class="small">セグメント条件: この掘り起こしタブ自体が「ファーストスタッフィング登録歴あり」の人だけを対象にしています（登録歴は永続フラグ has_fs_history で保持）。</p>'
+  +(segFilter?(segFilter==="連絡停止"?'<p class="small">連絡停止の人には送信できません</p>':'<div class="flex"><button class="primary" onclick="handoffSms(\''+esc(segFilter)+'\')">この人たちにSMS作成（初回/おすすめモードへ引き継ぎ）</button><button onclick="handoffMail(\''+esc(segFilter)+'\')">Gmail配信へ（条件を引き継いで #/mail へ）</button></div>'):"")
+  +segData.items.map(function(a){return cardHtml(a)}).join("")
+  +(segData.total>segData.items.length?'<button class="primary" style="width:100%" onclick="window._r7DigWant+=50;route()">さらに表示（'+segData.total+'名中 '+segData.items.length+'名を表示中）</button>':"")
+  +'</div>'
+  +' <div class="card"><h3>逆算予定の説明</h3><p class="small">希望日の60日前=状況確認、30日前=案件提案、14日前=選考状況確認を自動生成（詳細画面にも表示）。希望日未定の人は対象外と明示しています。対象 '+segData.total_all+'名中、希望日あり '+segData.with_start+'名。</p></div><div class="notice">掘り起こしは「例外案件」扱いです。通常の15社混在リストとは別に、過去にファーストスタッフィングへ応募がある人だけを浮き上がらせます（最新応募が他社経由でも、応募履歴にFS応募が1件あれば対象）。</div>';
+}
+var _r7PrevDigView=digView;
+digView=function(list){
+  if(!window._r6ServerMode)return _r7PrevDigView(list);
+  return r7DigHtml_();
+};
+var _r7PrevViewDig=viewDig;
+viewDig=function(){
+  if(!window._r6ServerMode)return _r7PrevViewDig();
+  state.mode="dig";
+  $("#app").innerHTML='<div class="tabs">'+MODES.map(function(m){return '<button aria-pressed="'+(m[0]==="dig")+'" onclick="state.mode=\''+m[0]+'\';location.hash=\'#/list\'"> '+m[1]+'</button>'}).join("")+"</div>"+r7DigHtml_();
+  renderSummary();
+};
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  r7ToLocal:r7ToLocal,r7MergePool:r7MergePool,
+  fetchSpecialR7:fetchSpecialR7_,fetchReverseR7:fetchReverseR7_,fetchDigR7:fetchDigR7_,
+  r7DigHtml:r7DigHtml_,R7_POOL_CAP:R7_POOL_CAP,
+  getR7SpecialCache:function(){return window._r7Special},getR7ReverseCache:function(){return window._r7Reverse},
+  getR7DigCache:function(){return window._r7Dig},getR7Facets:function(){return window._r7Facets}
+})}
+</script>
+<script>
+/* ===== 案件取り込み修正 (C-1〜C-6) =====
+   監査 CASES_IMPORT_PLAN.md の指摘への対応:
+   - 案A (C-1): source_case_key に形態・時給を含め、生成側の重複排除キー
+     (施設名・住所・職種・形態・時給の完全一致) と一致させる。従来キーは
+     施設名|住所|職種のみで、7,221行中340行がキー衝突で別案件を上書きしていた。
+   - 案B (C-2/C-4/C-6): 案件も応募者と同じ堅牢化経路に載せる。確定は単一op
+     (case_import → pushCasesFromAiPage の行ごと全表読み) ではなく、500件
+     チャンクの import_commit (kind='cases') / 1,000行超は importEnqueue の
+     キュー方式。サーバー側は importCasesCommitCore_ がチャンクごとに
+     cases / case_sources を1回だけ読んで照合する。進捗・実績は
+     import_batches (kind='cases') と getImportStatus で確認でき、失敗
+     チャンクはそのチャンクだけ再実行できる。
+   - 案C (C-3): 案件プレビューにも R6.5 の厳密検証 (strictParseCsv65 +
+     案件用バリデータ) を適用し、問題ファイルは行番号つきで隔離する。
+   - C-5: サーバーモードではプレビューの重複判定をサーバーの登録済みキー
+     (getCaseSourceKeys, source='csv') と照合する。取得できない場合は
+     端末内判定にフォールバックし、その旨を注記する。最終判定は常に
+     確定後のサーバー総数で行う。
+   - C-7 (確定時に端末 CASES へ全件を抱える) は残範囲: 表示用の先行反映は
+     従来どおり新規判定分のみに留める。 */
+
+/* --- 案A: 冪等キーの生成 (生成側の重複排除キーと同一形式) --- */
+function caseSourceKeyCsv_(facility,address,jobType,service,salary){
+  return String(facility||"").replace(/[\s\u3000]/g,"")+"|"+(address||"")+"|"+(jobType||"")+"|"+(service||"")+"|"+(salary||"");
+}
+
+/* --- 厳密パース済みの行配列に対する案件列マッピング (parseCaseCsv と同じ判定) --- */
+function parseCaseCsvRows_(rows){
+  if(!rows||rows.length<2)return[];
+  const head=rows[0].map(h=>String(h).replace(/^\uFEFF+/,"").trim());
+  const find=keys=>head.findIndex(h=>keys.some(k=>h.includes(k)));
+  const ix={facility:find(["施設名","施設","案件名"]),address:find(["住所","所在地"]),job:find(["職種"]),service:find(["形態","サービス"]),salary:find(["時給","給与"]),acquired:find(["取得日","登録日","日付"]),lat:find(["緯度","lat"]),lon:find(["経度","lon","lng"]),prefecture:find(["都道府県"]),municipality:find(["市区町村","市町村"])};
+  return rows.slice(1).map(r=>({facility:ix.facility>=0?String(r[ix.facility]||"").trim():"",address:ix.address>=0?String(r[ix.address]||"").trim():"",jobTxt:ix.job>=0?String(r[ix.job]||"").trim():"",service:ix.service>=0?String(r[ix.service]||"").trim():"",salary:ix.salary>=0?String(r[ix.salary]||"").trim():"",acquired:ix.acquired>=0?String(r[ix.acquired]||"").trim().slice(0,10):"",lat:ix.lat>=0?String(r[ix.lat]||"").trim():"",lon:ix.lon>=0?String(r[ix.lon]||"").trim():"",prefecture:ix.prefecture>=0?String(r[ix.prefecture]||"").trim():"",municipality:ix.municipality>=0?String(r[ix.municipality]||"").trim():""})).filter(x=>x.facility);
+}
+
+/* --- 案件CSVの事前検証 (validateImportData65 の案件版: 列数・引用符・必須列) --- */
+function validateCaseImportData65(rows,diag){
+  var errors=[];
+  if(!rows||!rows.length){errors.push("ファイルにデータ行がありません（空のファイルです）。中身のあるCSVを選んでください");return {errors:errors,warnings:[]}}
+  var head=rows[0].map(function(h){return String(h==null?"":h).replace(/^\uFEFF+/,"").trim()});
+  var norm=function(s){return String(s||"").normalize("NFKC").toLowerCase().replace(/[\s\u3000]/g,"")};
+  var seen={},dups=[];
+  head.forEach(function(h){var n=norm(h);if(!n)return;if(seen[n]&&dups.indexOf(h)<0)dups.push(h);seen[n]=true});
+  if(dups.length)errors.push("見出し（ヘッダー）が重複しています: "+dups.join("、")+"。同じ名前の列が2つあると、どちらの列を使うか判断できません。元のシステムで列名を分けてから取り込んでください");
+  var dataCount=rows.length-1;
+  if(dataCount>R65_MAX_FILE_ROWS)errors.push("データ行が "+dataCount+" 行あります（上限は "+R65_MAX_FILE_ROWS+" 行です）。"+Math.ceil(dataCount/15000)+" 個くらいに分割してから取り込んでください（目安: 15,000行ずつ）");
+  if(diag&&diag.unclosedQuoteLine)errors.push(diag.unclosedQuoteLine+" 行目で始まる引用符（\"）が閉じていません。その行のセルを確認してください（セル内に \" がある場合は \"\" と二重にするか、セル全体を \" で囲ってください）");
+  if(diag&&diag.colMismatches&&diag.colMismatches.length){
+    var ms=diag.colMismatches;
+    var shown=ms.slice(0,5).map(function(m){return m.line+"行目（"+m.actual+"列／ヘッダーは"+m.expected+"列）"}).join("、");
+    errors.push("列数がヘッダーと合わない行があります: "+shown+(ms.length>5?"、ほか"+(ms.length-5)+"件":"")+"。セル内のカンマが引用符で囲われていないか、カンマの入れ忘れがないか確認してください");
+  }
+  var find=function(keys){return head.findIndex(function(h){return keys.some(function(k){return h.includes(k)})})};
+  if(find(["施設名","施設","案件名"])<0)errors.push("施設名の列が見つかりません。見出しに「施設名」を含む列が必要です");
+  if(find(["住所","所在地"])<0)errors.push("住所の列が見つかりません。見出しに「住所」を含む列が必要です（地域の判定に使います）");
+  if(find(["職種"])<0)errors.push("職種の列が見つかりません。見出しに「職種」を含む列が必要です");
+  return {errors:errors,warnings:[]};
+}
+
+/* --- 検証で止まったファイル / 警告の表示 (案件取り込み用) --- */
+function renderCaseImportIssues65_(){
+  try{
+    var blocked=window._caseBlocked65||[];
+    var warnings=window._caseWarnings65||[];
+    if(!blocked.length&&!warnings.length)return"";
+    var html="";
+    if(blocked.length){
+      html+='<div class="card"><h3>取り込めなかったファイル</h3>'+blocked.map(function(b){
+        return '<p><b>'+esc(b.file)+'</b></p>'+b.errors.map(function(e){return '<p class="small">・'+esc(e)+'</p>'}).join("");
+      }).join("")+'<p class="small">上記を直してから、そのファイルだけもう一度選んでください（他のファイルの取り込みには影響しません）。</p></div>';
+    }
+    if(warnings.length){
+      html+='<div class="card"><h3>取り込み時の注意</h3>'+warnings.map(function(w){
+        return '<p class="small">・'+esc(w.file)+': '+esc(w.message)+'</p>';
+      }).join("")+'</div>';
+    }
+    return html;
+  }catch(e){return""}
+}
+
+/* --- サーバー行の構築 (従来の送信形式 + 案Aキー。座標は精密座標のみ送る) --- */
+function buildCaseServerRow_(r,j){
+  const _chk=coordBasicCheck(r.lat,r.lon);
+  const _precise=_chk.state==="ok"&&coordPrecisionCheck(_chk.lat,_chk.lon,muniRepPoint(j.pref,j.muni),null).precise;
+  const _rep=_precise?null:muniRepPoint(j.pref,j.muni);
+  const _prec=_precise?"町名":(_rep?"市区町村代表点":"不明");
+  return {facility_name:r.facility,prefecture:j.pref,municipality:j.muni,address:r.address,job_type:j.job_type,service_type:r.service||"",salary_text:r.salary||"",lat:_precise?_chk.lat:"",lon:_precise?_chk.lon:"",precision:_prec,is_open:true,source:"csv",source_case_key:caseSourceKeyCsv_(r.facility,r.address,j.job_type,r.service,r.salary)};
+}
+
+/* --- 端末表示用の先行反映行 (従来の CASES 追加行と同じ形。C-7 残範囲) --- */
+function buildCaseLocalRow_(r,j,n){
+  const _chk=coordBasicCheck(r.lat,r.lon);
+  const _precise=_chk.state==="ok"&&coordPrecisionCheck(_chk.lat,_chk.lon,muniRepPoint(j.pref,j.muni),null).precise;
+  const _rep=_precise?null:muniRepPoint(j.pref,j.muni);
+  const _lat=_precise?_chk.lat:(_rep?_rep.lat:null);
+  const _lon=_precise?_chk.lon:(_rep?_rep.lon:null);
+  const _prec=_precise?"町名":(_rep?"市区町村代表点":"不明");
+  return {id:"CIMP"+Date.now()+"_"+n,facility:r.facility,service:r.service||"",prefecture:j.pref,municipality:j.muni,address:r.address,lat:_lat,lon:_lon,precision:_prec,job_type:j.job_type,hours:"",days:"",salary:r.salary,billing:null,acquired:r.acquired||todayStr(),open:true,source:"excel"};
+}
+
+/* --- C-5: サーバーの登録済みキー (source='csv') を取得する。失敗時は null --- */
+function fetchCaseServerKeysCsv_(){
+  return apiCall({action:"getCaseSourceKeys",source:"csv"}).then(function(res){
+    var list=(res&&res.by_source&&res.by_source.csv)||[];
+    var set={};list.forEach(function(k){set[String(k)]=true});
+    return set;
+  }).catch(function(){return null});
+}
+
+/* --- previewCaseImport の差し替え: 厳密検証で問題ファイルを隔離し、
+       サーバーモードでは重複判定をサーバーの実案件キーと照合する --- */
+var _cfPrevPreviewCaseImport=previewCaseImport;
+previewCaseImport=function(){
+  const inp=document.getElementById("caseFiles");
+  const files=inp?[...inp.files]:[];
+  if(!files.length){alert("案件CSVファイルを選んでください");return}
+  (async()=>{
+    window._caseBlocked65=[];window._caseWarnings65=[];
+    const groups=[];let allJudged=[];
+    for(const f of files){
+      let text=null;
+      try{text=await decodeFile(f)}catch(e){text=null}
+      if(typeof text!=="string"){
+        window._caseBlocked65.push({file:f.name,errors:["ファイルを読み取れませんでした。もう一度選んでください"]});
+        continue;
+      }
+      const errs=[];
+      const dec=window._r65LastDecode||{};
+      if(dec.ctrl>0)errs.push("文字コードを判定できませんでした（判別できない文字が含まれています）。Excelで開いて「CSV UTF-8」または「Shift-JIS」で保存し直してください");
+      else if(dec.fffd>=3)errs.push("文字コードを判定できませんでした（一部の文字が化けています）。UTF-8かShift-JISで保存し直してください");
+      const strict=strictParseCsv65(text);
+      const v=validateCaseImportData65(strict.rows,strict.diag);
+      v.errors.forEach(function(m){errs.push(m)});
+      if(errs.length){window._caseBlocked65.push({file:f.name,errors:errs});continue}
+      if(dec.fffd>0)window._caseWarnings65.push({file:f.name,message:"一部の文字が置き換え文字になっています（"+dec.fffd+"文字）。文字コードを確認してください"});
+      const judged=parseCaseCsvRows_(strict.rows).map(r=>({r,j:judgeCaseRow(r)}));
+      groups.push({file_name:f.name,judged});allJudged.push(...judged);
+    }
+    let serverKeys=null;
+    if(window._r6ServerMode&&allJudged.length)serverKeys=await fetchCaseServerKeysCsv_();
+    if(serverKeys){
+      for(const x of allJudged){
+        if(!x.j.ok)continue;
+        const key=caseSourceKeyCsv_(x.r.facility,x.r.address,x.j.job_type,x.r.service,x.r.salary);
+        x.j.dup=serverKeys[key]?"server":null;
+      }
+    }
+    caseImportPreview={judged:allJudged,groups:groups,serverKeys:!!serverKeys};
+    const judged=allJudged;
+    const ok=judged.filter(x=>x.j.ok),dups=ok.filter(x=>x.j.dup),news=ok.filter(x=>!x.j.dup);
+    const ng=judged.filter(x=>!x.j.ok);
+    let coordHas=0,coordRep=0,coordNone=0,coordDown=0;const downReasons={};
+    for(const x of ok){const r=x.r;const chk=coordBasicCheck(r.lat,r.lon);if(chk.state==="ok"){const pc=coordPrecisionCheck(chk.lat,chk.lon,muniRepPoint(x.j.pref,x.j.muni),null);if(pc.precise){coordHas++;continue}coordDown++;downReasons[pc.reason]=(downReasons[pc.reason]||0)+1;continue}if(chk.state==="invalid"){coordDown++;downReasons[chk.reason]=(downReasons[chk.reason]||0)+1;continue}const rep=muniRepPoint(x.j.pref,x.j.muni);if(rep)coordRep++;else coordNone++}
+    const slot=document.getElementById("caseImpResult");
+    if(!slot)return;
+    if(!judged.length){
+      slot.innerHTML=renderCaseImportIssues65_()+'<div class="card"><h3>案件取り込み 確認画面</h3><p>取り込めるファイルがありませんでした。上の理由を直してから、もう一度選んでください。</p></div>';
+      return;
+    }
+    slot.innerHTML=renderCaseImportIssues65_()+`<h3>案件取り込み 確認画面（まだ反映していません）</h3><p>読込 ${judged.length}件 ／ 新規 ${news.length}件 ／ 既存と重複（サーバーで更新として処理） ${dups.length}件 ／ 除外 ${ng.length}件</p><p class="small">座標の内訳（取り込み対象 ${ok.length}件）: 精密座標あり ${coordHas}件 ／ 検証で降格 ${coordDown}件${coordDown?`（${Object.entries(downReasons).map(([k,v])=>k+" "+v+"件").join("・")}）`:""} ／ 市区町村代表点で補完 ${coordRep}件 ／ 座標不明 ${coordNone}件（座標不明の案件は距離が測れないため、おすすめでは「距離不明」として扱います）</p><p class="small">除外理由別: ${ng.map(x=>x.j.reason).filter((v,i,arr)=>arr.indexOf(v)===i).map(k=>k+" "+ng.filter(x=>x.j.reason===k).length+"件").join(" ／ ")||"なし"}。地域は住所（都道府県）から自動判定しています。</p><p class="small">${serverKeys?"重複判定はサーバーの登録済みキーと照合しています。":"重複判定は端末内の案件のみが対象です。"}最終的な件数は、確定後にサーバー総数で照合します。</p><button class="primary" onclick="commitCaseImport()">確定で反映</button>`;
+  })();
+};
+
+/* --- commitCaseImport の差し替え: サーバーモードでは堅牢化経路
+       (チャンク確定 / キュー方式) に載せ替える。非サーバーモードは従来経路 --- */
+var _cfPrevCommitCaseImport=commitCaseImport;
+commitCaseImport=function(){
+  if(!window._r6ServerMode)return _cfPrevCommitCaseImport();
+  if(caseCommitting)return;
+  if(!caseImportPreview)return;
+  const snap=caseImportPreview;caseImportPreview=null;
+  /* 表示用の先行反映 (従来どおり新規判定分のみ。C-7 残範囲) */
+  let n=0;
+  for(const x of snap.judged){if(!x.j.ok||x.j.dup)continue;CASES.unshift(buildCaseLocalRow_(x.r,x.j,n));n++}
+  const groups=snap.groups&&snap.groups.length?snap.groups:[{file_name:"",judged:snap.judged}];
+  const groupData=[];let totalRows=0;
+  groups.forEach(function(g){
+    const okRows=(g.judged||[]).filter(function(x){return x.j.ok});
+    if(!okRows.length)return;
+    const srows=okRows.map(function(x){return buildCaseServerRow_(x.r,x.j)});
+    const pcbc=[];
+    for(let s=0;s<srows.length;s+=500){
+      const pc={added:0,updated:0,skipped:0};
+      okRows.slice(s,s+500).forEach(function(x){if(x.j.dup)pc.updated++;else pc.added++});
+      pcbc.push(pc);
+    }
+    groupData.push({file_name:g.file_name||"",srows:srows,pcbc:pcbc});
+    totalRows+=srows.length;
+  });
+  if(!totalRows){showToast("取り込む案件がありませんでした");try{route()}catch(e){}return}
+  if(totalRows>R65_QUEUE_THRESHOLD){commitCaseImportViaQueue_(groupData,totalRows);return}
+  commitCaseImportDirect_(groupData,totalRows);
+};
+
+/* --- 直接確定 (1,000行以下): 500件チャンクの import_commit を直列に送る --- */
+function commitCaseImportDirect_(groupData,totalRows){
+  caseCommitting=true;
+  const totalChunks=groupData.reduce(function(a,g){return a+g.pcbc.length},0);
+  const ops=[],opsMeta=[];
+  groupData.forEach(function(g){
+    opsMeta.push({file_name:g.file_name,target_area:state.area,srows:g.srows,kind:"cases"});
+    ops.push(enqueue("import_commit",{file_name:g.file_name,kind:"cases",target_area:state.area,rows:g.srows,preview_counts_by_chunk:g.pcbc}));
+  });
+  try{const slot=document.getElementById("caseImpResult");if(slot)slot.innerHTML='<div class="card"><h3>サーバーへ反映中</h3><p id="caseImportProgress">サーバーへ反映中: 0 / '+totalChunks+' チャンク</p><p class="small">チャンクは前の完了を待ってから順に送ります。画面を閉じないでください。</p></div>'}catch(e){}
+  let doneChunks=0;
+  ops.forEach(function(p){Promise.resolve(p).then(function(done){
+    doneChunks+=(done&&Array.isArray(done.results))?done.results.length:0;
+    try{const el=document.getElementById("caseImportProgress");if(el)el.textContent="サーバーへ反映中: "+doneChunks+" / "+totalChunks+" チャンク"}catch(e){}
+  },function(){})});
+  Promise.all(ops).then(function(doneOps){
+    const agg=aggregateImportResults(doneOps);window._lastCaseImportResult=agg;
+    try{persistFailedImportChunks65_(doneOps,opsMeta)}catch(e){}
+    try{fetchImportStatusR6_()}catch(e){}
+    if(agg.sync==="failed"){
+      const fe=(doneOps||[]).find(function(o){return o&&o.status==="failed"});
+      showToast(translateImportError65(fe&&fe.error),"bad");
+    }else if(agg.sync==="partial"){
+      showToast("一部のチャンクが完了しませんでした。取り込み画面の「取り込みの確認・再実行」から、そのチャンクだけ再実行できます","warn");
+    }else if(agg.server){
+      showToast("案件を取り込みました: 新規 "+agg.server.added+" / 更新 "+agg.server.updated);
+    }
+    caseCommitting=false;
+    try{route()}catch(e){}
+  }).catch(function(){caseCommitting=false});
+}
+
+/* --- キュー方式 (1,000行超): 全チャンクを登録だけし、処理はサーバー側に任せる。
+       opId はファイル内容由来にし、再確定では未登録分だけ続きから登録される --- */
+function caseFileHash_(name,srows){
+  const s=String(name||"")+"#"+srows.length+"#"+(srows.length?srows[0].source_case_key:"")+"#"+(srows.length?srows[srows.length-1].source_case_key:"");
+  let h=0x811c9dc5;
+  for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0}
+  return ("0000000"+h.toString(16)).slice(-8);
+}
+function commitCaseImportViaQueue_(groupData,totalRows){
+  caseCommitting=true;
+  const opIds=groupData.map(function(g){return "OPQ"+caseFileHash_(g.file_name,g.srows)+"_"+g.srows.length});
+  const jobs=[];
+  groupData.forEach(function(g,gi){
+    for(let s=0,seq=0;s<g.srows.length;s+=500,seq++){
+      jobs.push({opId:opIds[gi],seq:seq,req:{action:"importEnqueue",file_name:g.file_name,kind:"cases",target_area:state.area,rows:g.srows.slice(s,s+500),client_op_id:opIds[gi],chunk_seq:seq,preview_counts:g.pcbc[seq]}});
+    }
+  });
+  try{const slot=document.getElementById("caseImpResult");if(slot)slot.innerHTML='<div class="card"><h3>サーバーへ登録中</h3><p id="caseImportProgress">サーバーへ登録中: 0 / '+jobs.length+' チャンク</p><p class="small">登録が終われば、アプリを閉じてもサーバー側で取り込みが最後まで進みます。</p></div>'}catch(e){}
+  let done=0,failMsg="";
+  let chain=Promise.resolve();
+  jobs.forEach(function(j){
+    chain=chain.then(function(){
+      return apiCall(j.req).then(function(){done++}).catch(function(e){if(!failMsg)failMsg=String(e&&e.message||e||"")});
+    }).then(function(){
+      try{const el=document.getElementById("caseImportProgress");if(el)el.textContent="サーバーへ登録中: "+done+" / "+jobs.length+" チャンク"}catch(e){}
+    });
+  });
+  chain.then(function(){
+    caseCommitting=false;
+    if(failMsg){
+      showToast(translateImportError65(failMsg)+"（登録できなかったチャンクがあります。同じファイルでもう一度確定すると、未登録分だけ続きから登録されます）","bad");
+    }else{
+      showToast("サーバーに登録しました。アプリを閉じても処理が続きます（進捗は取り込み画面で確認できます）");
+      pollCaseImportQueue_(opIds,jobs.length);
+    }
+    try{route()}catch(e){}
+  }).catch(function(){caseCommitting=false});
+}
+
+/* キュー処理の完了を見届ける (アプリを開いている間だけ。閉じていても
+   サーバー側のバッチ記録が正であり、取り込み画面で確認できる) */
+function pollCaseImportQueue_(opIds,chunkCount){
+  const startedAt=Date.now();
+  function check(){
+    fetchImportStatusR6_().then(function(st){
+      if(!st)return;
+      const mine=(st.batches||[]).filter(function(b){return b.kind==="cases"&&opIds.indexOf(b.client_op_id)>=0});
+      const finished=mine.filter(function(b){return b.status==="complete"||b.status==="partial"||b.status==="failed"}).length;
+      const q=st.queue||{pending_rows:1,processing_rows:0};
+      if(finished>=chunkCount&&!q.pending_rows&&!q.processing_rows){
+        const bad=mine.some(function(b){return b.status!=="complete"});
+        const added=mine.reduce(function(a,b){return a+(b.added||0)},0);
+        const updated=mine.reduce(function(a,b){return a+(b.updated||0)},0);
+        showToast(bad?"サーバー側の案件取り込みが一部失敗で完了しました。取り込み画面で確認してください":"サーバー側の案件取り込みが完了しました: 新規 "+added+" / 更新 "+updated,bad?"warn":undefined);
+        return;
+      }
+      if(Date.now()-startedAt<30*60*1000)setTimeout(check,15000);
+    }).catch(function(){});
+  }
+  check();
+}
+
+/* --- opToRequests の差し替え: import_commit の kind を payload から引き継ぐ
+       (payload に kind が無い従来の応募者経路は 'applicants' のまま) --- */
+var _cfPrevOpToRequests=opToRequests;
+opToRequests=function(op){
+  var reqs=_cfPrevOpToRequests(op);
+  try{
+    if(op&&op.type==="import_commit"&&op.payload&&op.payload.kind&&Array.isArray(reqs)){
+      reqs.forEach(function(r){r.kind=op.payload.kind});
+    }
+  }catch(e){}
+  return reqs;
+};
+
+/* --- 失敗チャンクの保存に kind を残す (再実行で案件/応募者を取り違えない) --- */
+var _cfPrevPersistFailedImportChunks65=persistFailedImportChunks65_;
+persistFailedImportChunks65_=function(doneOps,opsMeta){
+  _cfPrevPersistFailedImportChunks65(doneOps,opsMeta);
+  try{
+    var kindByOp={};
+    (doneOps||[]).forEach(function(op,oi){
+      var meta=opsMeta&&opsMeta[oi];
+      if(op&&op.opId&&meta&&meta.kind)kindByOp[op.opId]=meta.kind;
+    });
+    if(!Object.keys(kindByOp).length)return;
+    var store=r65LoadChunkStore_();var changed=false;
+    store.forEach(function(e){if(kindByOp[e.opId]&&e.kind!==kindByOp[e.opId]){e.kind=kindByOp[e.opId];changed=true}});
+    if(changed)r65SaveChunkStore_(store);
+  }catch(e){}
+};
+
+/* --- findImportChunkRows65 の差し替え: チャンクの kind も返す --- */
+var _cfPrevFindImportChunkRows65=findImportChunkRows65;
+findImportChunkRows65=function(clientOpId,seq){
+  var found=_cfPrevFindImportChunkRows65(clientOpId,seq);
+  if(!found)return found;
+  var kind="";
+  try{
+    var ops=(typeof outbox!=="undefined"&&Array.isArray(outbox))?outbox:[];
+    for(var i=0;i<ops.length;i++){
+      var op=ops[i];
+      if(op&&op.opId===clientOpId&&op.type==="import_commit"&&op.payload&&op.payload.kind){kind=op.payload.kind;break}
+    }
+    if(!kind){
+      var store=r65LoadChunkStore_();
+      for(var j=0;j<store.length;j++){
+        if(store[j].opId===clientOpId&&Number(store[j].chunk_seq)===Number(seq)&&store[j].kind){kind=store[j].kind;break}
+      }
+    }
+  }catch(e){}
+  found.kind=kind||"applicants";
+  return found;
+};
+
+/* --- retryImportChunk65 の差し替え: 案件チャンクは kind='cases' で再実行する
+       (応募者チャンクは従来の実装にそのまま委譲する) --- */
+var _cfPrevRetryImportChunk65=retryImportChunk65;
+retryImportChunk65=function(clientOpId,seq){
+  seq=Number(seq);
+  var found=findImportChunkRows65(clientOpId,seq);
+  if(!found||found.kind!=="cases")return _cfPrevRetryImportChunk65(clientOpId,seq);
+  try{
+    var orig=(typeof outbox!=="undefined"?outbox:[]).find(function(o){return o&&o.opId===clientOpId&&o.type==="import_commit"});
+    if(orig&&orig.payload&&Array.isArray(orig.payload.rows)&&orig.payload.rows.length>500){
+      var store=r65LoadChunkStore_();
+      for(var s=0;s*500<orig.payload.rows.length;s++){
+        if(!store.some(function(e){return e.opId===clientOpId&&Number(e.chunk_seq)===s})){
+          store.push({opId:clientOpId,chunk_seq:s,kind:"cases",file_name:orig.payload.file_name||"",target_area:orig.payload.target_area||"",rows:orig.payload.rows.slice(s*500,s*500+500),at:new Date().toISOString()});
+        }
+      }
+      while(store.length>12)store.shift();
+      r65SaveChunkStore_(store);
+    }
+  }catch(e){}
+  var op={opId:clientOpId,type:"import_commit",payload:{file_name:found.file_name,kind:"cases",target_area:found.target_area||state.area,rows:found.rows,chunk_seq_offset:seq},at:new Date().toISOString(),status:"pending"};
+  showToast("チャンクを再実行しています…");
+  API.commit(op).then(function(done){
+    if(done&&done.status==="done"){
+      var r=(done.results&&done.results[0])||{};
+      if(r.status==="complete"){
+        var store=r65LoadChunkStore_().filter(function(e){return !(e.opId===clientOpId&&Number(e.chunk_seq)===seq)});
+        r65SaveChunkStore_(store);
+      }
+      showToast("チャンクを再実行しました: 新規 "+(r.added||0)+" / 更新 "+(r.updated||0)+" / 除外 "+(r.skipped||0)+(r.status==="partial"?"（一部失敗が残っています）":""));
+    }else{
+      showToast(translateImportError65(done&&done.error),"bad");
+    }
+    try{fetchImportStatusR6_()}catch(e){}
+    try{route()}catch(e){}
+  });
+};
+
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  caseSourceKeyCsv:caseSourceKeyCsv_,buildCaseServerRow:buildCaseServerRow_,buildCaseLocalRow:buildCaseLocalRow_,
+  parseCaseCsvRows:parseCaseCsvRows_,validateCaseImportData65:validateCaseImportData65,
+  fetchCaseServerKeysCsv:fetchCaseServerKeysCsv_,
+  getCaseBlocked65:function(){return window._caseBlocked65||[]},
+  commitCaseImportDirect:commitCaseImportDirect_,commitCaseImportViaQueue:commitCaseImportViaQueue_,
+  opToRequests:opToRequests,
+  findImportChunkRows65:findImportChunkRows65,retryImportChunk65:retryImportChunk65,
+  persistFailedImportChunks65:persistFailedImportChunks65_
+})}
 </script>
 </body></html>

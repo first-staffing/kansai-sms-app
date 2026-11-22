@@ -2274,19 +2274,77 @@ formCasesFor=function(a,h){
   }
   return _formCasesFor7b(a,h);
 };
+/* --- R6.7 欠陥2: 中継文脈の応募者をフォームへ適用し、取得失敗時は閉じる ---
+   従来は formApplicant がローカルプールしか見ないため、中継トークンでは
+   シードのデモ応募者が表示され続けていた (案件だけ文脈で切り替わった)。
+   本番トークンは UUID 形式 (TOK- ではない) ことから種別を判定する:
+   - relay: 本番の個人別トークン → 文脈が必須。取得前は読み込み表示、
+     失敗時は送信できないエラー表示にする (デモを本物らしく見せない)。
+   - local: TOK-<応募者ID> 形式 (ローカル動作・検証用) → 従来動作。
+   - preview: 運営者のメール内リンクプレビュー → 従来動作。 */
+function relayTokenKind_(){
+  var t="";try{t=relayToken()}catch(e){}
+  if(!t)return "";
+  if(t==="preview")return "preview";
+  if(t.indexOf("TOK-")===0)return "local";
+  return "relay";
+}
+function relayApplicantFromCtx_(ctx){
+  return {id:String(ctx.applicant_id||""),name:String(ctx.name||""),surname:String(ctx.surname||""),
+    job_type:String(ctx.job_type||"kaigo"),prefecture:String(ctx.prefecture||""),municipality:String(ctx.municipality||""),
+    desired_start_date:"",desired_days:"",desired_slots:"",nearest_station:"",qualifications:"",experience_years:""};
+}
+var _formApplicant7b=formApplicant;
+formApplicant=function(h){
+  if(relayTokenKind_()==="relay"&&window._relayCtx&&window._relayCtxToken===relayToken()&&window._relayCtx.applicant_id){
+    return relayApplicantFromCtx_(window._relayCtx);
+  }
+  return _formApplicant7b(h);
+};
+function viewFormRelayLoading_(){
+  var el=document.querySelector("#app");if(!el)return;
+  el.innerHTML='<div class="fWrap"><div class="fCard"><h2>読み込んでいます…</h2><p>あなた専用のフォームを用意しています。そのままお待ちください。</p></div></div>';
+}
+function viewFormRelayError_(){
+  var el=document.querySelector("#app");if(!el)return;
+  el.innerHTML='<div class="fWrap"><div class="fCard"><h2>フォームを読み込めませんでした</h2><p>通信状態を確認して、もう一度開き直してください。読み込めないまま送信すると別の方の情報で回答してしまうおそれがあるため、このままでは送信できないようにしています。</p><p><button type="button" class="fSubmit" onclick="location.reload()">再読み込みする</button></p></div></div>';
+}
 /* --- viewForm: 従来描画の後、中継コンテキスト取得を試みる (失敗時は従来表示) --- */
 var _viewForm7b=viewForm;
 viewForm=function(h){
   // R3 Z1: フォームを開くたびに二重送信ガードと送信IDをリセットする。
   window._formSubmitting=false;window._formSubmitId=null;window._formSubmitKey="";
+  var tk=relayToken();
+  // R6.7 欠陥2: 中継トークンでは本人の文脈が取得できるまでフォームを描かない。
+  // 取得前は読み込み表示、失敗時は送信できないエラー表示にする。
+  if(relayEnabled()&&relayTokenKind_()==="relay"){
+    if(window._relayCtx&&window._relayCtxToken===tk){
+      _viewForm7b(h);
+      try{paintRelayOptout()}catch(e){}
+      return;
+    }
+    if(window._relayCtxFailedToken===tk){viewFormRelayError_();return}
+    viewFormRelayLoading_();
+    fetchRelayContext(tk).then(function(ctx){
+      if(relayToken()!==tk)return;
+      if(!ctx){window._relayCtx=null;window._relayCtxFailed=true;window._relayCtxFailedToken=tk;
+        if((location.hash||"").indexOf("#/form")===0)viewFormRelayError_();return}
+      window._relayCtx=ctx;window._relayCtxToken=tk;window._relayCtxFailed=false;window._relayRenderedFor=tk;
+      if((location.hash||"").indexOf("#/form")===0){try{_viewForm7b(location.hash);paintRelayOptout()}catch(e){}}
+    }).catch(function(){
+      if(relayToken()!==tk)return;
+      window._relayCtxFailed=true;window._relayCtxFailedToken=tk;
+      if((location.hash||"").indexOf("#/form")===0)viewFormRelayError_();
+    });
+    return;
+  }
   _viewForm7b(h);
   try{paintRelayOptout()}catch(e){}
   if(!relayEnabled())return;
-  var tk=relayToken();
   if(window._relayRenderedFor===tk&&window._relayCtx)return;
   fetchRelayContext(tk).then(function(ctx){
     if(!ctx){window._relayCtx=null;window._relayCtxFailed=true;return}
-    window._relayCtx=ctx;window._relayCtxFailed=false;
+    window._relayCtx=ctx;window._relayCtxToken=tk;window._relayCtxFailed=false;
     if(window._relayRenderedFor===tk)return;
     window._relayRenderedFor=tk;
     try{_viewForm7b(h);paintRelayOptout()}catch(e){}
@@ -3032,6 +3090,17 @@ submitForm=function(){
   if(r&&typeof r.then==="function"){ r.then(function(){},function(){ window._d2FormJustSubmitted=false; setFormSubmitting(false);
     try{var slot=document.getElementById("fSubmitStatus"); if(slot)slot.innerHTML='送信できませんでした。通信状態を確認して、もう一度お試しください。 <button onclick="submitForm()">もう一度送信する</button>'}catch(e){}
   }); }
+};
+/* --- R6.7 欠陥2: 中継トークンで文脈未取得のままの送信を止める (多重防御) ---
+   エラー表示には送信ボタンが無いが、古い描画が残った場合などに備え、
+   本人の文脈が当該トークン分として読み込めていない送信はここでも止める。 */
+var _submitFormR67=submitForm;
+submitForm=function(){
+  if(relayEnabled()&&relayTokenKind_()==="relay"&&!(window._relayCtx&&window._relayCtxToken===relayToken())){
+    try{showToast("フォーム情報を読み込めていないため、送信できません。ページを開き直してください。")}catch(e){}
+    return;
+  }
+  return _submitFormR67();
 };
 /* --- Modal D2: dlgFoot (detail) --- */
 var _showModalD2=showModal;

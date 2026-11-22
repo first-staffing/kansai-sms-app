@@ -1,0 +1,1959 @@
+  var freshness = appliedDays == null ? 0 : Math.max(0, 1 - appliedDays / 90);
+  var st = csvStageRank_(applicant.csv_status);
+  var stageRatio = st.inFlow ? st.stage / 8 : 0;
+  var sd = cellDateYmd_(applicant.desired_start_date);
+  var dUntil = sd ? diffDaysYmd_(sd, today) : null;
+  var startRatio = 0;
+  if (dUntil != null) {
+    startRatio = dUntil <= 14 ? 1.0 : (dUntil <= 30 ? 0.8 : (dUntil <= 60 ? 0.5 : (dUntil <= 90 ? 0.25 : 0.1)));
+  }
+  var contactBase = cellDateYmd_(applicant.last_contact_at) || appliedYmd;
+  var gapDays = contactBase ? diffDaysYmd_(today, contactBase) : null;
+  var gapRatio = (gapDays != null && gapDays >= 14) ? Math.min(1, (gapDays - 14) / 46) : 0;
+  var parts = {
+    freshness: { ratio: Math.round(freshness * 1000) / 1000, points: Math.round(35 * freshness * 10) / 10, max: 35, applied_days_ago: appliedDays },
+    stage: { ratio: Math.round(stageRatio * 1000) / 1000, points: Math.round(25 * stageRatio * 10) / 10, max: 25, stage: st.stage, stage_label: st.stageLabel || st.label },
+    start_proximity: { ratio: startRatio, points: Math.round(30 * startRatio * 10) / 10, max: 30, days_until: dUntil, desired_start_date: sd },
+    contact_gap: { ratio: Math.round(gapRatio * 1000) / 1000, points: Math.round(10 * gapRatio * 10) / 10, max: 10, days: gapDays }
+  };
+  var score = Math.round(35 * freshness + 25 * stageRatio + 30 * startRatio + 10 * gapRatio);
+  // 根拠文 (INNOVATION.md §2.4 の型。要素があるものだけを「／」で連結する)
+  function md_(ymd) {
+    if (!ymd) return '';
+    var p = ymd.split('-'); return Number(p[1]) + '月' + Number(p[2]) + '日';
+  }
+  var texts = [];
+  if (flags.response_open) texts.push('未対応の回答あり');
+  if (flags.next_due) {
+    var nd = cellDateYmd_(applicant.next_contact_date);
+    texts.push('次回連絡日 ' + md_(nd) + 'を過ぎています');
+  }
+  if (appliedYmd) texts.push('最終応募 ' + md_(appliedYmd) + '（' + appliedDays + '日前）');
+  if (st.inFlow && st.stageLabel) texts.push('止まっている段階: ' + st.stageLabel);
+  var ms = digMilestone_(sd, today);
+  if (sd && dUntil != null) {
+    texts.push('入職希望 ' + md_(sd) + 'まで' + dUntil + '日' + (ms ? '（' + ms.label + 'の時期）' : ''));
+  }
+  if (gapDays != null && gapDays >= 14) texts.push('前回接触から' + gapDays + '日');
+  return { score: score, parts: parts, reason_text: texts.join('／') };
+}
+
+/** open な回答がある応募者の集合 (applicant_id -> open_response)。1回の走査で作る */
+function openResponseMap_() {
+  var map = {};
+  try {
+    readTable_('responses').rows.forEach(function (r) {
+      if (responseStatus_(r) === 'handled') return;
+      var id = str_(r.applicant_id);
+      if (!map[id]) map[id] = { response_id: str_(r.response_id), status: responseStatus_(r), status_by: str_(r.status_by) };
+    });
+  } catch (e) {}
+  return map;
+}
+
+function digSortByScore_(out) {
+  out.sort(function (a, b) {
+    var fa = a.flags || {}, fb = b.flags || {};
+    if (!!fa.response_open !== !!fb.response_open) return fa.response_open ? -1 : 1;
+    if (!!fa.next_due !== !!fb.next_due) return fa.next_due ? -1 : 1;
+    if (a.dig_score !== b.dig_score) return b.dig_score - a.dig_score;
+    return a.applied_at < b.applied_at ? 1 : -1;
+  });
+}
+
+/**
+ * 掘り起こしリスト (読み取り)。
+ * 理由 (reasons) を付けて返す:
+ *  (a) past_fs        : FS登録歴あり (has_fs_history フィールドが正, 追補17。req.only_past_fs=true でこの条件だけに絞る)
+ *  (b) next_due       : next_contact_date が今日以前
+ *  (c) start_minus_60/30/14 : 入職希望日の逆算マイルストーン到来済み (革新2で拡張:
+ *      完全一致ではなく「マイルストーン日 <= 今日 かつ 希望日が今日-7日以降」。
+ *      付けるのは到来済みの最も直近のマイルストーン1つ)
+ * 既定では (b) または (c) に該当する人を返し、(a) は理由として併記する。
+ * 各 item には革新2の dig_score / score_parts / reason_text / flags を加算する。
+ * 既定の並び (次回連絡日→応募日) は壊さず、req.sort='score' で優先スコア順に切り替えられる。
+ */
+/** 掘り起こしの除外判定 (R4 10-#4: getDigList / getDigToday で正本を共有する)。
+ * 除外なら 'terminal' / 'optout' / 'started'、それ以外は '' を返す。
+ * 選考中などの進行中 (stage 2-7) は除外しない。 */
+function digExclusionReason_(r, optoutSet) {
+  var st = csvStageRank_(r.csv_status);
+  if (st.terminal) return 'terminal';
+  if (toBool_(r.mail_optout) || (str_(r.email) && optoutSet[normalizeEmail_(r.email)])) return 'optout';
+  if (st.inFlow && st.stage >= 8) return 'started';
+  return '';
+}
+
+function actionGetDigList_(req) {
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var rows = filterApplicants_(readTable_('applicants').rows, req.filter || {});
+  var openMap = openResponseMap_();
+  var actCtx = null;
+  try { actCtx = activityContext_(); } catch (e) { actCtx = null; }
+  // R4 10-#4: getDigToday と同じ除外 (終了系/配信停止/稼働開始) を適用し、内訳を返す。
+  var optoutSet = optoutEmailSet_();
+  var counts = { candidates: 0, excluded_terminal: 0, excluded_optout: 0, excluded_started: 0 };
+  var out = [];
+  rows.forEach(function (r) {
+    var excl = digExclusionReason_(r, optoutSet);
+    if (excl) { counts['excluded_' + excl]++; return; }
+    counts.candidates++;
+    var reasons = [];
+    if (hasFsHistory_(r)) reasons.push('past_fs');
+    var nd = cellDateYmd_(r.next_contact_date);
+    if (nd && nd <= today) reasons.push('next_due');
+    var sd = cellDateYmd_(r.desired_start_date);
+    var ms = digMilestone_(sd, today);
+    if (ms) reasons.push('start_minus_' + ms.days);
+    var hit = req.only_past_fs === true
+      ? reasons.indexOf('past_fs') >= 0
+      : (reasons.indexOf('next_due') >= 0 || reasons.some(function (x) { return x.indexOf('start_minus_') === 0; }));
+    if (hit) {
+      var flags = { next_due: reasons.indexOf('next_due') >= 0, response_open: !!openMap[str_(r.applicant_id)] };
+      var ds = digScore_(r, today, flags);
+      var act = null;
+      if (actCtx) { try { act = activityForApplicant_(str_(r.applicant_id), actCtx, r); } catch (e2) { act = null; } }
+      var item = applicantListItem_(r, act);
+      item.reasons = reasons;
+      item.dig_score = ds.score;
+      item.score_parts = ds.parts;
+      item.reason_text = ds.reason_text;
+      item.flags = flags;
+      out.push(item);
+    }
+  });
+  if (req.sort === 'score' || req.order === 'score') {
+    digSortByScore_(out);
+  } else {
+    // 既定: 次回連絡日が近い順 -> 応募日新しい順 (従来どおり)
+    out.sort(function (a, b) {
+      var x = a.next_contact_date || '9999', y = b.next_contact_date || '9999';
+      if (x !== y) return x < y ? -1 : 1;
+      return a.applied_at < b.applied_at ? 1 : -1;
+    });
+  }
+  var limit = Math.min(500, Math.max(1, parseInt(req.limit, 10) || 200));
+  return { total: out.length, items: out.slice(0, limit), today: today, counts: counts };
+}
+
+/**
+ * 今日アプローチすべき人 (革新2, 読み取り専用)。
+ * 母集団は FS登録歴あり (filterApplicants_ 経由でテスト求職者を除外) とし、
+ * 終了/例外系・配信停止・稼働中は理由つきで母数から外し、counts の内訳で見えるようにする。
+ * 並びは固定: response_open あり -> next_due あり -> DigScore 降順 -> 最終応募の新しい順。
+ */
+function actionGetDigToday_(req) {
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var rows = filterApplicants_(readTable_('applicants').rows,
+    Object.assign({}, req.filter || {}, { has_fs_history: true }));
+  var optoutSet = optoutEmailSet_();
+  var openMap = openResponseMap_();
+  var counts = { candidates: 0, excluded_terminal: 0, excluded_optout: 0, excluded_started: 0 };
+  var out = [];
+  rows.forEach(function (r) {
+    var excl = digExclusionReason_(r, optoutSet);
+    if (excl) { counts['excluded_' + excl]++; return; }
+    counts.candidates++;
+    var nd = cellDateYmd_(r.next_contact_date);
+    var flags = { next_due: !!(nd && nd <= today), response_open: !!openMap[str_(r.applicant_id)] };
+    var ds = digScore_(r, today, flags);
+    var item = applicantListItem_(r);
+    item.dig_score = ds.score;
+    item.score_parts = ds.parts;
+    item.reason_text = ds.reason_text;
+    item.flags = flags;
+    out.push(item);
+  });
+  digSortByScore_(out);
+  var limit = Math.min(200, Math.max(1, parseInt(req.limit, 10) || 50));
+  return { total: counts.candidates, counts: counts, items: out.slice(0, limit), today: today };
+}
+
+function addDaysYmd_(ymd, days) {
+  var d = new Date(ymd + 'T00:00:00+09:00');
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + days);
+  return Utilities.formatDate(d, 'Asia/Tokyo', 'yyyy-MM-dd');
+}
+
+/**
+ * 掘り起こしファネル集計 (読み取り)。
+ * 対象 = FS登録歴あり (has_fs_history フィールド基準, 追補17) の人数を起点に、
+ * applicant_events のイベント種別と現在の app_status / csv_status から
+ * 各段の到達人数を数える (到達 = 一度でも到達)。
+ */
+function actionGetDigStats_(req) {
+  var apps = readTable_('applicants').rows;
+  // R7: req.area 指定時はそのエリアに絞る (未指定時は従来どおり全エリア)。
+  // フロントの掘り起こしタブはエリア単位の表示なので、サーバーモードでは area を渡す。
+  var area = str_((req && req.area) || '');
+  // 追補22: テスト求職者は掘り起こし・ファネルの母数に入れない (has_fs_history の有無によらない)
+  var targets = apps.filter(function (r) {
+    return !isTestApplicant_(r) && hasFsHistory_(r) && (!area || str_(r.area) === area);
+  });
+  var targetIds = {};
+  targets.forEach(function (r) { targetIds[str_(r.applicant_id)] = true; });
+
+  var contacted = {}, replied = {};
+  readTable_('applicant_events').rows.forEach(function (e) {
+    var id = str_(e.applicant_id);
+    if (!targetIds[id]) return;
+    var t = str_(e.event_type);
+    if (t === 'phone_contact' || t === 'sms_sent' || t === 'mail_sent') contacted[id] = true;
+    if (t === 'response_received') replied[id] = true;
+  });
+  targets.forEach(function (r) {
+    var id = str_(r.applicant_id);
+    if (toBool_(r.sms_sent) || cellDateIso_(r.last_contact_at)) contacted[id] = true;
+  });
+
+  function countStage_(words) {
+    var n = 0;
+    targets.forEach(function (r) {
+      var s = str_(r.app_status) + '|' + str_(r.csv_status);
+      if (words.some(function (w) { return s.indexOf(w) >= 0; })) n++;
+    });
+    return n;
+  }
+  return {
+    funnel: {
+      target: targets.length,
+      contacted: Object.keys(contacted).length,
+      replied: Object.keys(replied).length,
+      attend: countStage_(['アテンド']),
+      fix: countStage_(['FIX']),
+      offer: countStage_(['内定']),
+      started: countStage_(['稼働開始', '稼働中'])
+    },
+    note: 'アテンド以降は現在の app_status / csv_status での到達数 (履歴ベースの厳密な到達管理はフェーズ3)',
+    response_summary: responseSummarySafe_()
+  };
+}
+
+// ===== ラウンド7: 特需・逆引き・掘り起こしビューのサーバー検索 =====
+/**
+ * 3ビューのカード表示専用アイテム。
+ * 一覧 (searchApplicants) は連絡先を返さない方針 (DESIGN_V2 §10) だが、
+ * 3ビューのカードは sms: / tel: リンクそのものを描画するため、電話番号だけは
+ * 「表示に必要な分」として返す (メールは返さない)。返すのはページ分のみ。
+ */
+function r7CardItem_(r) {
+  var item = applicantListItem_(r);
+  item.phone = str_(r.phone);
+  return item;
+}
+
+/** 距離は表示精度 (小数1桁) に丸めて返す (転送量削減。並び順は丸め前の値で決める) */
+function r7Dist1_(d) { return d == null ? null : Math.round(d * 10) / 10; }
+
+/**
+ * 特需SMSの候補者検索 (フロント specialCandidates のサーバー移植)。
+ * 業務ルールはフロント現行と同一:
+ *  - 母集団: area 一致・職種一致・テスト求職者除外 (filterApplicants_ の既定)
+ *  - セグメント「連絡停止」を除外
+ *  - 案件座標 (市区町村代表点) からの直線距離が半径以内 (座標が引けない人は対象外)
+ *  - 年齢上限: 上限を超える人は除外。年齢不明は外さない (要確認扱い)
+ *  - 並び: 直近の応募順 (applied_at 降順)
+ * req: { lat, lon, radius_km, job_type, area, max_age, page, page_size, count_only }
+ * count_only=true のときは件数だけを返す (特需案件一覧の「対象 N名」表示用)。
+ */
+function actionSearchSpecialCandidates_(req) {
+  req = req || {};
+  var lat = toNum_(req.lat), lon = toNum_(req.lon);
+  var radius = Number(req.radius_km);
+  if (!(radius > 0)) radius = 10;
+  if (lat == null || lon == null || coordBasicCheck_(lat, lon).state !== 'ok') {
+    return { total: 0, page: 1, page_size: 0, items: [], reason: 'no_origin' };
+  }
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var f = {};
+  if (req.area) f.area = String(req.area);
+  if (req.job_type) f.job_type = String(req.job_type);
+  var rows = filterApplicants_(readTable_('applicants').rows, f);
+  var maxAge = (req.max_age === '' || req.max_age == null) ? null : Number(req.max_age);
+  if (maxAge != null && isNaN(maxAge)) maxAge = null;
+  var matched = [];
+  rows.forEach(function (r) {
+    if (segmentOfApplicant_(r, today) === '連絡停止') return;
+    var d = distanceKm_(lat, lon, r.lat, r.lon);
+    if (d == null || d > radius) return;
+    if (maxAge != null) {
+      var age = ageFromBirth_(r.birth_date);
+      if (age != null && age > maxAge) return;
+    }
+    matched.push({ r: r, dist: d });
+  });
+  matched.sort(function (a, b) {
+    var x = cellDateIso_(a.r.applied_at), y = cellDateIso_(b.r.applied_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  });
+  var total = matched.length;
+  if (req.count_only === true) return { total: total };
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(200, Math.max(1, parseInt(req.page_size, 10) || 50));
+  var start = (page - 1) * pageSize;
+  return {
+    total: total, page: page, page_size: pageSize,
+    items: matched.slice(start, start + pageSize).map(function (m) {
+      var item = r7CardItem_(m.r);
+      item.dist = r7Dist1_(m.dist);
+      return item;
+    })
+  };
+}
+
+/** 逆引きの条件一致数 (フロント reverseMatchCount と同一: 資格・週日数・時間帯・最寄駅の登録数) */
+function reverseMatchCountServer_(r) {
+  return [str_(r.qualifications), str_(r.desired_days_per_week), str_(r.desired_time_slots), str_(r.nearest_station)]
+    .filter(function (v) { return v !== ''; }).length;
+}
+
+/**
+ * 案件から近くの求職者を探す (逆引き) のサーバー検索。
+ * フロント reverseResults の業務ルールをそのまま移植:
+ *  - 母集団: 職種一致・テスト除外。エリアでは絞らない (府県境をまたいで検索)
+ *  - セグメント「連絡停止」を除外、案件座標からの距離が半径以内 (既定5km)
+ *  - cond: 'match' は条件一致3件以上 / 'unknown' は未確認項目あり /
+ *          'consult' は条件一致1件以下。include_consult=true のとき match/consult の絞り込みを外す
+ *  - municipality 指定時はその市区町村のみ (wide_muni=true で広げる)
+ *  - 並び: 条件一致が多い順 -> 距離が近い順 -> 直近の応募順
+ * req: { case: { lat, lon, job_type, prefecture }, radius_km, cond, include_consult,
+ *        municipality, wide_muni, page, page_size }
+ * facets.municipalities は市区町村ドロップダウン用 (母集団はフロント現行と同一:
+ * 同職種・同府県・テスト除外の全応募者)。
+ */
+function actionSearchReverseCandidates_(req) {
+  req = req || {};
+  var c = req.case || {};
+  var lat = toNum_(c.lat), lon = toNum_(c.lon);
+  var radius = Number(req.radius_km);
+  if (!(radius > 0)) radius = 5;
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var f = {};
+  if (c.job_type) f.job_type = String(c.job_type);
+  var rows = filterApplicants_(readTable_('applicants').rows, f);
+  var muniSet = {};
+  rows.forEach(function (r) {
+    if (str_(r.prefecture) === str_(c.prefecture) && str_(r.municipality)) muniSet[str_(r.municipality)] = true;
+  });
+  var facets = { municipalities: Object.keys(muniSet).sort() };
+  if (lat == null || lon == null || coordBasicCheck_(lat, lon).state !== 'ok') {
+    return { total: 0, page: 1, page_size: 0, items: [], reason: 'no_origin', facets: facets };
+  }
+  var includeConsult = req.include_consult === true;
+  var matched = [];
+  rows.forEach(function (r) {
+    if (segmentOfApplicant_(r, today) === '連絡停止') return;
+    var d = distanceKm_(lat, lon, r.lat, r.lon);
+    if (d == null || !isFinite(d) || d > radius) return;
+    var m = reverseMatchCountServer_(r);
+    if (req.cond === 'match' && !includeConsult && m < 3) return;
+    if (req.cond === 'unknown' && missingHearing_(r).length === 0) return;
+    if (req.cond === 'consult' && !includeConsult && m > 1) return;
+    if (req.municipality && req.wide_muni !== true && str_(r.municipality) !== String(req.municipality)) return;
+    matched.push({ r: r, dist: d, match: m });
+  });
+  matched.sort(function (a, b) {
+    if (b.match !== a.match) return b.match - a.match;
+    if (a.dist !== b.dist) return a.dist - b.dist;
+    var x = cellDateIso_(a.r.applied_at), y = cellDateIso_(b.r.applied_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  });
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(200, Math.max(1, parseInt(req.page_size, 10) || 50));
+  var start = (page - 1) * pageSize;
+  return {
+    total: matched.length, page: page, page_size: pageSize, facets: facets,
+    items: matched.slice(start, start + pageSize).map(function (m) {
+      var item = r7CardItem_(m.r);
+      item.dist = r7Dist1_(m.dist);
+      item.match = m.match;
+      return item;
+    })
+  };
+}
+
+/** フロント contactSchedule と同一の逆算マイルストーン (60日前=状況確認 / 30日前=案件提案 / 14日前=選考状況確認) */
+var DIG_MILESTONES_ = [[60, '状況確認'], [30, '案件提案'], [14, '選考状況確認']];
+
+/**
+ * 掘り起こし「今日連絡すべき人」 (フロント dueTodayList のサーバー移植)。
+ * 母集団は掘り起こしタブと同一 (area 内・FS登録歴あり・テスト除外) で、
+ * セグメント「連絡停止」「稼働中」を入口で除外し、理由を付けて返す:
+ *  - 次回連絡日到来 (next_contact_date が今日以前)
+ *  - 逆算予定の到来 (入職希望日の 60/30/14 日前を過ぎたもの。到来済みの全件を理由にする)
+ *  - 前回接触から14日以上 (last_contact_at がある人のみ)
+ * 並びはフロント現行と同一 (直近の応募順)。
+ * req: { area, page, page_size }
+ */
+function actionGetDigTodayList_(req) {
+  req = req || {};
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var f = { has_fs_history: true };
+  if (req.area) f.area = String(req.area);
+  var rows = filterApplicants_(readTable_('applicants').rows, f);
+  var out = [];
+  rows.forEach(function (r) {
+    var seg = segmentOfApplicant_(r, today);
+    if (seg === '連絡停止' || seg === '稼働中') return;
+    var reasons = [];
+    var nd = cellDateYmd_(r.next_contact_date);
+    if (nd && nd <= today) reasons.push('次回連絡日到来（' + nd + '）');
+    var sd = cellDateYmd_(r.desired_start_date);
+    if (sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)) {
+      var remain = diffDaysYmd_(sd, today);
+      DIG_MILESTONES_.forEach(function (ms) {
+        var at = addDaysYmd_(sd, -ms[0]);
+        if (at && at <= today) reasons.push(ms[1] + '：希望日まで' + remain + '日（予定日 ' + at + '）');
+      });
+    }
+    var lc = cellDateYmd_(r.last_contact_at);
+    if (lc) {
+      var diff = diffDaysYmd_(today, lc);
+      if (diff != null && diff >= 14) reasons.push('前回接触から' + diff + '日');
+    }
+    if (reasons.length) out.push({ r: r, reasons: reasons });
+  });
+  out.sort(function (a, b) {
+    var x = cellDateIso_(a.r.applied_at), y = cellDateIso_(b.r.applied_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  });
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(500, Math.max(1, parseInt(req.page_size, 10) || 200));
+  var start = (page - 1) * pageSize;
+  return {
+    total: out.length, page: page, page_size: pageSize, today: today,
+    items: out.slice(start, start + pageSize).map(function (o) {
+      var item = r7CardItem_(o.r);
+      item.reasons = o.reasons;
+      return item;
+    })
+  };
+}
+
+var DIG_SEGMENTS_ = ['即提案可能', '条件確認待ち', '時期先', '選考中', '稼働中', '連絡停止'];
+
+/**
+ * 掘り起こしのセグメント別件数と、セグメントで絞った応募者のページ。
+ * 母集団は掘り起こしタブと同一 (area 内・FS登録歴あり・テスト除外)。
+ * セグメント分類はサーバー正本 segmentOfApplicant_ (フロント segmentOfCalc と同一優先順)。
+ * req: { area, segment ('' はすべて), page, page_size }
+ */
+function actionGetDigSegment_(req) {
+  req = req || {};
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var f = { has_fs_history: true };
+  if (req.area) f.area = String(req.area);
+  var rows = filterApplicants_(readTable_('applicants').rows, f);
+  var counts = {};
+  DIG_SEGMENTS_.forEach(function (s) { counts[s] = 0; });
+  var withStart = 0;
+  var seg = String(req.segment || '');
+  var matched = [];
+  rows.forEach(function (r) {
+    var s = segmentOfApplicant_(r, today);
+    if (counts[s] != null) counts[s]++;
+    if (cellDateYmd_(r.desired_start_date)) withStart++;
+    if (!seg || s === seg) matched.push(r);
+  });
+  matched = sortByAppliedDesc_(matched);
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(200, Math.max(1, parseInt(req.page_size, 10) || 50));
+  var start = (page - 1) * pageSize;
+  return {
+    total_all: rows.length, counts: counts, with_start: withStart,
+    total: matched.length, page: page, page_size: pageSize,
+    items: matched.slice(start, start + pageSize).map(function (r) { return r7CardItem_(r); })
+  };
+}
+
+// ===== 対外表示ヘルパー (求職者向け整形) =====
+function publicJobKind_(jobType) {
+  var t = str_(jobType);
+  if (t === 'kango' || t.indexOf('\u770b\u8b77') >= 0) return 'kango';
+  if (t === 'kaigo' || t.indexOf('\u4ecb\u8b77') >= 0) return 'kaigo';
+  return '';
+}
+function publicSalaryBandText_(jobType) {
+  var k = publicJobKind_(jobType);
+  if (k === 'kango') return '\u770b\u8b77\u5e2b ' + PUBLIC_SALARY_BAND_KANGO_;
+  if (k === 'kaigo') return '\u4ecb\u8b77\u58eb ' + PUBLIC_SALARY_BAND_KAIGO_;
+  return '\u4ecb\u8b77\u58eb ' + PUBLIC_SALARY_BAND_KAIGO_ + ' / \u770b\u8b77\u5e2b ' + PUBLIC_SALARY_BAND_KANGO_;
+}
+function publicSalaryText_(jobType) {
+  return publicSalaryBandText_(jobType) + '\n' + PUBLIC_SALARY_NOTE_;
+}
+function publicCaseHoursText_(jobType) {
+  var k = publicJobKind_(jobType);
+  var ex = (k === 'kango') ? PUBLIC_HOURS_EXAMPLE_KANGO_ : PUBLIC_HOURS_EXAMPLE_KAIGO_;
+  return '\u52e4\u52d9\u6642\u9593\u306e\u4f8b\uff1a' + ex + '\n' + PUBLIC_HOURS_CONSULT_;
+}
+function publicCaseHoursShortText_(jobType) { return PUBLIC_HOURS_SHORT_; }
+function stripCaseSpecificHours_(text) {
+  return str_(text)
+    .replace(/[0-9\uff10-\uff19]{1,2}[:\uff1a][0-9\uff10-\uff19]{2}\s*[\u301c~\uff5e\-]\s*(\u7fcc\u65e5?\s*)?[0-9\uff10-\uff19]{1,2}[:\uff1a][0-9\uff10-\uff19]{2}/g, '')
+    .replace(/\s{2,}/g, ' ').trim();
+}
+function publicDescription_(text) { return stripCaseSpecificHours_(text); }
+function publicFromListItem_(item) {
+  if (!item) return item;
+  var out = {}; Object.keys(item).forEach(function (k) { out[k] = item[k]; });
+  out.salary_text = publicSalaryBandText_(item.job_type);
+  out.salary_band_text = publicSalaryBandText_(item.job_type);
+  out.salary_note = PUBLIC_SALARY_NOTE_;
+  out.hours_text = publicCaseHoursText_(item.job_type);
+  out.hours_short_text = publicCaseHoursShortText_(item.job_type);
+  out.description = publicDescription_(item.description);
+  return out;
+}
+function publicCaseItem_(c, distanceKm) { return publicFromListItem_(caseListItem_(c, distanceKm)); }
+
+// ===== 案件検索 (読み取り。座標・距離つき) =====
+// caseListItem_ は内部向け (運営者画面用) の原文整形。求職者向けには publicCaseItem_ を使うこと。
+function caseListItem_(c, distanceKm) {
+  return {
+    case_id: str_(c.case_id),
+    facility_id: str_(c.facility_id),
+    facility_name: str_(c.facility_name),
+    corporation_name: str_(c.corporation_name),
+    prefecture: str_(c.prefecture),
+    municipality: str_(c.municipality),
+    address: str_(c.address),
+    lat: toNum_(c.lat), lon: toNum_(c.lon),
+    job_type: str_(c.job_type),
+    service_type: str_(c.service_type),
+    employment_type: str_(c.employment_type),
+    title: str_(c.title),
+    description: str_(c.description),
+    nearest_station: str_(c.nearest_station),
+    salary_text: str_(c.salary_text),
+    is_open: toBool_(c.is_open),
+    updated_at_src: cellDateIso_(c.updated_at_src),
+    distance_km: (distanceKm == null ? null : Math.round(distanceKm * 10) / 10)
+  };
+}
+
+function actionSearchCases_(req) {
+  var f = req.filter || {};
+  var rows = readTable_('cases').rows.filter(function (c) {
+    if (f.only_open !== false && !toBool_(c.is_open)) return false;
+    if (f.keyword) {
+      var hay = str_(c.facility_name) + ' ' + str_(c.corporation_name) + ' ' + str_(c.title) + ' ' + str_(c.address);
+      if (hay.indexOf(String(f.keyword)) < 0) return false;
+    }
+    if (f.prefecture && str_(c.prefecture) !== String(f.prefecture)) return false;
+    if (f.municipality && str_(c.municipality) !== String(f.municipality)) return false;
+    if (f.job_type && str_(c.job_type) !== String(f.job_type)) return false;
+    if (f.service_type && str_(c.service_type).indexOf(String(f.service_type)) < 0) return false;
+    return true;
+  });
+  var hasOrigin = f.lat != null && f.lon != null;
+  var items = rows.map(function (c) {
+    var d = hasOrigin ? distanceKm_(f.lat, f.lon, c.lat, c.lon) : null;
+    return caseListItem_(c, d);
+  });
+  if (f.radius_km && hasOrigin) {
+    var rk = Number(f.radius_km);
+    items = items.filter(function (it) { return it.distance_km != null && it.distance_km <= rk; });
+  }
+  if (hasOrigin) items.sort(function (a, b) {
+    var x = a.distance_km == null ? 1e9 : a.distance_km;
+    var y = b.distance_km == null ? 1e9 : b.distance_km;
+    return x - y;
+  });
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(200, Math.max(1, parseInt(req.page_size, 10) || PAGE_SIZE));
+  var start = (page - 1) * pageSize;
+  return { total: items.length, page: page, page_size: pageSize, items: items.slice(start, start + pageSize) };
+}
+
+// ===== 案件マスター同期アクション (追補14: 案件アプリ連携のサーバー側) =====
+/**
+ * 案件同期で返す案件1件分 (ホワイトリスト方式)。
+ * CASE_SYNC_FIELDS_ に列挙した案件データのみを明示的に拾うため、応募者情報が
+ * 構造的に混ざらないことをここで保証する (応募者は別ブック・別テーブルであり、
+ * 本関数は cases 行しか受け取らない)。
+ */
+function caseSyncItem_(c) {
+  var out = {};
+  CASE_SYNC_FIELDS_.forEach(function (k) {
+    if (k === 'lat' || k === 'lon') out[k] = toNum_(c[k]);
+    else if (k === 'is_open') out[k] = toBool_(c[k]);
+    else if (k === 'updated_at_src' || k === 'created_at' || k === 'updated_at') out[k] = cellDateIso_(c[k]);
+    else out[k] = str_(c[k]);
+  });
+  return out;
+}
+
+/**
+ * getCaseMaster (読み取り): 案件マスターのスナップショット / 差分。
+ * req.updated_since (ISO日時) 指定時は cases.updated_at がそれより後の案件だけを返す
+ * (updated_at が空の行は updated_at_src で代用判定する)。無指定なら全件スナップショット。
+ * 返却は案件データのみ (caseSyncItem_ のホワイトリスト)。
+ */
+function actionGetCaseMaster_(req) {
+  var since = String(req.updated_since || '').trim();
+  var sinceMs = since ? new Date(since).getTime() : null;
+  if (since && isNaN(sinceMs)) throw new Error('updated_since は日時 (ISO形式) で指定してください');
+  var rows = readTable_('cases').rows;
+  var items = [];
+  rows.forEach(function (c) {
+    if (sinceMs != null) {
+      var stamp = cellDateIso_(c.updated_at) || cellDateIso_(c.updated_at_src);
+      var ms = stamp ? new Date(stamp).getTime() : NaN;
+      if (isNaN(ms) || ms <= sinceMs) return;
+    }
+    items.push(caseSyncItem_(c));
+  });
+  items.sort(function (a, b) {
+    var x = a.updated_at || a.updated_at_src, y = b.updated_at || b.updated_at_src;
+    return x < y ? -1 : (x > y ? 1 : 0);
+  });
+  return {
+    cases: items, total: items.length,
+    updated_since: since || '', snapshot: !since,
+    server_time: nowIso_()
+  };
+}
+
+/** source_flags (カンマ区切り) に source を重複なく加える */
+function mergeSourceFlags_(flags, source) {
+  var list = toList_(flags);
+  if (list.indexOf(source) < 0) list.push(source);
+  return list.join(',');
+}
+
+/**
+ * getCaseSourceKeys (読み取り): 案件プレビューの重複判定をサーバーの実案件と
+ * 照合するための軽量版 (監査 C-5)。返すのは (source, source_case_key) の
+ * 一覧だけで、案件の内容・応募者情報は含まない。req.source 指定時はその
+ * source のキーだけを返す。
+ */
+function actionGetCaseSourceKeys_(req) {
+  requireKikariUser_();
+  var onlySource = str_(req.source || '');
+  var bySource = {};
+  readTable_('case_sources').rows.forEach(function (r) {
+    var s = str_(r.source);
+    if (onlySource && s !== onlySource) return;
+    (bySource[s] = bySource[s] || []).push(str_(r.source_case_key));
+  });
+  var total = 0;
+  Object.keys(bySource).forEach(function (k) { total += bySource[k].length; });
+  return { by_source: bySource, total: total };
+}
+
+/** case_sources で (source, source_case_key) の既存行を探す。無ければ null */
+function findCaseSource_(source, sourceCaseKey) {
+  var t = readTable_('case_sources');
+  for (var i = 0; i < t.rows.length; i++) {
+    if (String(t.rows[i].source) === String(source) &&
+        String(t.rows[i].source_case_key) === String(sourceCaseKey)) return t.rows[i];
+  }
+  return null;
+}
+
+/** case_sources の既存行を raw_json / imported_at だけ更新する (主キーが無い表のため行番号で書く) */
+function updateCaseSourceRow_(rowObj, rawJson, importedAt) {
+  var sh = sheet_('case_sources');
+  var headers = readTable_('case_sources').headers;
+  var patch = { raw_json: rawJson, imported_at: importedAt };
+  Object.keys(patch).forEach(function (k) {
+    var col = headers.indexOf(k);
+    if (col >= 0) sh.getRange(rowObj._row, col + 1).setValue(patch[k]);
+  });
+}
+
+/**
+ * 案件 upsert の本体 (冪等性の担保):
+ * - 照合キーは (source, source_case_key) のみ。case_sources で既存を検索し、
+ *   あればその case_id を更新、無ければ case_id を新規採番して case_sources に
+ *   (source, source_case_key) を登録する。
+ * - したがって同じキーの再 push は「更新」になり、案件は増殖しない。
+ * - cases 側の更新は空値で既存値を潰さない (未指定フィールドは既存維持)。
+ * - source_flags には出所を加え (証跡)、case_sources.raw_json には出所原文を残す
+ *   (DATA_MODEL §5: マージで負けた値を捨てない)。
+ * ロック取得済みの文脈から呼ぶこと。
+ */
+function upsertCaseFromSource_(input, defaultSource) {
+  if (!input || typeof input !== 'object') throw new Error('案件データが空です');
+  var source = String(input.source || defaultSource || '').trim();
+  if (CASE_SYNC_SOURCES_.indexOf(source) < 0) {
+    throw new Error('source は ' + CASE_SYNC_SOURCES_.join('/') + ' のいずれかです: ' + source);
+  }
+  var src = input.case_source || {};
+  var sourceCaseKey = String(input.source_case_key || src.source_case_key || '').trim();
+  if (!sourceCaseKey) throw new Error('source_case_key が必要です (冪等キーの一部です)');
+  var raw = src.raw_json || input.raw_json || input;
+  var rawJson = (typeof raw === 'string') ? raw : JSON.stringify(raw);
+  var now = nowIso_();
+  var existingSrc = findCaseSource_(source, sourceCaseKey);
+
+  // 入力から案件フィールドだけを拾う (ホワイトリスト。余分なキーは cases に入れない)
+  var fields = {};
+  CASE_SYNC_FIELDS_.forEach(function (k) {
+    if (k === 'case_id' || k === 'created_at' || k === 'updated_at' || k === 'source_flags') return;
+    if (input[k] !== undefined && input[k] !== null && input[k] !== '') fields[k] = input[k];
+  });
+  if (fields.is_open !== undefined) fields.is_open = toBool_(fields.is_open);
+  if (!fields.updated_at_src) fields.updated_at_src = str_(input.updated_at_src || now);
+  fields.updated_at = now;
+  // R4 I-3: 持ち込み座標は受け入れ判定を通す。NG・精密でない座標は座標なしへ
+  // 降格する (原文は case_sources.raw_json に残る)。(c) の重複集計は単件経路
+  // では既存 cases 全体 + この1件で数える。
+  var coordVerdict = null;
+  if (fields.lat !== undefined || fields.lon !== undefined) {
+    var rep = municipalityRepPoint_(fields.prefecture || input.prefecture,
+      fields.municipality || input.municipality);
+    var dupCount = null;
+    var inKey = coordKey_(fields.lat, fields.lon);
+    if (inKey) {
+      var repKeys = municipalityRepKeys_();
+      if (repKeys[inKey]) dupCount = 0;
+      else {
+        var addrSet = {};
+        try {
+          readTable_('cases').rows.forEach(function (c) {
+            if (coordKey_(c.lat, c.lon) === inKey) addrSet[str_(c.address)] = true;
+          });
+        } catch (e) {}
+        addrSet[str_(fields.address || input.address || '')] = true;
+        dupCount = Object.keys(addrSet).length;
+      }
+    }
+    var acc = acceptCoord_(fields.lat, fields.lon, rep, dupCount);
+    coordVerdict = { verdict: acc.verdict, reason: acc.reason };
+    if (acc.verdict === 'downgraded') { fields.lat = ''; fields.lon = ''; }
+    else if (acc.verdict === 'precise') { fields.lat = acc.lat; fields.lon = acc.lon; }
+  }
+
+  if (existingSrc) {
+    var caseId = str_(existingSrc.case_id);
+    var before = findRow_('cases', 'case_id', caseId);
+    fields.source_flags = mergeSourceFlags_(before.source_flags, source);
+    if (!fields.facility_name_norm && fields.facility_name) {
+      fields.facility_name_norm = String(fields.facility_name).replace(/\s+/g, '');
+    }
+    updateRowByPk_('cases', caseId, fields);
+    updateCaseSourceRow_(existingSrc, rawJson, now);
+    return { case_id: caseId, created: false, source: source, source_case_key: sourceCaseKey,
+      coord: coordVerdict };
+  }
+  var newId = nextId_('cases');
+  var row = {
+    case_id: newId, facility_id: '', facility_name: '', facility_name_norm: '',
+    corporation_name: '', prefecture: '', municipality: '', address: '', lat: '', lon: '',
+    job_type: '', service_type: '', employment_type: '', title: '', description: '',
+    nearest_station: '', salary_text: '', is_open: true, merged_from: '',
+    created_at: now
+  };
+  Object.keys(fields).forEach(function (k) { row[k] = fields[k]; });
+  row.source_flags = mergeSourceFlags_('', source);
+  if (!row.facility_name_norm && row.facility_name) {
+    row.facility_name_norm = String(row.facility_name).replace(/\s+/g, '');
+  }
+  appendRow_('cases', row);
+  appendRow_('case_sources', {
+    case_id: newId, source: source, source_case_key: sourceCaseKey,
+    raw_json: rawJson, imported_at: now
+  });
+  // 革新5: 新規案件だけ生成待ちキューに積む (更新では生成しない)。生成自体は
+  // buildMatchProposals がロック外のタイミングで行う (送信はしない)。
+  enqueueMatchProposalCase_(newId);
+  return { case_id: newId, created: true, source: source, source_case_key: sourceCaseKey,
+    coord: coordVerdict };
+}
+
+/**
+ * pushCaseFromSms (要ドメイン認証): SMS側の手動案件・確認済み情報の単件 upsert。
+ * req.case に案件オブジェクトを入れる形式と、req 自体に案件フィールドを入れる形式の両対応。
+ */
+function actionPushCaseFromSms_(req) {
+  var me = requireKikariUser_();
+  var input = req.case || req;
+  return withLock_(function () {
+    var res = upsertCaseFromSource_(input, 'sms_app');
+    res.pushed_by = me;
+    return res;
+  });
+}
+
+/**
+ * pushCasesFromAiPage (要ドメイン認証): 案件ページ側からのバルク upsert。
+ * req.cases (配列) を受け取り、各要素を (source=ai_page 既定, source_case_key) で
+ * 冪等に upsert する。1件の失敗で全体を止めず、件数と失敗明細を返す。
+ */
+function actionPushCasesFromAiPage_(req) {
+  var me = requireKikariUser_();
+  var list = req.cases || req.items || req.rows || [];
+  if (!list.length) throw new Error('cases が空です');
+  if (list.length > 1000) throw new Error('1回の push は 1000 件までです (分割してください)');
+  return withLock_(function () {
+    var created = 0, updated = 0, errors = [];
+    list.forEach(function (input, idx) {
+      try {
+        var res = upsertCaseFromSource_(input, 'ai_page');
+        if (res.created) created++; else updated++;
+      } catch (err) {
+        errors.push({ index: idx, source_case_key: String((input && input.source_case_key) || ''),
+          error: errMsg_(err) });
+      }
+    });
+    return { total: list.length, created: created, updated: updated,
+      failed: errors.length, errors: errors, pushed_by: me };
+  });
+}
+
+/**
+ * getCaseSyncStatus (読み取り): 出所ごとの最終取り込み日時・件数を返す。
+ * case_sources の imported_at 最大値と行数が正。あわせて cases 総数と
+ * source_flags 別の案件数 (両方に存在する案件の把握用) も返す。個人情報は含まない。
+ */
+function actionGetCaseSyncStatus_(req) {
+  var bySource = {};
+  CASE_SYNC_SOURCES_.forEach(function (s) {
+    bySource[s] = { source: s, count: 0, last_imported_at: '' };
+  });
+  readTable_('case_sources').rows.forEach(function (r) {
+    var s = str_(r.source);
+    if (!bySource[s]) bySource[s] = { source: s, count: 0, last_imported_at: '' };
+    bySource[s].count++;
+    var at = cellDateIso_(r.imported_at);
+    if (at && at > bySource[s].last_imported_at) bySource[s].last_imported_at = at;
+  });
+  var flagCounts = {};
+  var caseRows = readTable_('cases').rows;
+  caseRows.forEach(function (c) {
+    toList_(c.source_flags).forEach(function (f) {
+      flagCounts[f] = (flagCounts[f] || 0) + 1;
+    });
+  });
+  return {
+    sources: Object.keys(bySource).map(function (k) { return bySource[k]; }),
+    total_cases: caseRows.length,
+    source_flag_counts: flagCounts,
+    latest_integrity_check: latestCaseIntegrity_(),
+    server_time: nowIso_()
+  };
+}
+
+/** ===== 案件連携の最終形: 毎日18時の整合性チェック =====
+ * マスター件数・府県別内訳・前回チェックとの差分・未解決の競合
+ * (case_sources で複数出所が残っている = 敗者保持の件数) を集計し、
+ * case_sync_log に1行記録する。結果は getCaseSyncStatus の
+ * latest_integrity_check でも返る。 */
+function computeCaseIntegrity_() {
+  var caseRows = readTable_('cases').rows;
+  var byPref = {};
+  caseRows.forEach(function (c) {
+    var p = str_(c.prefecture) || '(未設定)';
+    byPref[p] = (byPref[p] || 0) + 1;
+  });
+  var srcRows = [];
+  try { srcRows = readTable_('case_sources').rows; } catch (e) { srcRows = []; }
+  var perCase = {};
+  srcRows.forEach(function (r) { perCase[str_(r.case_id)] = (perCase[str_(r.case_id)] || 0) + 1; });
+  var loserKept = 0, multiSourceCases = 0;
+  Object.keys(perCase).forEach(function (cid) {
+    if (perCase[cid] > 1) { multiSourceCases++; loserKept += perCase[cid] - 1; }
+  });
+  // R4 I-3: 既存マスターの座標異常の棚卸し (受け入れ側の修正とは別に検出する)。
+  var coordInvalid = 0, coordFar = 0;
+  var caseDupMap = coordDupCountMap_(caseRows.map(function (c) {
+    return { lat: c.lat, lon: c.lon, addressKey: str_(c.address) };
+  }), municipalityRepKeys_());
+  var coordDup = 0;
+  caseRows.forEach(function (c) {
+    var chk = coordBasicCheck_(c.lat, c.lon);
+    if (chk.state === 'invalid') { coordInvalid++; return; }
+    if (chk.state !== 'ok') return;
+    var rep = municipalityRepPoint_(c.prefecture, c.municipality);
+    if (rep) {
+      var d = distanceKm_(chk.lat, chk.lon, rep.lat, rep.lon);
+      if (d != null && d > COORD_REP_LIMIT_KM) coordFar++;
+    }
+    if ((caseDupMap[coordKey_(c.lat, c.lon)] || 0) >= COORD_DUP_THRESHOLD) coordDup++;
+  });
+  return {
+    total_cases: caseRows.length,
+    by_prefecture: byPref,
+    case_sources_rows: srcRows.length,
+    multi_source_cases: multiSourceCases,
+    loser_kept_rows: loserKept,
+    // 未解決の競合 = 複数出所の原文が併存し、代表値の最終判断が人手に残っている案件数
+    unresolved_conflicts: multiSourceCases,
+    coord_invalid: coordInvalid,
+    coord_far_from_rep: coordFar,
+    coord_duplicated: coordDup
+  };
+}
+
+function latestCaseIntegrity_() {
+  try {
+    var rows = readTable_('case_sync_log').rows;
+    if (!rows.length) return null;
+    var last = rows[0];
+    rows.forEach(function (r) { if (cellDateIso_(r.checked_at) >= cellDateIso_(last.checked_at)) last = r; });
+    var detail = {};
+    try { detail = JSON.parse(str_(last.detail_json) || '{}'); } catch (e) { detail = {}; }
+    return {
+      log_id: str_(last.log_id), checked_at: cellDateIso_(last.checked_at),
+      total_cases: toNum_(last.total_cases),
+      by_prefecture: detail.by_prefecture || {},
+      delta_total: toNum_(last.delta_total),
+      delta_by_prefecture: detail.delta_by_prefecture || {},
+      unresolved_conflicts: toNum_(last.unresolved_conflicts),
+      loser_kept_rows: toNum_(last.loser_kept_rows)
+    };
+  } catch (e) { return null; }
+}
+
+/** トリガー / 手動のどちらからでも呼べる本体 (認証はアクション側で行う) */
+function runCaseIntegrityCheck() {
+  return withLock_(function () {
+    var cur = computeCaseIntegrity_();
+    var prev = latestCaseIntegrity_();
+    var deltaByPref = {};
+    var keys = {};
+    Object.keys(cur.by_prefecture).forEach(function (k) { keys[k] = true; });
+    if (prev) Object.keys(prev.by_prefecture || {}).forEach(function (k) { keys[k] = true; });
+    Object.keys(keys).forEach(function (k) {
+      deltaByPref[k] = (cur.by_prefecture[k] || 0) - ((prev && prev.by_prefecture[k]) || 0);
+    });
+    var now = nowIso_();
+    var row = {
+      log_id: nextId_('case_sync_log'), checked_at: now,
+      total_cases: cur.total_cases,
+      by_prefecture_json: JSON.stringify(cur.by_prefecture),
+      delta_total: prev ? cur.total_cases - (prev.total_cases || 0) : 0,
+      delta_by_prefecture_json: JSON.stringify(deltaByPref),
+      unresolved_conflicts: cur.unresolved_conflicts,
+      loser_kept_rows: cur.loser_kept_rows,
+      detail_json: JSON.stringify({ by_prefecture: cur.by_prefecture,
+        delta_by_prefecture: deltaByPref, case_sources_rows: cur.case_sources_rows,
+        multi_source_cases: cur.multi_source_cases }),
+      created_at: now
+    };
+    appendRow_('case_sync_log', row);
+    return { log_id: row.log_id, checked_at: now, total_cases: cur.total_cases,
+      by_prefecture: cur.by_prefecture, delta_total: row.delta_total,
+      delta_by_prefecture: deltaByPref, unresolved_conflicts: cur.unresolved_conflicts,
+      loser_kept_rows: cur.loser_kept_rows, first_check: !prev };
+  });
+}
+
+function actionRunCaseIntegrityCheck_(req) {
+  requireKikariUser_();
+  return runCaseIntegrityCheck();
+}
+
+/** 毎日18時台の time-driven トリガーを用意する (この関数自体はチェックを実行しない) */
+function installCaseIntegrityTrigger() {
+  var existing = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < existing.length; i++) {
+    if (existing[i].getHandlerFunction() === 'runCaseIntegrityCheck') {
+      return { installed: false, already_exists: true };
+    }
+  }
+  ScriptApp.newTrigger('runCaseIntegrityCheck').timeBased()
+    .atHour(18).nearMinute(0).everyDays(1).create();
+  return { installed: true, handler: 'runCaseIntegrityCheck', hour: 18 };
+}
+
+// ===== 新着案件マッチ提案 (革新5, INNOVATION.md §5) =====
+/** おすすめ減衰スコアの単体計算 (recommendCasesFor_ と同じ式・同じ足切り) */
+function caseRecommendScore_(applicant, c) {
+  var sameMuni = str_(c.municipality) !== '' && str_(c.municipality) === str_(applicant.municipality);
+  var d = distanceKm_(applicant.lat, applicant.lon, c.lat, c.lon);
+  if (d == null && !sameMuni) return null;
+  if (d != null && d > RECOMMEND_RADIUS_KM) return null;
+  var effDist = (d == null) ? 1 : d;
+  var srcIso = cellDateIso_(c.updated_at_src);
+  var srcMs = srcIso ? new Date(srcIso).getTime() : NaN;
+  var nowMs = new Date().getTime();
+  var ageDays = (!isFinite(srcMs) || srcMs > nowMs) ? Infinity : (nowMs - srcMs) / 86400000;
+  return { score: 1 / ((1 + ageDays / 30) * (1 + effDist / 5)), distance_km: d };
+}
+
+/** 新規案件の生成待ちを settings のキューに積む (upsert のロック内で重い計算をしないため) */
+function enqueueMatchProposalCase_(caseId) {
+  try {
+    var cur = toList_(getSettingValue_(MATCH_QUEUE_SETTING_KEY, ''));
+    if (cur.indexOf(String(caseId)) >= 0) return;
+    cur.push(String(caseId));
+    var exists = false;
+    readTable_('settings').rows.forEach(function (r) { if (String(r.key) === MATCH_QUEUE_SETTING_KEY) exists = true; });
+    if (exists) updateRowByPk_('settings', MATCH_QUEUE_SETTING_KEY, { value: cur.join(',') });
+    else appendRow_('settings', { key: MATCH_QUEUE_SETTING_KEY, value: cur.join(',') });
+  } catch (e) { /* キュー積みに失敗しても案件 upsert 自体は成功として扱う */ }
+}
+
+function clearMatchProposalQueue_(caseIds) {
+  try {
+    var done = {}; (caseIds || []).forEach(function (id) { done[String(id)] = true; });
+    var rest = toList_(getSettingValue_(MATCH_QUEUE_SETTING_KEY, '')).filter(function (id) { return !done[id]; });
+    updateRowByPk_('settings', MATCH_QUEUE_SETTING_KEY, { value: rest.join(',') });
+  } catch (e) {}
+}
+
+/** 募集終了した案件の suggested/seen 提案を dismissed (理由: 募集終了) へ寄せる。ロック内から呼ぶこと */
+function dismissProposalsForClosedCase_(caseId, actor) {
+  var n = 0;
+  try {
+    readTable_('case_match_proposals').rows.forEach(function (p) {
+      if (String(p.case_id) !== String(caseId)) return;
+      if (p.status !== 'suggested' && p.status !== 'seen') return;
+      updateRowByPk_('case_match_proposals', p.proposal_id, {
+        status: 'dismissed', dismiss_reason: '募集終了',
+        status_by: actor || 'system', status_at: nowIso_(), updated_at: nowIso_()
+      });
+      n++;
+    });
+  } catch (e) {}
+  return n;
+}
+
+/**
+ * buildMatchProposals (要ドメイン認証): 生成待ち (または req.case_id / req.case_ids で
+ * 指定された) 新規案件について、候補者をリスト化して case_match_proposals に保存する。
+ * 候補の定義は「その人の既存おすすめ上位5件 (recommendCasesFor_) に当該案件が入ること」。
+ * 足切り: 終了/例外系・配信停止・テスト求職者・直近14日に同じ案件を提示済みの人は候補にしない。
+ * 1案件あたり上限50名 (スコア順)。切り捨て件数は結果に明記する。送信は一切しない。
+ */
+function actionBuildMatchProposals_(req) {
+  var me = requireKikariUser_();
+  var caseIds = toList_(req.case_ids || req.case_id);
+  var fromQueue = !caseIds.length;
+  if (fromQueue) caseIds = toList_(getSettingValue_(MATCH_QUEUE_SETTING_KEY, ''));
+  return withLock_(function () {
+    var open = openCases_();
+    var allApps = readTable_('applicants').rows;
+    var optoutSet = optoutEmailSet_();
+    var existing = {};
+    try {
+      readTable_('case_match_proposals').rows.forEach(function (p) {
+        existing[String(p.case_id) + '|' + String(p.applicant_id)] = true;
+      });
+    } catch (e) {}
+    // 直近14日の提示済み (再提案しない)
+    var cutoffMs = new Date().getTime() - PROPOSAL_REPRESENTED_DAYS * 86400000;
+    var presented = {};
+    try {
+      readTable_('delivery_recipients').rows.forEach(function (r) {
+        var at = cellDateIso_(r.sent_at) || cellDateIso_(r.created_at);
+        var ms = at ? new Date(at).getTime() : NaN;
+        if (!isFinite(ms) || ms < cutoffMs) return;
+        toList_(r.recommended_case_ids).forEach(function (cid) {
+          presented[String(r.applicant_id) + '|' + cid] = true;
+        });
+      });
+    } catch (e) {}
+    var summary = { processed: 0, created: 0, skipped_existing: 0, by_case: [] };
+    caseIds.forEach(function (caseId) {
+      summary.processed++;
+      var c = null;
+      try { c = findRow_('cases', 'case_id', caseId); } catch (e) { c = null; }
+      if (!c) { summary.by_case.push({ case_id: caseId, error: 'case_not_found' }); return; }
+      if (!toBool_(c.is_open)) {
+        var closed = dismissProposalsForClosedCase_(caseId, me);
+        summary.by_case.push({ case_id: caseId, closed: true, dismissed: closed });
+        return;
+      }
+      // 計算量の歯止め: 同職種 + (同一市区町村 または 距離20km以内) の人だけに絞ってから回す
+      var pool = filterApplicants_(allApps, {}).filter(function (a) {
+        if (str_(a.job_type) !== str_(c.job_type)) return false;
+        if (csvStageRank_(a.csv_status).terminal) return false;
+        if (toBool_(a.mail_optout)) return false;
+        if (str_(a.email) && optoutSet[normalizeEmail_(a.email)]) return false;
+        var d = distanceKm_(a.lat, a.lon, c.lat, c.lon);
+        return (d != null && d <= RECOMMEND_RADIUS_KM) ||
+          (str_(a.municipality) !== '' && str_(a.municipality) === str_(c.municipality));
+      });
+      var cands = [];
+      pool.forEach(function (a) {
+        var pairKey = String(caseId) + '|' + String(a.applicant_id);
+        if (presented[String(a.applicant_id) + '|' + String(caseId)]) return;
+        var recs = recommendCasesFor_(a, open, 5);
+        for (var i = 0; i < recs.length; i++) {
+          if (String(recs[i].case_id) === String(caseId)) {
+            var sc = caseRecommendScore_(a, c);
+            cands.push({ applicant: a, rank: i + 1,
+              score: sc ? Math.round(sc.score * 10000) / 10000 : 0,
+              distance_km: recs[i].distance_km });
+            break;
+          }
+        }
+      });
+      cands.sort(function (x, y) { return y.score - x.score; });
+      var truncated = Math.max(0, cands.length - PROPOSAL_CANDIDATE_LIMIT);
+      var made = 0, skipped = 0, now = nowIso_();
+      cands.slice(0, PROPOSAL_CANDIDATE_LIMIT).forEach(function (cand) {
+        var pairKey = String(caseId) + '|' + String(cand.applicant.applicant_id);
+        if (existing[pairKey]) { skipped++; return; }
+        existing[pairKey] = true;
+        appendRow_('case_match_proposals', {
+          proposal_id: nextId_('case_match_proposals'), case_id: String(caseId),
+          applicant_id: str_(cand.applicant.applicant_id),
+          rank_in_recommend: cand.rank, score: cand.score,
+          distance_km: (cand.distance_km == null ? '' : cand.distance_km),
+          status: 'suggested', status_by: '', status_at: '', dismiss_reason: '',
+          delivery_id: '', created_at: now, updated_at: now
+        });
+        made++;
+      });
+      summary.created += made;
+      summary.skipped_existing += skipped;
+      summary.by_case.push({ case_id: caseId, candidates: cands.length, created: made,
+        skipped_existing: skipped, truncated: truncated });
+    });
+    if (fromQueue) clearMatchProposalQueue_(caseIds);
+    return summary;
+  });
+}
+
+var PROPOSAL_TRANSITIONS_ = {
+  suggested: ['seen', 'dismissed', 'ready'],
+  seen: ['dismissed', 'ready'],
+  ready: ['sent', 'dismissed'],
+  dismissed: [], sent: []
+};
+
+function proposalItem_(p) {
+  var caseName = '', applicantName = '';
+  try { caseName = str_(findRow_('cases', 'case_id', p.case_id).facility_name); } catch (e) {}
+  try { applicantName = str_(findApplicant_(p.applicant_id).name); } catch (e) {}
+  return {
+    proposal_id: str_(p.proposal_id), case_id: str_(p.case_id), facility_name: caseName,
+    applicant_id: str_(p.applicant_id), applicant_name: applicantName,
+    rank_in_recommend: toNum_(p.rank_in_recommend), score: toNum_(p.score),
+    distance_km: toNum_(p.distance_km),
+    status: str_(p.status), status_by: str_(p.status_by), status_at: cellDateIso_(p.status_at),
+    dismiss_reason: str_(p.dismiss_reason), delivery_id: str_(p.delivery_id),
+    created_at: cellDateIso_(p.created_at), updated_at: cellDateIso_(p.updated_at)
+  };
+}
+
+/** getMatchProposals (読み取り): 提案一覧。未読 (suggested) 件数も返す。送信はしない */
+function actionGetMatchProposals_(req) {
+  var rows = [];
+  try { rows = readTable_('case_match_proposals').rows; } catch (e) { rows = []; }
+  var unread = 0;
+  rows.forEach(function (p) { if (p.status === 'suggested') unread++; });
+  var filtered = rows.filter(function (p) {
+    if (req.status && String(p.status) !== String(req.status)) return false;
+    if (req.case_id && String(p.case_id) !== String(req.case_id)) return false;
+    if (req.applicant_id && String(p.applicant_id) !== String(req.applicant_id)) return false;
+    return true;
+  });
+  filtered.sort(function (a, b) {
+    var x = cellDateIso_(a.created_at), y = cellDateIso_(b.created_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  });
+  var limit = Math.min(500, Math.max(1, parseInt(req.limit, 10) || 200));
+  return { total: filtered.length, unread_count: unread,
+    items: filtered.slice(0, limit).map(proposalItem_) };
+}
+
+/**
+ * updateMatchProposalStatus (要ドメイン認証): 提案の状態遷移。
+ * suggested -> seen / dismissed / ready、ready -> sent (人が送信を記録したときだけ)。
+ * ready は issueFormToken の delivery_id を紐付けられるが、本アクション自体は送信しない。
+ */
+function actionUpdateMatchProposalStatus_(req) {
+  var me = requireKikariUser_();
+  if (!req.proposal_id) throw new Error('proposal_id が必要です');
+  var status = String(req.status || '');
+  return withLock_(function () {
+    var p = findRow_('case_match_proposals', 'proposal_id', req.proposal_id);
+    var allowed = PROPOSAL_TRANSITIONS_[str_(p.status)] || [];
+    if (allowed.indexOf(status) < 0) {
+      throw new Error('提案の状態遷移が不正です: ' + str_(p.status) + ' -> ' + status);
+    }
+    var now = nowIso_();
+    var patch = { status: status, status_by: me, status_at: now, updated_at: now };
+    if (status === 'dismissed') patch.dismiss_reason = String(req.dismiss_reason || req.reason || '');
+    if (req.delivery_id) patch.delivery_id = String(req.delivery_id);
+    updateRowByPk_('case_match_proposals', req.proposal_id, patch);
+    return { proposal_id: req.proposal_id, status: status, status_by: me };
+  });
+}
+
+// ===== おすすめ案件マッチング (DATA_MODEL §12) =====
+/**
+ * 同一 job_type 必須。並び: 距離昇順 + 同一市区町村ボーナス + 新しさ (updated_at_src)。
+ * 座標が無い応募者/案件は「同一市区町村 = 近距離 (仮 1km)」として扱う。
+ * 対象は呼び出し側で絞った応募者だけに限定し、全件総当たりはしない。
+ */
+// 施設形態の同点時優先順 (LIVE §6。介護の例: 有料 -> サ高住・GH・デイ -> 特養)
+var SERVICE_ORDER_ = ['有料', 'サ高住', 'GH', 'グループホーム', 'デイ', '特養', '老健', '病院'];
+function serviceRank_(serviceType) {
+  var st = str_(serviceType);
+  for (var i = 0; i < SERVICE_ORDER_.length; i++) if (st.indexOf(SERVICE_ORDER_[i]) >= 0) return i;
+  return SERVICE_ORDER_.length;
+}
+function salaryNum_(c) {
+  var m = str_(c.salary_text).replace(/,/g, '').match(/(\d{3,5})/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+/**
+ * 順位の減衰スコア (LIVE §6。フロントと一致させる):
+ *   score = 1 / ((1 + 経過日数/30) x (1 + 距離km/5))
+ * 経過日数は取得日 (updated_at_src) から。経過30日・距離5kmでそれぞれ評価が半分になる。
+ * 取得日がパースできない場合と未来日の場合はスコア 0 (SPEC_REFERENCE §4.2、フロントと一致)。
+ * 対象は 20km 以内 (距離不明は同一市区町村の場合のみ近距離扱いで含める)。
+ * 同点時は 距離 -> 取得日 (新しい順) -> 施設形態 (SERVICE_ORDER_) -> 単価 (高い順)。
+ */
+function recommendCasesFor_(applicant, openCases, count) {
+  var nowMs = new Date().getTime();
+  var scored = [];
+  for (var i = 0; i < openCases.length; i++) {
+    var c = openCases[i];
+    if (str_(c.job_type) !== str_(applicant.job_type)) continue; // 同職種必須
+    var sameMuni = str_(c.municipality) !== '' && str_(c.municipality) === str_(applicant.municipality);
+    var d = distanceKm_(applicant.lat, applicant.lon, c.lat, c.lon);
+    if (d == null && !sameMuni) continue; // 距離も市区町村も判定できない案件は出さない
+    if (d != null && d > RECOMMEND_RADIUS_KM) continue; // 20km超は出さない (LIVE §6)
+    var effDist = (d == null) ? 1 : d;    // 同一市区町村で座標なし = 近距離扱い
+    var srcIso = cellDateIso_(c.updated_at_src);
+    var srcMs = srcIso ? new Date(srcIso).getTime() : NaN;
+    // 仕様 (SPEC_REFERENCE §4.2 / 現行 JOB_RECOMMENDATIONS.md 2026-10-24 節): 取得日が
+    // パースできない (不明・不正) 場合と未来日の場合はスコア 0。フロントの
+    // recommendationScore (index.html) も同じ扱い。除外はせず、ageDays=Infinity として
+    // 減衰式の結果を 0 にし、同点タイブレーク (距離→取得日→形態→単価) で下位に残す。
+    var ageDays = (!isFinite(srcMs) || srcMs > nowMs) ? Infinity : (nowMs - srcMs) / 86400000;
+    var score = 1 / ((1 + ageDays / 30) * (1 + effDist / 5));
+    scored.push({ c: c, d: d, effDist: effDist, score: score, fresh: srcIso });
+  }
+  scored.sort(function (a, b) {
+    if (a.score !== b.score) return b.score - a.score; // スコア降順
+    if (a.effDist !== b.effDist) return a.effDist - b.effDist;
+    if (a.fresh !== b.fresh) return a.fresh < b.fresh ? 1 : -1;
+    var sr = serviceRank_(a.c.service_type) - serviceRank_(b.c.service_type);
+    if (sr !== 0) return sr;
+    return salaryNum_(b.c) - salaryNum_(a.c);
+  });
+  return scored.slice(0, count).map(function (x) { return caseListItem_(x.c, x.d); });
+}
+
+function openCases_() {
+  return readTable_('cases').rows.filter(function (c) { return toBool_(c.is_open); });
+}
+
+function actionRecommendForApplicants_(req) {
+  var ids = toList_(req.applicant_ids);
+  if (!ids.length) throw new Error('applicant_ids が空です');
+  if (ids.length > MAX_RECOMMEND_APPLICANT_IDS) {
+    throw new Error('applicant_ids は最大 ' + MAX_RECOMMEND_APPLICANT_IDS + ' 件までです (全件総当たり防止)');
+  }
+  // SMS側の既定は上位5件 (SMS_RECOMMEND_DEFAULT, LIVE §6)。
+  // Gmail の recommend_count (初期3・1〜5可変) とは別: そちらは clampRecommendCount_ を使う。
+  var count = (req.recommend_count == null || req.recommend_count === '')
+    ? SMS_RECOMMEND_DEFAULT
+    : Math.min(MAX_RECOMMEND_COUNT, Math.max(1, parseInt(req.recommend_count, 10) || SMS_RECOMMEND_DEFAULT));
+  var cases = openCases_();
+  var out = {};
+  ids.forEach(function (id) {
+    var a = findApplicant_(id);
+    out[id] = recommendCasesFor_(a, cases, count).map(publicFromListItem_); // SMS向けは対外整形で返す
+  });
+  return { recommendations: out, recommend_count: count };
+}
+
+function clampRecommendCount_(v) {
+  var n = parseInt(v, 10);
+  if (isNaN(n)) n = parseInt(getSettingValue_('default_recommend_count', '3'), 10) || 3;
+  return Math.min(MAX_RECOMMEND_COUNT, Math.max(1, n));
+}
+
+function defaultTopN_() {
+  var n = parseInt(getSettingValue_('default_top_n', '700'), 10);
+  return isNaN(n) ? 700 : Math.min(MAX_TOP_N, Math.max(1, n));
+}
+
+// ===== Gmail 配信: 対象決定 (順序固定。DESIGN_V2 §6.2 / DATA_MODEL §12) =====
+/**
+ * 順序: 絞り込み -> 除外 (メール重複 / 配信停止 / 対応中) -> 応募日新しい順
+ *       -> 上限N人 -> そのN人分だけおすすめ照合。
+ * 戻り値に件数内訳を必ず含める (条件一致 / 送信可能 / 除外理由別 / おすすめなし)。
+ */
+// R4 I-2: 回答済み者の Gmail 対象ルール (明文化)
+// 1. 回答したこと自体は配信停止にならない (抑止リストへの自動登録はしない)。
+// 2. 回答キューで対応中 (responses.status = in_progress) の回答が1件でもある人は
+//    既定で除外する (担当が誰かは問わない)。csv_status 側の対応中除外
+//    (include_active) とは独立で、include_active=true でも外れない。
+//    含める場合だけ include_response_in_progress=true を明示する。
+// 3. 未対応・対応済みのみの人は除外しない。
+// 4. 直近回答者 (最終回答が RECENT_RESPONSE_DAYS 日以内) は除外とは別に
+//    内訳へ常に表示する。30日は FORM_TOKEN_TTL_DAYS に合わせた運用パラメータ。
+var RECENT_RESPONSE_DAYS = 30;
+
+/** responses を1回走査して対象計算用の集合を作る (読めない環境では空集合に倒す) */
+function responseTargetSets_() {
+  var inProgress = {}, latestMs = {};
+  try {
+    readTable_('responses').rows.forEach(function (r) {
+      var id = str_(r.applicant_id);
+      if (!id) return;
+      if (responseStatus_(r) === 'in_progress') inProgress[id] = true;
+      var ms = new Date(cellDateIso_(r.created_at)).getTime();
+      if (isFinite(ms) && (!latestMs[id] || ms > latestMs[id])) latestMs[id] = ms;
+    });
+  } catch (e) { return { in_progress: {}, recent: {} }; }
+  var cutoff = new Date().getTime() - RECENT_RESPONSE_DAYS * 86400000;
+  var recent = {};
+  Object.keys(latestMs).forEach(function (id) {
+    if (latestMs[id] >= cutoff) recent[id] = true;
+  });
+  return { in_progress: inProgress, recent: recent };
+}
+
+function computeMailTargets_(filter, topN, includeActive, opts) {
+  opts = opts || {};
+  var all = readTable_('applicants').rows;
+  var matched = sortByAppliedDesc_(filterApplicants_(all, Object.assign({}, filter, { mail_only: true })));
+  var optoutSet = optoutEmailSet_();
+  var sentToday = mailSentTodayMap_();
+  var respSets = responseTargetSets_();
+  var seenEmail = {};
+  // R4 レーンC: 判定順序を統一する (形式 → 停止 → 終了系 → 回答対応中 → 年齢 →
+  // csv対応中 → 同日送信済み → 重複は最後)。seen には全判定を通過した行だけを
+  // 登録する (除外される最新行が、送信可能な古い行まで重複で落とすのを防ぐ)。
+  // duplicate_email は「他の除外理由を持たず、通過済みの先行行と重複した行」だけを数える。
+  var excluded = { duplicate_email: 0, optout: 0, active: 0, no_email: 0, invalid_email: 0, terminal: 0, age_over: 0, sent_today: 0, no_recommend: 0, response_in_progress: 0 };
+  var sendable = [];
+  var recentMatched = 0;
+  matched.forEach(function (r) {
+    if (respSets.recent[str_(r.applicant_id)]) recentMatched++;
+    var email = normalizeEmail_(r.email);
+    if (!email) { excluded.no_email++; return; }
+    if (!isValidEmail_(email)) { excluded.invalid_email++; return; }
+    if (toBool_(r.mail_optout) || optoutSet[email]) { excluded.optout++; return; }
+    // R3 Z4: 終了系 (選考NG・他社決定・登録辞退・退職済み 等の csv_status 終了判定と
+    // app_status の NG/譲渡) は include_active の有無にかかわらず常に対象外。
+    if (isTerminalStatus_(r)) { excluded.terminal++; return; }
+    // R4 I-2: 回答キュー対応中の人は既定で除外 (明示フラグでのみ含める)。
+    if (!opts.include_response_in_progress && respSets.in_progress[str_(r.applicant_id)]) {
+      excluded.response_in_progress++; return;
+    }
+    // R3 Z4: 年齢上限 62歳 (既定ルール)。年齢が確定する行のみ判定し、年齢不明は
+    // filterApplicants_ 側の age_include_unknown の扱いに委ねる。
+    var ageV = ageFromBirth_(r.birth_date);
+    if (ageV != null && ageV > MAIL_TARGET_MAX_AGE) { excluded.age_over++; return; }
+    // R4 01-#3: 対応中判定は csvStageRank_ の正規化判定 (表記ゆれを拾う)。
+    if (!includeActive && isActiveCsvStatus_(r.csv_status)) { excluded.active++; return; }
+    // R4 01-#10: 本日すでに送信済みの人は、配信をまたいでも同日は送らない。
+    if (sentToday[str_(r.applicant_id)]) { excluded.sent_today++; return; }
+    if (seenEmail[email]) { excluded.duplicate_email++; return; }
+    seenEmail[email] = true;
+    sendable.push(r);
+  });
+  var targets = sendable.slice(0, topN);
+  // R4 01-#1: per_person ではおすすめ0件の人を対象から落とす (フロントと同じ意味論)。
+  // 照合は上限適用後に行い (上限の意味を変えない)、結果は行の _r4_recs に保持して
+  // preview/create が再照合しないようにする。opts 未指定の呼び出しは従来動作。
+  if (opts.mode === 'per_person') {
+    var cases = opts.open_cases || openCases_();
+    var rc = opts.recommend_count || 1;
+    var kept = [];
+    targets.forEach(function (r) {
+      var recs = recommendCasesFor_(r, cases, rc);
+      if (!recs.length) { excluded.no_recommend++; return; }
+      r._r4_recs = recs;
+      kept.push(r);
+    });
+    targets = kept;
+  }
+  // R4 01-#10: 他配信で本日作成・未送信の宛先が重なる人数 (警告表示用。除外はしない)。
+  var queuedSet = mailQueuedTodaySet_();
+  var queuedToday = 0;
+  targets.forEach(function (r) { if (queuedSet[str_(r.applicant_id)]) queuedToday++; });
+  // R4 I-2: 直近回答者の内訳 (対象に残る人数つき)。
+  var recentTargets = 0;
+  targets.forEach(function (r) { if (respSets.recent[str_(r.applicant_id)]) recentTargets++; });
+  return {
+    matched_count: matched.length,
+    sendable_count: sendable.length,
+    excluded: excluded,
+    queued_today_count: queuedToday,
+    responder: {
+      recent_count: recentMatched,
+      recent_target_count: recentTargets,
+      in_progress_excluded: excluded.response_in_progress
+    },
+    targets: targets
+  };
+}
+
+function actionMailPreviewTargets_(req) {
+  var topN = Math.min(MAX_TOP_N, Math.max(1, parseInt(req.top_n, 10) || defaultTopN_()));
+  var count = clampRecommendCount_(req.recommend_count);
+  var mode = String(req.mode || 'per_person');
+  var cases = (mode === 'per_person') ? openCases_() : [];
+  // R4 01-#1: おすすめ照合は computeMailTargets_ 側で一度だけ行う (二重走査の廃止)。
+  var res = computeMailTargets_(req.filter || {}, topN, req.include_active === true,
+    { mode: mode, recommend_count: count, open_cases: cases,
+      include_response_in_progress: req.include_response_in_progress === true });
+  // R6.7 欠陥3: テスト時は作成経路 (actionMailCreateDelivery_) と同じく対象を
+  // テスト応募者1名に差し替える。従来はプレビューに test 分岐が無く、is_test
+  // 除外が効いたまま target_count 0 になり、実送信と食い違っていた。
+  if (req.test === true) {
+    var testBaseP = null;
+    readTable_('applicants').rows.forEach(function (r) {
+      if (!testBaseP && isTestApplicant_(r)) testBaseP = r;
+    });
+    if (!testBaseP) throw new Error('テスト求職者が未登録です。seedTestApplicant_ を実行してください');
+    res = Object.assign({}, res, {
+      targets: [Object.assign({}, testBaseP, { email: testSendEmail_() })]
+    });
+  }
+  var preview = res.targets.slice(0, 50).map(function (r) {
+    var recs = (mode === 'per_person') ? (r._r4_recs || recommendCasesFor_(r, cases, count)) : [];
+    return {
+      applicant_id: str_(r.applicant_id), name: str_(r.name), surname: str_(r.surname),
+      prefecture: str_(r.prefecture), municipality: str_(r.municipality),
+      job_type: str_(r.job_type), applied_at: cellDateIso_(r.applied_at),
+      recommended: recs
+    };
+  });
+  return {
+    matched_count: res.matched_count,       // 条件一致
+    sendable_count: res.sendable_count,     // 除外後に送信可能な総数
+    target_count: res.targets.length,       // 上限N適用後の対象数
+    excluded: res.excluded,                 // 除外理由別
+    responder: res.responder,               // R4 I-2: 直近回答者の内訳
+    no_recommend_count: res.excluded.no_recommend || 0, // おすすめなし人数 (対象から除外済み)
+    queued_today_count: res.queued_today_count || 0,    // 他配信で本日作成・未送信の重なり (警告用)
+    top_n: topN, recommend_count: count, mode: mode,
+    preview: preview // 先頭50人分のみ返す (全対象は mailCreateDelivery でサーバー側再計算)
+  };
+}
+
+// ===== Gmail 配信: 配信作成 (要ドメイン認証 + can_send)。この関数自体は送信しない =====
+/**
+ * deliveries / delivery_recipients / send_queue を一括作成するだけ。
+ * 実際の送信は processSendQueue (送信者本人の時間トリガー) が行う。
+ * 対象はサーバー側で computeMailTargets_ を再計算して確定する
+ * (画面の言い値を信用しない)。
+ */
+// ===== 配信作成の冪等性 (R3 Z4 / G6) =====
+// 二重作成 (ボタンの連打・通信リトライ・outbox 再送) で同じ配信が2件でき、
+// 全員へ二重送信になるのを防ぐ。照合の優先順位:
+//   (1) client_request_id (クライアント生成ID) があればそれで照合 (時間窓なし)。
+//       キーは deliveries.filter_json の _idem に埋めて保存する。
+//   (2) キーが無い場合も、同一送信者・同一内容 (件名/本文/フィルタ/モード/
+//       おすすめ件数/予約時刻/テスト区分) の配信が IDEMPOTENCY_WINDOW_MS 以内に
+//       あれば、それを既存として返す (内容フィンガープリント照合)。
+var IDEMPOTENCY_WINDOW_MS = 180000; // 3分
+
+function canonFilterJson_(filterObj) {
+  var src = filterObj || {};
+  var out = {};
+  Object.keys(src).sort().forEach(function (k) {
+    if (k === '_idem') return;
+    // include_active / _top_n / _test は filter_json に保存されるが、指紋では
+    // findIdempotentDelivery_ が個別に比較する (作成リクエスト側の filter には
+    // 含まれないキー、または個別の意味を持つメタ情報のため)。
+    if (k === 'include_active') return;
+    if (k === 'include_response_in_progress') return; // R4 I-2: include_active と同扱い
+    if (k === '_top_n' || k === '_test') return;
+    out[k] = src[k];
+  });
+  return JSON.stringify(out);
+}
+
+function deliveryReplayResult_(d) {
+  return {
+    delivery_id: str_(d.delivery_id),
+    target_count: toNum_(d.target_count) || 0,
+    sent_count: toNum_(d.sent_count) || 0,
+    failed_count: toNum_(d.failed_count) || 0,
+    status: str_(d.status),
+    idempotent_replay: true,
+    note: '同一の配信作成リクエストが既に処理済みのため、既存の配信を返しました (二重作成・二重送信はしません)'
+  };
+}
+
+function findIdempotentDelivery_(senderEmail, fp) {
+  var key = String(fp.clientRequestId || '');
+  var rows = readTable_('deliveries').rows;
+  var nowMs = new Date().getTime();
+  for (var i = rows.length - 1; i >= 0; i--) {
+    var d = rows[i];
+    if (String(d.sender_email || '').toLowerCase() !== String(senderEmail).toLowerCase()) continue;
+    if (String(d.status || '') === 'cancelled') continue;
+    var stored = null;
+    try { stored = JSON.parse(String(d.filter_json || '{}')); } catch (e) { stored = null; }
+    if (key) {
+      if (stored && String(stored._idem || '') === key) {
+        // R4 01-#9: キー一致でも内容が違えば replay しない。黙って旧配信を返すと
+        // 編集後の内容が送られない事故になるため、例外にして出し直しを促す
+        // (新規作成に倒すと元の作成が成功していた場合に二重送信になる)。
+        var sameContent = String(d.subject || '') === fp.subject &&
+          String(d.body_template || '') === fp.body &&
+          String(d.mode || '') === fp.mode &&
+          (toNum_(d.recommend_count) || 0) === fp.count &&
+          String(d.scheduled_at || '') === fp.scheduledAt &&
+          canonFilterJson_(stored) === canonFilterJson_(fp.filter) &&
+          (stored.include_active === true) === (fp.includeActive === true) &&
+          (stored.include_response_in_progress === true) === (fp.includeResponseInProgress === true) &&
+          (stored._top_n == null || Number(stored._top_n) === Number(fp.topN)) &&
+          (stored._test == null || (stored._test === true) === (fp.test === true));
+        if (!sameContent) throw new Error('client_request_id が既存の配信と内容が異なります (二重送信防止のため作成を止めました。新しい操作として出し直してください)');
+        return deliveryReplayResult_(d);
+      }
+      continue;
+    }
+    var createdMs = new Date(cellDateIso_(d.created_at)).getTime();
+    if (!(createdMs > 0) || nowMs - createdMs > IDEMPOTENCY_WINDOW_MS) continue;
+    if (String(d.subject || '') !== fp.subject) continue;
+    if (String(d.body_template || '') !== fp.body) continue;
+    if (String(d.mode || '') !== fp.mode) continue;
+    if ((toNum_(d.recommend_count) || 0) !== fp.count) continue;
+    if (String(d.scheduled_at || '') !== fp.scheduledAt) continue;
+    if (!stored || canonFilterJson_(stored) !== canonFilterJson_(fp.filter)) continue;
+    if ((stored.include_active === true) !== (fp.includeActive === true)) continue;
+    if ((stored.include_response_in_progress === true) !== (fp.includeResponseInProgress === true)) continue;
+    // R4 01-#9: top_n / テスト区分も指紋に含める。メタが無い旧配信は検証不能として replay しない。
+    if (stored._top_n == null || stored._test == null) continue;
+    if (Number(stored._top_n) !== Number(fp.topN)) continue;
+    if ((stored._test === true) !== (fp.test === true)) continue;
+    return deliveryReplayResult_(d);
+  }
+  return null;
+}
+
+/**
+ * R4 13-#8 後半: 送信者 (operators) の署名ガード。sender_address ガードと同型で、
+ * 署名が未設定 (空) のまま、またはシード等のプレースホルダ文言を含んだまま
+ * 送信できないよう、配信作成時点で止める。プレースホルダ判定は実データの
+ * 初期値文言だけを狙う部分一致: '設定してください' / 'プレースホルダ' /
+ * '(本人' / '（本人' / '初回に設定'。
+ */
+function assertOperatorSignatureReady_(operator) {
+  var sig = str_(operator && operator.signature);
+  if (!sig.trim()) {
+    throw new Error('送信者の署名 (signature) が未設定です。設定画面で署名を設定してください');
+  }
+  var placeholders = ['設定してください', 'プレースホルダ', '(本人', '（本人', '初回に設定'];
+  for (var i = 0; i < placeholders.length; i++) {
+    if (sig.indexOf(placeholders[i]) >= 0) {
+      throw new Error('送信者の署名 (signature) にプレースホルダが含まれています。設定画面で実際の署名を設定してください');
+    }
+  }
+}
+
+function actionMailCreateDelivery_(req) {
+  var auth = requireCanSend_();
+  var subject = String(req.subject || '').trim();
+  var body = String(req.body_template || '');
+  // R6.6 include_form: 送信時にフォームURLを付けるか (既定 true)。
+  // false の場合も form_token 自体は発行する — 配信停止リンクの本人確認に
+  // 同じトークンを使うため、空にすると外部からの配信停止登録が壊れる。
+  // フラグが制御するのは文面へのフォームURLの載せ方だけ。
+  var includeForm = req.include_form !== false;
+  if (!subject) throw new Error('件名が空です');
+  if (!body) throw new Error('本文テンプレが空です');
+  // R4 レーンD 13-#5: 件名・本文テンプレ自体への許可リスト外タグの混入は作成時点で拒否する
+  // (宛名等の対象者依存タグは展開後でないと判定できないため、ここでは未知タグの検出に限る)。
+  var badSubjectTags = disallowedTags_(subject, 'mail');
+  if (badSubjectTags.length) {
+    throw new Error('件名にメールでは使えないプレースホルダが含まれています: ' + badSubjectTags.join(' '));
+  }
+  var badBodyTags = disallowedTags_(body, 'mail');
+  if (badBodyTags.length) {
+    throw new Error('本文にメールでは使えないプレースホルダが含まれています: ' + badBodyTags.join(' '));
+  }
+  if (body.indexOf('{不足ヒアリング}') >= 0 || subject.indexOf('{不足ヒアリング}') >= 0) {
+    throw new Error('{不足ヒアリング} は誤字です。正しくは {不足ヒヤリング} です。直してから作成してください');
+  }
+  // R4 レーンJ 項目1: 使ったテンプレートの版キーを確定する。フロントが
+  // req.template_version を渡した場合はそれを素通しで記録し、無ければ
+  // template_id / template_kind (= mail_body) の行と本文の一致からサーバーで決める。
+  var tplVer = req.template_version
+    ? { template_id: String(req.template_id || ''), template_version: String(req.template_version) }
+    : templateVersionFor_({ template_id: req.template_id,
+        template_kind: req.template_kind || 'mail_body' }, body);
+  // R3 検証 #30: フォーム/配信停止 URL が未設定のまま作成すると「(配信停止URL未設定)」
+  // 等のリテラル入りのメールがそのまま送られてしまう。作成時点で検出して止める。
+  if (!String(getSettingValue_('form_base_url', '') || '').trim()) {
+    throw new Error('回答フォームURL (form_base_url) が未設定です。設定を確認してください');
+  }
+  if (!String(getSettingValue_('optout_base_url', '') || '').trim()) {
+    throw new Error('配信停止URL (optout_base_url) が未設定です。設定を確認してください');
+  }
+  // R4 (法令ブロッカー): 送信者住所が未設定のまま送ると特定電子メール法の
+  // 表示義務を欠くため、作成時点で止める (値は運用開始前に設定が必要)。
+  if (!String(getSettingValue_('sender_address', '') || '').trim()) {
+    throw new Error('送信者住所 (sender_address) が未設定です。設定を確認してください');
+  }
+  // R4 13-#8 後半: 署名も sender_address と同型に、未設定・プレースホルダのまま
+  // 送信できないよう作成時点で止める (送信者は requireCanSend_ の operators 行)。
+  assertOperatorSignatureReady_(auth.operator);
+  var mode = (String(req.mode || 'per_person') === 'same_body') ? 'same_body' : 'per_person';
+  var count = clampRecommendCount_(req.recommend_count);
+  var topN = Math.min(MAX_TOP_N, Math.max(1, parseInt(req.top_n, 10) || defaultTopN_()));
+  var scheduledAt = String(req.scheduled_at || '');
+  if (req.test === true && subject.indexOf('【テスト】') !== 0) subject = '【テスト】' + subject;
+
+  var createdDelivery = withLock_(function () {
+    // R3 Z4: 冪等性チェック (上記 findIdempotentDelivery_ 参照)。
+    var replay = findIdempotentDelivery_(auth.email, {
+      clientRequestId: String(req.client_request_id || ''),
+      subject: subject, body: body, mode: mode, count: count,
+      scheduledAt: scheduledAt, filter: req.filter || {},
+      includeActive: req.include_active === true,
+      includeResponseInProgress: req.include_response_in_progress === true,
+      topN: topN, test: req.test === true
+    });
+    if (replay) return replay;
+    var cases = (mode === 'per_person') ? openCases_() : [];
+    var res = computeMailTargets_(req.filter || {}, topN, req.include_active === true,
+      { mode: mode, recommend_count: count, open_cases: cases,
+        include_response_in_progress: req.include_response_in_progress === true });
+    var testEmail = '';
+    if (req.test === true) {
+      testEmail = testSendEmail_();
+      var testBase = null;
+      var allRowsForTest = readTable_('applicants').rows;
+      for (var ti = 0; ti < allRowsForTest.length; ti++) {
+        if (isTestApplicant_(allRowsForTest[ti])) { testBase = allRowsForTest[ti]; break; }
+      }
+      // R4 S-12: 実在応募者へのフォールバックは廃止 (テスト送信のスナップショットが
+      // 実在者のタイムラインに混入する経路だった)。テスト求職者がいなければ作成自体を止める。
+      if (!testBase) throw new Error('テスト求職者が未登録です。seedTestApplicant_ を実行してください');
+      res = Object.assign({}, res, { targets: [Object.assign({}, testBase, { email: testEmail })] });
+    }
+    if (!res.targets.length) throw new Error('送信対象が0人です (条件一致 ' + res.matched_count + ' 人 / 除外 ' + JSON.stringify(res.excluded) + ' / おすすめなしで除外 ' + (res.excluded.no_recommend || 0) + ' 人)');
+    var deliveryId = nextId_('deliveries');
+    var now = nowIso_();
+    appendRow_('deliveries', {
+      delivery_id: deliveryId, sender_email: auth.email,
+      sender_name: str_(auth.operator.display_name), subject: subject, body_template: body,
+      mode: mode, recommend_count: count,
+      filter_json: JSON.stringify(Object.assign({}, req.filter || {},
+        { include_active: req.include_active === true },
+        { include_response_in_progress: req.include_response_in_progress === true },
+        { _top_n: topN, _test: req.test === true },
+        req.client_request_id ? { _idem: String(req.client_request_id) } : {})),
+      target_count: res.targets.length, sent_count: 0, failed_count: 0,
+      status: 'queued', scheduled_at: scheduledAt, created_by: auth.email,
+      created_at: now, started_at: '', finished_at: '',
+      template_id: tplVer.template_id, template_version: tplVer.template_version,
+      include_form: includeForm
+    });
+    // F-03 (堅牢化): 対象ごとの作成を個別に隔離し、実際に作成できた件数で
+    // target_count を確定させる (乖離すると bumpDeliveryCounts_ の完了判定に
+    // 永遠に届かず status が done にならないため)。
+    var createdCount = 0, createFailed = 0, createErrors = [];
+    res.targets.forEach(function (r) {
+    try {
+      var recs = (mode === 'per_person') ? (r._r4_recs || recommendCasesFor_(r, cases, count)) : [];
+      var recIds = recs.map(function (x) { return x.case_id; });
+      // R4 レーンD 13-#5: 作成時スナップショット展開後にも残存検査を行う。
+      // 残存があれば throw し、この受信者だけが作成失敗として隔離される (既存処理)。
+      var snapshotExpanded = expandTemplate_(body, r,
+        { recommended_case_ids: recIds.join(',') }, '', '', auth.operator);
+      assertNoLeftoverTags_(snapshotExpanded, 'メール本文');
+      appendRow_('delivery_recipients', {
+        delivery_id: deliveryId, applicant_id: str_(r.applicant_id), email: str_(r.email),
+        recommended_case_ids: recIds.join(','),
+        status: 'pending', error: '', sent_at: '',
+        form_token: Utilities.getUuid() + Utilities.getUuid().replace(/-/g, ''), // 推測不能・受信者ごとに一意
+        created_at: now, updated_at: now,
+        // 送信スナップショット: この時点で見せる案件の写し + 展開済み文面。
+        // 送信確定時に processSendQueue が body_snapshot を実際に送った全文で確定させる。
+        cases_snapshot: buildCasesSnapshot_(recIds),
+        body_snapshot: snapshotBody_(snapshotExpanded),
+        template_version: tplVer.template_version
+      });
+      appendRow_('send_queue', {
+        queue_id: nextId_('send_queue'), delivery_id: deliveryId, applicant_id: str_(r.applicant_id),
+        sender_email: auth.email, status: 'waiting', try_count: 0,
+        scheduled_at: scheduledAt, created_at: now, sent_at: '', updated_at: now
+      });
+      createdCount++;
+    } catch (createErr) {
+      createFailed++;
+      if (createErrors.length < 5) createErrors.push(errMsg_(createErr));
+      try { Logger.log('mailCreateDelivery target failed delivery=' + deliveryId +
+        ' applicant=' + str_(r.applicant_id) + ': ' + errMsg_(createErr)); } catch (e) {}
+    }
+    });
+    if (!createdCount) {
+      try { updateRowByPk_('deliveries', deliveryId, { target_count: 0, status: 'cancelled', finished_at: nowIso_() }); } catch (e) {}
+      throw new Error('配信対象の作成に全件失敗しました (delivery=' + deliveryId + '): ' + createErrors.join(' / '));
+    }
+    if (createdCount !== res.targets.length) {
+      // 実作成件数で target_count を確定させる (部分失敗時の補償)。
+      updateRowByPk_('deliveries', deliveryId, { target_count: createdCount });
+    }
+    var result = {
+      delivery_id: deliveryId, target_count: createdCount,
+      template_id: tplVer.template_id, template_version: tplVer.template_version,
+      requested_target_count: res.targets.length,
+      create_failed_count: createFailed, create_errors: createErrors,
+      matched_count: res.matched_count, excluded: res.excluded,
+      queued_today_count: res.queued_today_count || 0,
+      note: '配信を作成しました。送信はこの画面からバッチ送信されます (画面を閉じると止まりますが、キューはサーバーに残り、次に開いたとき続きから再開できます)'
+    };
+    if (req.test === true) { result.test = true; result.test_email = testEmail; }
+    return result;
+  });
+  try {
+    createdDelivery.relay_push = createdDelivery.idempotent_replay
+      ? { skipped: 'idempotent_replay' }
+      : relayPushContextsForDelivery_(createdDelivery.delivery_id);
+  } catch (e) {
+    Logger.log('relay push (mailCreateDelivery) failed delivery=' +
+      createdDelivery.delivery_id + ': ' + errMsg_(e));
+    createdDelivery.relay_push = { error: errMsg_(e) };
+  }
+  return createdDelivery;
+}
+
+/**
+ * Gmail プレビュー生成 (R4 レーンD 13-#3 修正1)。
+ * プレビューを実送信と同一の buildMailBody_ で生成し、生成経路を1本にする。
+ * 実送信と異なるのはフォーム/配信停止 URL のトークン値だけ (固定文字列 'preview')。
+ * req: { applicant_id, body_template, recommended_case_ids, sender_email, subject? }
+ * 戻り値には展開後の件名も含める (13-#5 の件名展開と連動)。
+ */
+function actionMailPreviewBody_(req) {
+  var auth = requireCanSend_();
+  if (!req.applicant_id) throw new Error('applicant_id が必要です');
+  var applicant = findApplicant_(String(req.applicant_id));
+  var operator = auth.operator;
+  if (req.sender_email) {
+    var specified = null;
+    try { specified = operatorByEmail_(String(req.sender_email)); } catch (e) { specified = null; }
+    if (specified) operator = specified;
+  }
+  var recIds = toList_(req.recommended_case_ids);
+  // R6.7 欠陥3: おすすめ未指定なら作成経路と同じく自動でおすすめを解決する。
+  // 従来は空のまま {おすすめ案件} が空欄で描画され、実送信と食い違っていた。
+  if (!recIds.length) {
+    recIds = recommendCasesFor_(applicant, openCases_(), clampRecommendCount_(req.recommend_count))
+      .map(function (x) { return x.case_id; });
+  }
+  var recipient = { recommended_case_ids: recIds.join(','), form_token: 'preview' };
+  var delivery = {
+    body_template: String(req.body_template || ''),
+    subject: String(req.subject || ''),
+    sender_email: str_(operator.email) || auth.email,
+    sender_name: str_(operator.display_name),
+    // R6.6 include_form: プレビューも実送信と同じ文面にするため、要求をそのまま載せる。
+    include_form: req.include_form !== false
+  };
+  var body = buildMailBody_(delivery, applicant, recipient, operator);
+  var urls = mailUrlsForRecipient_(recipient, deliveryIncludeForm_(delivery));
+  var subject = expandTemplate_(delivery.subject, applicant, recipient,
+    urls.formUrl, urls.optoutUrl, operator);
+  assertNoLeftoverTags_(subject, '件名');
+  return { applicant_id: str_(applicant.applicant_id), subject: subject, body: body };
+}
+
+// ===== Gmail 送信: キュープロセッサ (時間トリガー用) =====
+/**
+* 送信者本人のアカウントで動く時間トリガー (init_sheets.gs の installMySendTrigger) から呼ばれる。
+* - sender_email が実行者本人の行だけを古い順に拾う (他人の行は絶対に送らない)。
+* - 1日の上限 = min(MailApp.getRemainingDailyQuota(), 1500) で停止する。
+ *   (R3 P0: 残量取得は MailApp の API。GmailApp に同名メソッドは存在しない。
+ *    取得に失敗した場合は remainingMailQuota_ が当日送信実績のカウントで
+ *    ハードキャップ管理にフォールバックする。送信自体は止めない。)
+* - 二重送信防止: 送信前に status を 'sending' へ先行更新 + LockService。
+* - 1回の実行は Apps Script の実行時間上限 (6分) を見て最大 200 件まで。
+*/
+/**
+ * 送信後処理の1ステップを隔離実行する (F-01 堅牢化)。
+ * updateRecipientStatus_ / appendEvent_ / bumpDeliveryCounts_ 等の記録処理が
+ * throw しても、例外をここで止めて result.post_errors に残し、呼び出し側
+ * (キューの残り処理) には伝播させない。送信自体の成否とは切り分けること:
+ * GmailApp 送信が成功した後に記録処理が失敗しても、その行を failed にはしない
+ * (failed に倒すと再試行で二重送信になる)。
+ */
+function queuePostStep_(result, label, fn) {
+  try { fn(); return true; } catch (e) {
+    result.post_errors++;
+    if (result.post_error_details.length < 10) result.post_error_details.push(label + ': ' + errMsg_(e));
+    try { Logger.log('processSendQueue post-step failed [' + label + ']: ' + errMsg_(e)); } catch (e2) {}
+    return false;
+  }
+}
+
+/** キュー行の経過時間判定に使う時刻 (updated_at 優先、旧行は created_at) */
+function queueTimestampMs_(q) {
+  var iso = cellDateIso_(q.updated_at) || cellDateIso_(q.created_at);
+  var ms = iso ? new Date(iso).getTime() : NaN;
+  return isFinite(ms) ? ms : 0;
+}
+
+/**
+ * 'sending' 残留行の回収 (F-02)。processSendQueue のロック取得後に呼ぶこと
+ * (ロック中は他の processSendQueue が送信していないため、古い 'sending' は
+ * 前回実行が送信直後に落ちた残留と判断できる)。
+ * - 経過時間が QUEUE_STALE_SENDING_MINUTES 未満の行は触らない (stale_sending_kept)。
+ * - 受信者側が既に 'sent' の行は再送せずキューを 'sent' に倒す (recovered_as_sent)。
+ *   この場合 bumpDeliveryCounts_ は行わない (落ちた時点で加算済みか不明なため、
+ *   二重加算を避ける。件数の最終確認は deliveries の棚卸しで行う)。
+ * - それ以外は 'waiting' に戻し (recovered)、同じ実行の送信対象に含める。
+ * 回収処理自体の失敗も行ごとに隔離し、recovery_errors に残して次へ進む。
+ */
+function recoverStaleSending_(me, nowMs, result) {
+  var rows = [];
+  try { rows = readTable_('send_queue').rows; } catch (e) { result.recovery_errors++; return; }
+  rows.filter(function (q) {
+    return String(q.sender_email).toLowerCase() === me && String(q.status) === 'sending';
+  }).forEach(function (q) {
+    var baseMs = queueTimestampMs_(q);
+    if (baseMs && (nowMs - baseMs) < QUEUE_STALE_SENDING_MINUTES * 60000) {
+      result.stale_sending_kept++;
+      return;
+    }
+    try {
+      var alreadySent = false;
+      try {
+        var rec = findRecipient_(q.delivery_id, q.applicant_id);
+        alreadySent = String(rec.status) === 'sent';
+      } catch (e) { alreadySent = false; }
+      if (alreadySent) {
+        updateRowByPk_('send_queue', q.queue_id,
+          { status: 'sent', sent_at: cellDateIso_(rec.sent_at) || nowIso_(), updated_at: nowIso_() });
+        result.recovered_as_sent++;
+      } else {
+        updateRowByPk_('send_queue', q.queue_id, { status: 'waiting', updated_at: nowIso_() });
+        result.recovered++;
+      }
+    } catch (e) {
+      result.recovery_errors++;
+      try { Logger.log('processSendQueue recovery failed queue=' + q.queue_id + ': ' + errMsg_(e)); } catch (e2) {}
+    }
+  });
+}
+
+/**
+ * 送信キュー滞留の参照 (読み取り専用・書き込みは一切しない)。
+ * 実行ユーザー (Session のメールアドレス) の send_queue 行だけを集計する。
+ * send_queue の列: queue_id / delivery_id / applicant_id / sender_email / status /
+ *   try_count / scheduled_at / created_at / sent_at / updated_at。
+ * status の値は waiting / sending / sent / failed (QUEUE_CLAIM_STATUSES)。
+ * 戻り値: { sender_email, total, counts (status別件数。未知の status 値もそのまま集計),
+ *   waiting, waiting_count (waiting 件数), oldest_waiting_at (waiting の最古 created_at, ISO。無ければ '') }
+ * 該当行が無い場合はゼロ件で正常に応答する。
+ */
+function actionGetSendQueueStats_(req) {
+  var me = currentUserEmail_();
+  var counts = {};
+  Object.keys(QUEUE_CLAIM_STATUSES).forEach(function (s) { counts[s] = 0; });
+  var total = 0;
+  var oldestWaiting = '';
+  if (me) {
+    readTable_('send_queue').rows.forEach(function (q) {
+      if (String(q.sender_email || '').trim().toLowerCase() !== me) return;
+      var st = str_(q.status);
+      if (!st) return;
+      if (!Object.prototype.hasOwnProperty.call(counts, st)) counts[st] = 0;
+      counts[st]++;
+      total++;
+      if (st === 'waiting') {
+        var ca = cellDateIso_(q.created_at);
+        if (ca && (!oldestWaiting || ca < oldestWaiting)) oldestWaiting = ca;
+      }
+    });
+  }
+  // R4 O-05(3): 中継 Pull の死活を可視化する (30分以上成功が無ければ stale)。
+  // relay 未配置の環境では relay: null のまま (従来動作を壊さない)。
+  var relayHealth = null;
+  try {
+    if (typeof relayLastPull_ === 'function') {
+      var lastPull = relayLastPull_();
+      var lastAt = lastPull && lastPull.at ? Date.parse(lastPull.at) : NaN;
+      relayHealth = {
+        last_pull_at: lastPull ? String(lastPull.at || '') : '',
+        stale: !(isFinite(lastAt) && (Date.now() - lastAt) < 30 * 60 * 1000),
+        last_summary: lastPull ? lastPull.summary : null
+      };
+    }
+  } catch (e) { relayHealth = null; }
+  return {
+    sender_email: me,
+    total: total,
+    counts: counts,
+    waiting: counts.waiting || 0,
+    waiting_count: counts.waiting || 0,
+    oldest_waiting_at: oldestWaiting,
+    trigger_auto: triggerAutoStatus_(),
+    relay: relayHealth
+  };
+}
+
+/**
+ * 当日の残り送信可能数 (R3 P0)。
+ * 正規の取得は MailApp.getRemainingDailyQuota() (GmailApp には存在しない)。
+ * 取得が例外/不正値の場合は「送信を止めない」方針でフォールバックする:
+ * send_queue の当日 sent 実績 (自アカウント分) を数え、ハードキャップ
+ * (GMAIL_DAILY_HARD_CAP) から差し引いた残量を返す。それも失敗したら
+ * ハードキャップ自体を返す (上限管理はキューの実績側でも効く)。
+ */
+function remainingMailQuota_() {
+  try {
+    var q = MailApp.getRemainingDailyQuota();
+    if (typeof q === 'number' && isFinite(q) && q >= 0) return Math.floor(q);
+  } catch (e) { /* fall through to the counted fallback */ }
+  try {
+    var me = currentUserEmail_();
+    var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    var sentToday = 0;
+    readTable_('send_queue').rows.forEach(function (q) {
+      if (String(q.sender_email || '').toLowerCase() === me &&
+          String(q.status || '') === 'sent' &&
+          cellDateIso_(q.sent_at).slice(0, 10) === today) sentToday++;
+    });
+    return Math.max(0, GMAIL_DAILY_HARD_CAP - sentToday);
+  } catch (e2) { return GMAIL_DAILY_HARD_CAP; }
+}
+
+/**
+ * 送信直前再チェック (R3 Z4 / G4-D9)。作成時点で対象だった人でも、予約配信の
+ * 実行時点までに状態が変わっていれば送らない。戻り値: 除外理由 / 送信可なら ''。
+ * - optout: mail_optout フラグ、または配信停止リストにメールが一致
+ * - terminal: csv_status の終了系、または app_status の NG/譲渡 (isTerminalStatus_)
+ * - age: 年齢上限 62歳を超える (MAIL_TARGET_MAX_AGE)
+ * - test: テスト求職者は、宛先が固定のテスト送信先のときだけ許可する
+ */
+function sendTimeExclusionReason_(applicant, recipient, optoutSet, opts) {
+  if (!applicant) return '応募者が見つかりません';
+  var email = normalizeEmail_(applicant.email);
+  var recEmail = normalizeEmail_(recipient && recipient.email);
+  if (toBool_(applicant.mail_optout) ||
+      (email && optoutSet && optoutSet[email]) ||
+      (recEmail && optoutSet && optoutSet[recEmail])) {
+    return '配信停止のため送信しません';
+  }
+  // R4 01-#11: 宛先が作成後に変わっていたら送らない (旧アドレスへの誤送信防止)。
+  // テスト配信は宛先が固定テスト送信先に差し替わるため照合をスキップする。
+  var isTestDest = false;
+  try { isTestDest = !!recEmail && recEmail === normalizeEmail_(testSendEmail_()); } catch (e) {}
+  if (!isTestDest && email !== recEmail) {
+    return '宛先メールアドレスが変更されているため送信しません (配信を作り直してください)';
+  }
+  // R4 01-#7: 形式不正の宛先は failed (リトライ浪費) ではなく skipped に倒す。
+  if (recEmail && !isValidEmail_(recEmail)) {
+    return 'メールアドレスの形式が不正なため送信しません';
+  }
+  if (isTerminalStatus_(applicant)) return '終了系ステータスのため送信しません';
+  // R3 検証 #4 残存分: 作成後に「対応中」(稼働中・内定待ち・職見待ち・FIX待ち・
+  // アテンド待ち・誘致待ち) へ状態変化した人も、送信直前に再チェックして送らない。
+  // 配信作成時に include_active=true が明示された配信だけは対象に含める
+  // (作成時の filter_json に保存した include_active を processSendQueue が渡す)。
+  // R4 01-#3: 判定は csvStageRank_ の正規化判定 (表記ゆれも拾う)。
+  if (!(opts && opts.include_active) && isActiveCsvStatus_(applicant.csv_status)) {
+    return '対応中ステータスのため送信しません';
+  }
+  // R4 I-2: 作成後に回答キューで「対応中」になった人も送らない
+  // (作成時に include_response_in_progress=true が明示された配信は除く)。
+  if (!(opts && opts.include_response_in_progress) &&
+      opts && opts.response_in_progress_ids &&
+      opts.response_in_progress_ids[str_(applicant.applicant_id)]) {
+    return '回答対応中のため送信しません';
+  }
+  // R4 01-#10: 他の配信で本日すでに送信済みの人には送らない (同日重複送信ガード)。

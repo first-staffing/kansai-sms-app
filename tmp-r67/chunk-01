@@ -1,0 +1,1798 @@
+ * 優先順: 連絡停止 > 稼働中 > 選考中 > 時期先 > 条件確認待ち > 即提案可能。
+ * 選考中は正規化ラベル基準 (職見待ちは実施待ちとして扱う — フロントとの意図的な統一)。 */
+function segmentOfApplicant_(r, today) {
+  if (toBool_(r.mail_optout) || isTerminalStatus_(r)) return '連絡停止';
+  var st = csvStageRank_(r.csv_status);
+  if ((st.inFlow && st.stage >= 8) || str_(r.app_status) === '稼働開始') return '稼働中';
+  var selLabel = st.label;
+  if (['アテンド待ち', 'FIX待ち', '実施待ち', '職見待ち', '内定待ち', 'アテンド済み', 'FIX済み', '内定'].indexOf(selLabel) >= 0 ||
+      ['FIX', 'アテンド', '内定'].indexOf(str_(r.app_status)) >= 0) return '選考中';
+  var sd = cellDateYmd_(r.desired_start_date);
+  if (sd && /^\d{4}-\d{2}-\d{2}$/.test(sd)) {
+    var diffDays = Math.round((new Date(sd + 'T00:00:00+09:00').getTime() - new Date(today + 'T00:00:00+09:00').getTime()) / 86400000);
+    if (diffDays > 60) return '時期先';
+  }
+  if (missingHearing_(r).length > 0) return '条件確認待ち';
+  return '即提案可能';
+}
+
+function filterApplicants_(rows, f) {
+  f = f || {};
+  var today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+  var munis = toList_(f.municipalities);
+  var prefs = toList_(f.prefectures);
+  var csvs = toList_(f.csv_statuses);
+  var companies = toList_(f.source_companies);
+  var quals = toList_(f.qualifications);
+  return rows.filter(function (r) {
+    if (f.include_test !== true && isTestApplicant_(r)) return false; // 追補22: テスト求職者は既定で除外
+    if (f.keyword && str_(r.name).indexOf(String(f.keyword)) < 0 &&
+        str_(r.name_raw).indexOf(String(f.keyword)) < 0 &&
+        str_(r.applicant_id).indexOf(String(f.keyword)) < 0) return false; // R6.6 P2: ID部分一致も対象 (A000001 検索用)
+    if (f.phone && str_(r.phone).replace(/-/g, '').indexOf(String(f.phone).replace(/-/g, '')) < 0) return false;
+    if (f.age_min != null && f.age_min !== '' || f.age_max != null && f.age_max !== '') {
+      var ageVal = ageFromBirth_(r.birth_date);
+      if (ageVal == null) { if (f.age_include_unknown !== true) return false; }
+      else {
+        if (f.age_min != null && f.age_min !== '' && ageVal < Number(f.age_min)) return false;
+        if (f.age_max != null && f.age_max !== '' && ageVal > Number(f.age_max)) return false;
+      }
+    }
+    if (f.address_keyword) {
+      var addrHay = str_(r.prefecture) + str_(r.municipality) + str_(r.address_rest);
+      if (addrHay.indexOf(String(f.address_keyword)) < 0) return false;
+    }
+    if (f.area && str_(r.area) !== String(f.area)) return false;
+    if (f.prefecture && str_(r.prefecture) !== String(f.prefecture)) return false;
+    if (prefs.length && prefs.indexOf(str_(r.prefecture)) < 0) return false;
+    if (f.desired_keyword) {
+      var desiredHay = str_(r.desired_days_per_week) + str_(r.desired_time_slots);
+      if (desiredHay.indexOf(String(f.desired_keyword)) < 0) return false;
+    }
+    if (munis.length && munis.indexOf(str_(r.municipality)) < 0) return false;
+    if (f.job_type && str_(r.job_type) !== String(f.job_type)) return false;
+    if (f.sms_state === 'sent' && !toBool_(r.sms_sent)) return false;
+    if (f.sms_state === 'unsent' && toBool_(r.sms_sent)) return false;
+    if (csvs.length && csvs.indexOf(str_(r.csv_status)) < 0) return false;
+    if (f.app_status && str_(r.app_status) !== String(f.app_status)) return false;
+    if (companies.length) {
+      // 会社絞り込みは canonical で比較する (原文 source_company は保持したまま。DATA_MODEL §11)
+      var canon = normalizeCompany_(r.source_company);
+      var hitCo = companies.some(function (co) { return normalizeCompany_(co) === canon; });
+      if (!hitCo) return false;
+    }
+    if (f.applied_from || f.applied_to) {
+      var ad = cellDateYmd_(r.applied_at);
+      if (!ad) return false;
+      if (f.applied_from && ad < String(f.applied_from)) return false;
+      if (f.applied_to && ad > String(f.applied_to)) return false;
+    }
+    if (f.start_from || f.start_to) {
+      var sd = cellDateYmd_(r.desired_start_date);
+      if (!sd) return false;
+      if (f.start_from && sd < String(f.start_from)) return false;
+      if (f.start_to && sd > String(f.start_to)) return false;
+    }
+    if (f.mail_only && !str_(r.email)) return false;
+    if (quals.length) {
+      // R3 (G2): 資格マッチの意味論をフロントと統一する。完全一致のみだと
+      // 「正看護師」が「看護師」の対象から系統的に漏れるため、表記ゆれを
+      // 吸収する qualTokenMatch_ で判定する (フロント qualMatch と同一ルール)。
+      // include_no_qual=true のときは資格未登録の人も対象に含める (G2)。
+      var haveQ = str_(r.qualifications);
+      var anyQ = quals.some(function (q) { return qualTokenMatch_(haveQ, q); });
+      if (!anyQ) {
+        if (!(f.include_no_qual === true && !haveQ.replace(/\s/g, ''))) return false;
+      }
+    }
+    // 追補7/17: FS登録歴あり。導出ではなく永続フィールド has_fs_history が正
+    // (空の旧レコードのみ hasFsHistory_ 内で history 導出にフォールバック)。
+    // searchApplicants / mailPreviewTargets / getDigList / SMSセグメントは本関数を共用するため、ここが唯一の判定点。
+    if ((f.has_past_fs === true || f.has_fs_history === true) && !hasFsHistory_(r)) return false;
+    // 追補7: 次回連絡日が今日以前 (未設定は対象外)
+    if (f.due_next_contact === true) {
+      var nd = cellDateYmd_(r.next_contact_date);
+      if (!nd || nd > today) return false;
+    }
+    // R4 10-#1: セグメント分類そのものをフィルタとして受ける (掘り起こしからの引き継ぎ用)。
+    // 分類は送信時点のデータでサーバーが再判定する (引き継ぎ時点の分類は固定しない)。
+    if (f.segment && segmentOfApplicant_(r, today) !== String(f.segment)) return false;
+    return true;
+  });
+}
+
+function toList_(v) {
+  if (v == null || v === '') return [];
+  if (Object.prototype.toString.call(v) === '[object Array]') {
+    return v.map(function (x) { return String(x).trim(); }).filter(function (x) { return x !== ''; });
+  }
+  return String(v).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x !== ''; });
+}
+
+/** 応募日の新しい順に並べる (並び順の正: DATA_MODEL) */
+function sortByAppliedDesc_(rows) {
+  return rows.slice().sort(function (a, b) {
+    var x = cellDateIso_(a.applied_at), y = cellDateIso_(b.applied_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  });
+}
+
+function actionSearchApplicants_(req) {
+  var t = readTable_('applicants');
+  var matched = sortByAppliedDesc_(filterApplicants_(t.rows, req.filter || {}));
+  var page = Math.max(1, parseInt(req.page, 10) || 1);
+  var pageSize = Math.min(200, Math.max(1, parseInt(req.page_size, 10) || PAGE_SIZE));
+  var start = (page - 1) * pageSize;
+  var actCtx = null;
+  try { actCtx = activityContext_(); } catch (e) { actCtx = null; }
+  return {
+    total: matched.length,
+    page: page,
+    page_size: pageSize,
+    items: matched.slice(start, start + pageSize).map(function (r) {
+      var act = null;
+      if (actCtx) { try { act = activityForApplicant_(str_(r.applicant_id), actCtx, r); } catch (e2) { act = null; } }
+      return applicantListItem_(r, act);
+    })
+    // 注: 一覧では phone / email を返さない (DESIGN_V2 §10)。詳細は getApplicant。
+  };
+}
+
+/** R6: 一覧の件数サマリーをサーバー側で集計する。
+ * フロントが全件を保持しなくても、入口・一覧の総数/送信済み/SMS対象/
+ * 府県別・ステータス別件数を返す。個別の電話・メールは返さない。 */
+function applicantSummaryForRows_(rows, area) {
+  var matched = filterApplicants_(rows || [], area ? { area: String(area) } : {});
+  var out = { area: area ? String(area) : '', total: matched.length, sent: 0, unsent: 0,
+    sms_target: 0, fs_history: 0, area_unset: 0, pref_counts: {}, csv_status_counts: {}, company_counts: {} };
+  matched.forEach(function (r) {
+    if (toBool_(r.sms_sent)) out.sent++; else out.unsent++;
+    // R6.6 P4: area が空または関西・関東のいずれでもない行 (総数から漏れる行を可視化)。
+    // area 指定のサマリ (kansai/kanto) では常に 0。全体サマリ (area='') が正の値を持つ。
+    if (str_(r.area) !== 'kansai' && str_(r.area) !== 'kanto') out.area_unset++;
+    var digits = str_(r.phone).replace(/[^0-9]/g, '');
+    // R6.6 P3(a): 先頭0落ち (例: 8091251382) の電話も SMS 対象に数える。
+    // 根本修復 (actionRepairPhones_) までの対症療法。フロント areaSummary も同じ緩和。
+    if (/^0?[789]0/.test(digits)) out.sms_target++;
+    if (hasFsHistory_(r)) out.fs_history++;
+    var pref = str_(r.prefecture); if (pref) out.pref_counts[pref] = (out.pref_counts[pref] || 0) + 1;
+    var st = str_(r.csv_status); if (st) out.csv_status_counts[st] = (out.csv_status_counts[st] || 0) + 1;
+    var co = normalizeCompany_(r.source_company); if (co) out.company_counts[co] = (out.company_counts[co] || 0) + 1;
+  });
+  return out;
+}
+
+function actionGetApplicantSummary_(req) {
+  var rows = readTable_('applicants').rows;
+  var area = str_((req && req.area) || '');
+  var summary = applicantSummaryForRows_(rows, area);
+  summary.areas = {
+    kansai: applicantSummaryForRows_(rows, 'kansai'),
+    kanto: applicantSummaryForRows_(rows, 'kanto')
+  };
+  return summary;
+}
+
+// ===== 応募者: 詳細 + タイムライン =====
+function findApplicant_(applicantId) {
+  var t = readTable_('applicants');
+  for (var i = 0; i < t.rows.length; i++) {
+    if (String(t.rows[i].applicant_id) === String(applicantId)) return t.rows[i];
+  }
+  throw new Error('応募者が見つかりません: ' + applicantId);
+}
+
+function actionGetApplicant_(req) {
+  var r = findApplicant_(req.applicant_id);
+  var detail = applicantListItem_(r);
+  // 詳細でのみ個人情報を返す
+  detail.phone = str_(r.phone);
+  detail.email = str_(r.email);
+  detail.name_raw = str_(r.name_raw);
+  detail.postal_code = str_(r.postal_code);
+  detail.address_rest = str_(r.address_rest);
+  detail.lat = toNum_(r.lat);
+  detail.lon = toNum_(r.lon);
+  detail.experience_years = toNum_(r.experience_years);
+  detail.desired_days_per_week = str_(r.desired_days_per_week);
+  detail.desired_time_slots = str_(r.desired_time_slots);
+  detail.hearing_json = str_(r.hearing_json);
+  detail.import_batch_id = str_(r.import_batch_id);
+  detail.missing_hearing = missingHearing_(r).map(function (h) { return h.label; });
+
+  var ev = readTable_('applicant_events').rows.filter(function (e) {
+    return String(e.applicant_id) === String(req.applicant_id);
+  }).sort(function (a, b) {
+    var x = cellDateIso_(a.created_at), y = cellDateIso_(b.created_at);
+    return x < y ? 1 : (x > y ? -1 : 0);
+  }).slice(0, 200).map(function (e) {
+    return {
+      event_id: str_(e.event_id), event_type: str_(e.event_type), actor: str_(e.actor),
+      delivery_id: str_(e.delivery_id), response_id: str_(e.response_id),
+      detail: str_(e.detail), created_at: cellDateIso_(e.created_at),
+      // 送信スナップショット (R3 検証 #12): SMS 単発送信のイベントにも保存される
+      // 文面・提示案件を、詳細画面のタイムラインから参照できるよう一緒に返す。
+      body_snapshot: str_(e.body_snapshot), case_ids: str_(e.case_ids),
+      // R4 S-02: 記録時点の案件の写し (現在値の再引きではない)
+      cases_snapshot: parseCasesSnapshot_(e.cases_snapshot)
+    };
+  });
+  // 過去のフォーム送信について「いつ・どの案件を・どの文面で」がスナップショットで返る。
+  detail.delivery_snapshots = deliverySnapshotsForApplicant_(req.applicant_id);
+  // 横断ブレーキ用データ (革新3): 直近の送信・対応中かも詳細に付ける。
+  try { detail.activity = activityForApplicant_(String(req.applicant_id), activityContext_(), r); }
+  catch (e2) { detail.activity = null; }
+  return { applicant: detail, events: ev };
+}
+
+/** 未確認ヒアリング項目 (DATA_MODEL §1) */
+function missingHearing_(r) {
+  return HEARING_FIELDS.filter(function (h) {
+    var v = r[h.key];
+    return v === '' || v == null;
+  });
+}
+
+// ===== 応募者: ステータス変更 (要ドメイン認証) =====
+function actionUpdateWorkflow_(req) {
+  var me = requireKikariUser_();
+  var status = String(req.status || '').trim();
+  if (WORKFLOW_STATUSES.indexOf(status) < 0) {
+    throw new Error('status は ' + WORKFLOW_STATUSES.join('/') + ' のいずれかです');
+  }
+  return withLock_(function () {
+    var before = findApplicant_(req.applicant_id);
+    var patch = { app_status: status, updated_at: nowIso_() };
+    // 付帯日付 (任意): ステージごとの日付を hearing_json ではなく専用キーで受け、
+    // app_status の変更と一緒に desired_start_date 等の既存列へ反映する
+    if (req.desired_start_date) patch.desired_start_date = String(req.desired_start_date);
+    if (req.next_contact_date !== undefined) patch.next_contact_date = String(req.next_contact_date || '');
+    if (req.csv_status) patch.csv_status = String(req.csv_status);
+    updateRowByPk_('applicants', req.applicant_id, patch);
+    appendEvent_(req.applicant_id, 'status_change', me,
+      '対応ステータス: ' + (str_(before.app_status) || '(未設定)') + ' -> ' + status +
+      (req.note ? ' / ' + String(req.note) : ''), '', '');
+    return { updated: req.applicant_id, app_status: status };
+  });
+}
+
+// ===== SMS 送信記録 (要ドメイン認証)。実際の SMS 送信は iPhone の sms: リンク側で行う =====
+function actionRecordSmsSent_(req) {
+  var me = requireKikariUser_();
+  if (!req.applicant_id) throw new Error('applicant_id が必要です');
+  return withLock_(function () {
+    // R4 O-06: 配信停止中の人への SMS 記録は受け付けない (画面を迂回した記録も通さない)。
+    // 例外にせず戻り値で返す (outbox 経由の op が例外だと failed 滞留するため)。
+    // あわせて sms_blocked イベントを残し、事後検出可能にする。
+    var smsApplicant = null;
+    try { smsApplicant = findApplicant_(req.applicant_id); } catch (eFind) { smsApplicant = null; }
+    if (smsApplicant) {
+      var blockedReason = smsBlockedReason_(smsApplicant);
+      if (blockedReason) {
+        try { appendEvent_(req.applicant_id, 'sms_blocked', me, blockedReason, String(req.delivery_id || ''), ''); } catch (eEv) {}
+        return { recorded: false, blocked: 'optout', reason: blockedReason };
+      }
+    }
+    // R4 S-11: 冪等キー。同一 applicant_id + client_request_id の sms_sent が
+    // 既にあれば、append も recipients 更新もせず再送として返す (outbox 再送の二重記録防止)。
+    var clientReqId = String(req.client_request_id || '');
+    if (clientReqId) {
+      var dupEv = readTable_('applicant_events').rows.filter(function (e) {
+        return String(e.applicant_id) === String(req.applicant_id) && e.event_type === 'sms_sent' &&
+          String(e.client_request_id || '') === clientReqId;
+      });
+      if (dupEv.length) return { recorded: req.applicant_id, idempotent_replay: true };
+    }
+    var now = nowIso_();
+    // R3 (監査・高#1): スナップショットは配信レコードの有無に依存させず、
+    // 本人のイベント (タイムライン) に必ず残す (従来は delivery_id がある
+    // 場合に recipients へ書くだけで、通常の初回SMSではサーバーに残らなかった)。
+    // R4 S-02: 案件の写し JSON もイベントに保存する (表示側の現在値再引きを廃止するため)。
+    var smsCaseIds0 = toList_(req.case_ids || req.recommended_case_ids);
+    var snapBody0 = snapshotBody_(req.body_snapshot || req.body || '');
+    var snapCases0 = smsCaseIds0.length ? buildCasesSnapshot_(smsCaseIds0) : '';
+    var detail0 = String(req.detail || req.template_kind || 'SMS送信 (sms:リンク)');
+    if (req.campaign_id) detail0 += ' campaign=' + String(req.campaign_id);
+    if (req.campaign_id && req.campaign_name) detail0 += ' name=' + String(req.campaign_name); // R4 S-10
+    // R4 Lane J: SMS は配信レコードが無い場合があるため版キーを証跡にも残す。
+    // req.template_version が無くても template_id / template_kind からサーバーで確定する。
+    var smsTplVer = String(req.template_version || '');
+    if (!smsTplVer && (req.template_id || req.template_kind)) {
+      smsTplVer = templateVersionFor_({ template_id: req.template_id,
+        template_kind: req.template_kind }, snapBody0).template_version;
+    }
+    if (smsTplVer) detail0 += ' tpl=' + smsTplVer;
+    // R4 S-11: 証跡 (イベント) を状態 (applicants 更新) より先に書く。
+    // append が失敗したら applicants は更新しない (状態だけ先行させない)。
+    appendEvent_(req.applicant_id, 'sms_sent', me, detail0, String(req.delivery_id || ''), '',
+      (snapBody0 || smsCaseIds0.length || clientReqId) ? {
+        body_snapshot: snapBody0, case_ids: smsCaseIds0.join(','),
+        cases_snapshot: snapCases0, client_request_id: clientReqId
+      } : null);
+    var patch = { sms_sent: true, sms_last_sent_at: now, last_contact_at: now, updated_at: now };
+    updateRowByPk_('applicants', req.applicant_id, patch);
+    // SMS記録系: 配信レコード (delivery_id 指定時) があれば、その時点で見せた
+    // 案件と文面のスナップショットを delivery_recipients 側へ保存する (写し・不変)。
+    // R4 S-07: form_link の発行記録行もこの時点で初めてスナップショット化する
+    // (発行時点では書かない)。SMS経路の写しは記録時点で確定なので finalized=1。
+    var smsCaseIds = smsCaseIds0;
+    var snapshotSaved = null;
+    if (req.delivery_id && (smsCaseIds.length || req.body || req.body_snapshot)) {
+      try {
+        var smsRecPatch = {
+          cases_snapshot: snapCases0 || buildCasesSnapshot_(smsCaseIds),
+          body_snapshot: snapshotBody_(req.body_snapshot || req.body || ''),
+          snapshot_finalized: 1
+        };
+        if (smsTplVer) smsRecPatch.template_version = smsTplVer; // R4 レーンJ (c)3
+        updateRecipientStatus_(String(req.delivery_id), String(req.applicant_id), smsRecPatch);
+        snapshotSaved = true;
+      } catch (e) { snapshotSaved = false; /* 配信レコードが無い SMS 単独記録ではスナップショットを持たない */ }
+    }
+    var smsRet = { recorded: req.applicant_id, sms_last_sent_at: now };
+    if (snapshotSaved === false) smsRet.snapshot_saved = false; // R4 S-11: 画面は op を「反映待ち (証跡未保存)」として残す
+    return smsRet;
+  });
+}
+
+// ===== 取り込み進捗 (R6) =====
+/** import_batches を読み取り専用で返す。フロントは確定の再送で競合せず、
+ * この進捗表示でサーバー側の処理状況 (running/complete/partial と件数) を見る。 */
+function actionGetImportStatus_(req) {
+  requireKikariUser_();
+  var rows = readTable_('import_batches').rows.slice();
+  rows.sort(function (a, b) { return String(b.created_at || '').localeCompare(String(a.created_at || '')); });
+  var totals = { batches: rows.length, running: 0, complete: 0, partial: 0, failed_batches: 0,
+    rows: 0, added: 0, updated: 0, skipped: 0, failed: 0 };
+  rows.forEach(function (r) {
+    var st = str_(r.status);
+    if (st === 'running') totals.running++;
+    else if (st === 'complete') totals.complete++;
+    else if (st === 'partial') totals.partial++;
+    else if (st === 'failed') totals.failed_batches++;
+    totals.rows += toNum_(r.row_count) || 0;
+    totals.added += toNum_(r.added_count) || 0;
+    totals.updated += toNum_(r.updated_count) || 0;
+    totals.skipped += toNum_(r.skipped_count) || 0;
+    totals.failed += toNum_(r.failed_count) || 0;
+  });
+  var recent = rows.slice(0, 30).map(function (r) {
+    return { batch_id: str_(r.batch_id), file_name: str_(r.file_name), kind: str_(r.kind),
+      row_count: toNum_(r.row_count) || 0, added: toNum_(r.added_count) || 0,
+      updated: toNum_(r.updated_count) || 0, skipped: toNum_(r.skipped_count) || 0,
+      failed: toNum_(r.failed_count) || 0, status: str_(r.status),
+      created_at: str_(r.created_at), note: str_(r.note), client_op_id: str_(r.client_op_id),
+      chunk_seq: (r.chunk_seq === undefined || r.chunk_seq === null) ? '' : r.chunk_seq };
+  });
+  // R6.5: サーバー側キューの進捗 (import_queue が無い環境では空集計)
+  var queue = { pending_rows: 0, pending_chunks: 0, processing_rows: 0, done_rows: 0, failed_rows: 0 };
+  try {
+    var qrows = readTable_('import_queue').rows;
+    var chunkKeys = {};
+    qrows.forEach(function (r) {
+      var st = str_(r.status);
+      if (st === 'pending') { queue.pending_rows++; chunkKeys[str_(r.client_op_id) + '|' + String(r.chunk_seq === undefined || r.chunk_seq === null ? '' : r.chunk_seq)] = true; }
+      else if (st === 'processing') queue.processing_rows++;
+      else if (st === 'done') queue.done_rows++;
+      else if (st === 'failed') queue.failed_rows++;
+    });
+    queue.pending_chunks = Object.keys(chunkKeys).length;
+  } catch (e) { /* キュー未導入の環境では進捗なしとして扱う */ }
+  return { batches: recent, totals: totals, queue: queue };
+}
+
+// ===== CSV 取り込み確定 (要ドメイン認証 / LockService で直列化) =====
+/**
+ * 追補3・追補4 のルールをサーバー側でも担保する:
+ * - 照合キー: 電話 / メール / 氏名+生年月日。
+ * - 過去に応募がある人でも、新しい応募は「本人の最新応募」として必ず登録する
+ *   (applied_at / source_company / area / job_type 等の応募属性を現在化し、
+ *    applicant_events に import イベント「新規応募あり」を残す)。
+ * - 進行中の対応ステータス (csv_status / app_status) や SMS 送信済み記録は
+ *   取り込みでリセットしない (patch に含めない)。
+ * - 配信停止 (optouts テーブル) にあるメールは mail_optout=true を強制し、
+ *   CSV 再取り込みでも復活させない (registerOptout のコメントも参照)。
+ * - FS登録歴フラグ (追補17): 取り込んだ応募の正規化会社がファーストスタッフィングなら
+ *   has_fs_history=true を永続化する。既存が true の場合はもちろん、既存行の history から
+ *   導出できる場合も true を書き戻し、一度 true になったフラグは取り込みでは絶対に
+ *   false にしない (patch に false を含めない)。「既存と同じ・古い応募」で属性更新を
+ *   除外する行でも、フラグの立て直しだけは行う。
+ * req: { file_name, kind:'applicants', rows:[{...applicants列...}] }
+ * プレビュー (確認画面) はフロント側の責務。本関数は「確定」のみ。
+ */
+function actionImportCommit_(req) {
+  var me = requireKikariUser_();
+  // 案件取り込み修正 (案B): kind='cases' は案件専用バルクコアへ振り分ける。
+  // dispatch は importCommit を共用し、フロントの op 形式は応募者と揃える。
+  if (str_(req.kind || '') === 'cases') return importCasesCommitCore_(req, me);
+  return importCommitCore_(req, me);
+}
+
+/**
+ * R6.6 P1: 取り込みプレビューのサーバー側ドライラン。
+ * 背景 (POOL_DIAGNOSIS §2): フロントのプレビューは端末プール (サーバーモードでは
+ * シード25行) で照合するため、新規/変化なしが原理的に出ない。判定そのものを
+ * サーバー側で行い、フロントはこの結果を表示するだけにする。
+ * 判定は importCommitCore_ と同一ロジック (索引: 電話/メール/氏名+生年月日、
+ * 除外順序: 曖昧 → 必須情報不備 → 年齢不明 → 63歳以上 → 対象職種以外 →
+ * 対象エリア以外、attr-only 更新は diffApplicantAttrs_) を、書き込みなしで流す。
+ * 同期維持の要所: (a) 新規と判定した行は同一ファイル内の後続行の照合のため
+ * メモリ上の索引へ入れる (commit の indexAdd_ と同一)。(b) 既存行への更新は
+ * メモリ上の行オブジェクトへ patch を当ててから次行を判定する (commit の
+ * queuePatch_ が in-memory の既存行を書き換えるのと同一。ただし _row がある
+ * シート行だけ。チャンク内新規行は索引側が変わらないため当てない)。
+ * (c) 座標降格・FSフラグ永続化・optout は件数に影響しないためプレビューでは行わない。
+ * 読み取りは applicants テーブルのみ。applicants / applicant_events /
+ * import_batches / import_queue への書き込みは一切しない (冪等リプレイの参照も
+ * しない。プレビューは「今のシートに対する判定」を返す)。ロックも取らない。
+ * req: { file_name, kind:'applicants', rows:[importRow...], client_op_id, chunk_seq }
+ * (importCommitCore_ と同じ行形式。1回の呼び出しは1ファイル分 = 上限 5000 行)。
+ * 戻り値は importCommitCore_ と同じキー体系 (added/updated/skipped/attr_updated/
+ * skipped_reasons) に、フロント表示語彙の別名 (latest_application / excluded /
+ * unclassified / counts / preview_counts_by_chunk) を加えたもの。
+ * 注意: フロント判定は姓のみ+生年月日、サーバーは氏名全体+生年月日 (POOL_DIAGNOSIS
+ * §2.5)。数行の差は想定内。サーバー実績 (import_batches) を正とする。
+ */
+function actionImportPreview_(req) {
+  // 読み取り専用: searchApplicants / getApplicantSummary と同じ扱い
+  // (requireKikariUser_ は不要)。
+  return importPreviewCore_(req);
+}
+
+function importPreviewCore_(req) {
+  var rows = req.rows || [];
+  if (!rows.length) throw new Error('rows が空です');
+  if (rows.length > 5000) throw new Error('1回のプレビューは 5000 行までです (分割してください)');
+  var clientOpId = str_(req.client_op_id || '');
+  var chunkSeq = (req.chunk_seq === undefined || req.chunk_seq === null || req.chunk_seq === '') ? '' : req.chunk_seq;
+  // 索引構築は importCommitCore_ と同一 (電話/メール/氏名+生年月日)。
+  var t = readTable_('applicants');
+  var byPhone = {}, byEmail = {}, byNameBirth = {};
+  function indexAdd_(map, key, row) {
+    if (!key) return;
+    (map[key] = map[key] || []).push(row);
+  }
+  t.rows.forEach(function (r) {
+    var ph = normalizePhoneDigits_(r.phone);
+    indexAdd_(byPhone, ph, r);
+    var em = normalizeEmail_(r.email);
+    indexAdd_(byEmail, em, r);
+    var nb = str_(r.name) + '|' + cellDateYmd_(r.birth_date);
+    if (str_(r.name)) indexAdd_(byNameBirth, nb, r);
+  });
+  var added = 0, updated = 0, skipped = 0, attrUpdated = 0;
+  var skippedReasons = {
+    'ファイル内の重複': 0, '対応履歴があり保護': 0, '既存と同じ・古い応募': 0,
+    '年齢条件の対象外': 0, '対象エリア以外': 0, '対象職種以外': 0,
+    '年齢不明': 0, '必須情報不備': 0, '重複の確認が必要': 0
+  };
+  function skip_(reason) { skipped++; if (skippedReasons[reason] != null) skippedReasons[reason]++; }
+  var seenInFile = {};
+  // 未分類ステータス (csv_status が CSV_STATUSES_ 18区分に無い行)。判定とは独立に
+  // 全行を数える (除外行も含む。フロント renderImportPreview と同一ルール)。
+  var unclassified = 0;
+  rows.forEach(function (input) {
+    if (str_(input.csv_status) && CSV_STATUSES_.indexOf(str_(input.csv_status)) < 0) unclassified++;
+  });
+  rows.forEach(function (input) {
+    var fileKey = normalizePhoneDigits_(input.phone) + '|' + normalizeEmail_(input.email) + '|' + str_(input.name);
+    if ((str_(input.phone) || str_(input.email)) && seenInFile[fileKey]) { skip_('ファイル内の重複'); return; }
+    seenInFile[fileKey] = true;
+    var phone = normalizePhoneDigits_(input.phone);
+    var email = normalizeEmail_(input.email);
+    var nbKey = str_(input.name) + '|' + cellDateYmd_(input.birth_date);
+    var candById = {};
+    function collectCands_(arr) {
+      (arr || []).forEach(function (r) { candById[r.applicant_id] = r; });
+    }
+    if (phone) collectCands_(byPhone[phone]);
+    if (email) collectCands_(byEmail[email]);
+    if (str_(input.name)) collectCands_(byNameBirth[nbKey]);
+    var candIds = Object.keys(candById);
+    var existing = candIds.length === 1 ? candById[candIds[0]] : null;
+    var attrs = pickApplicantAttrs_(input);
+    var ageVal = null;
+    if (input.birth_date) ageVal = ageFromBirth_(input.birth_date);
+    else if (input.age !== undefined && input.age !== null && input.age !== '') ageVal = toNum_(input.age);
+    // 除外順序は importCommitCore_ と同一。
+    var exclusion = '';
+    if (candIds.length > 1) exclusion = '重複の確認が必要';
+    else if (!attrs.name || (!phone && !email)) exclusion = '必須情報不備';
+    else if (ageVal == null) exclusion = '年齢不明';
+    else if (ageVal >= 63) exclusion = '年齢条件の対象外';
+    else if (['kaigo', 'kango'].indexOf(str_(input.job_type)) < 0) exclusion = '対象職種以外';
+    else if (str_(input.prefecture) &&
+             KANSAI_PREFECTURES_.indexOf(str_(input.prefecture)) < 0 &&
+             KANTO_PREFECTURES_.indexOf(str_(input.prefecture)) < 0) exclusion = '対象エリア以外';
+    if (exclusion) { skip_(exclusion); return; }
+    if (existing) {
+      var exApplied = cellDateIso_(existing.applied_at), inApplied = cellDateIso_(input.applied_at);
+      if (inApplied && exApplied && inApplied <= exApplied) {
+        var attrPatch = diffApplicantAttrs_(existing, attrs);
+        if (Object.keys(attrPatch).length) {
+          // メモリ上のみ patch を当てる (commit の queuePatch_ と同一。
+          // _row があるシート行だけが in-memory で書き換わる。チャンク内新規行
+          // (_row なし) は updateRowByPk_ でシートだけ書かれ、索引側は変わらない)。
+          if (existing._row) Object.keys(attrPatch).forEach(function (k) { existing[k] = attrPatch[k]; });
+          updated++; attrUpdated++;
+          return;
+        }
+        skip_('既存と同じ・古い応募'); return;
+      }
+      // 新しい応募として最新化。メモリ上のみ attrs を当てる (commit と同一。_row がある行だけ)。
+      if (existing._row) Object.keys(attrs).forEach(function (k) { existing[k] = attrs[k]; });
+      updated++;
+    } else {
+      // 新規と判定した行は、同一ファイル内の後続行の照合のため索引へ入れる
+      // (commit の新規行 indexAdd_ と同一。applicant_id は照合キーに使わない
+      // ため、候補の一意化だけに使う仮IDでよい)。
+      var newRow = {};
+      Object.keys(attrs).forEach(function (k) { newRow[k] = attrs[k]; });
+      newRow.applicant_id = 'PREVIEW_NEW_' + added;
+      indexAdd_(byPhone, phone, newRow);
+      indexAdd_(byEmail, email, newRow);
+      if (str_(newRow.name)) indexAdd_(byNameBirth, nbKey, newRow);
+      added++;
+    }
+  });
+  var latest = updated - attrUpdated; // 「最新応募として登録」= 更新のうち属性のみ以外
+  return {
+    preview: true, dry_run: true, status: 'preview',
+    file_name: String(req.file_name || ''), kind: String(req.kind || 'applicants'),
+    row_count: rows.length, added: added, updated: updated, skipped: skipped,
+    attr_updated: attrUpdated, latest_application: latest,
+    failed: 0, row_errors: [],
+    skipped_reasons: skippedReasons, excluded: skippedReasons,
+    unclassified: unclassified,
+    client_op_id: clientOpId, chunk_seq: chunkSeq,
+    // importCommitCore_ へ渡す preview_counts と同じ三つ組 (確定時の突合せ用)。
+    preview_counts: { added: added, updated: updated, skipped: skipped },
+    // フロント表示語彙 (renderImportPreview の counts と同名)。
+    counts: { new: added, latest: latest, updated: attrUpdated, skip: skipped,
+      excluded: skipped, unclassified: unclassified },
+    // 1回の呼び出しは1ファイル分。複数ファイルの合算はフロント側で行う。
+    preview_counts_by_chunk: [{ chunk_seq: chunkSeq, file_name: String(req.file_name || ''),
+      added: added, updated: updated, skipped: skipped }]
+  };
+}
+
+/**
+ * R6.5: 取り込み確定の本体。Web 経由は actionImportCommit_ から、
+ * サーバー側継続処理 (processImportQueue) からは登録時の actor で呼ぶ。
+ * 照合はチャンクごとに applicants を1回だけ読み、メモリ上の索引
+ * (電話/メール/氏名+生年月日) で行う (行ごとの読み直しはしない)。
+ */
+function importCommitCore_(req, me) {
+  var rows = req.rows || [];
+  if (!rows.length) throw new Error('rows が空です');
+  if (rows.length > 5000) throw new Error('1回の取り込みは 5000 行までです (分割してください)');
+  // R4 06-06: 冪等キー。フロントの二重送信・outbox 再送で同一の
+  // (client_op_id, chunk_seq) が再投入されても二重登録しない。
+  // キーが無い旧経路は従来動作 (チェック自体をスキップする)。
+  var clientOpId = str_(req.client_op_id || '');
+  var chunkSeq = (req.chunk_seq === undefined || req.chunk_seq === null || req.chunk_seq === '') ? '' : req.chunk_seq;
+  // R6.5: フロントのプレビュー件数 (任意)。確定後にサーバー実績と突合し、
+  // 差異があればその内容をバッチの note に残す (プレビューと確定の一致保証)。
+  var previewCounts = (req.preview_counts && typeof req.preview_counts === 'object') ? req.preview_counts : null;
+  // R6.5: 処理開始後に致命的エラーで中断した場合に、そのバッチを failed として
+  // 残すための受け渡し。ロック未取得など開始前の失敗では何も記録しない。
+  var r65Batch = { id: null };
+  try {
+  return withLock_(function () {
+    if (clientOpId) {
+      var prevBatches = readTable_('import_batches').rows;
+      for (var bi = 0; bi < prevBatches.length; bi++) {
+        var pb = prevBatches[bi];
+        if (str_(pb.client_op_id) === clientOpId &&
+            String(pb.chunk_seq == null ? '' : pb.chunk_seq) === String(chunkSeq) &&
+            str_(pb.status) === 'complete') {
+          // committed 済みの再送: 書き込みを再実行せず、前回のサーバー実績を返す。
+          // partial / running のバッチはここでは返さず再処理を続行する (適用済みの
+          // 行は既存照合で skip / 属性更新に倒れるため、二重登録にはならない)。
+          return { batch_id: pb.batch_id, row_count: toNum_(pb.row_count) || rows.length,
+            added: toNum_(pb.added_count) || 0, updated: toNum_(pb.updated_count) || 0,
+            skipped: toNum_(pb.skipped_count) || 0, attr_updated: 0,
+            failed: toNum_(pb.failed_count) || 0, status: str_(pb.status),
+            row_errors: [], skipped_reasons: {},
+            note: str_(pb.note),
+            idempotent_replay: true, client_op_id: clientOpId, chunk_seq: chunkSeq };
+        }
+      }
+    }
+    var batchId = nextId_('import_batches');
+    var now = nowIso_();
+    // R4 06-07 段階1: バッチレコードを status=running で先行作成し、完了時に
+    // 結果で更新する。途中失敗や強制終了でもバッチの存在と進捗が残る。
+    // バッチ記録自体の失敗で取り込み本体は止めない (記録は best-effort)。
+    var batchRecorded = false;
+    try {
+      appendRow_('import_batches', {
+        batch_id: batchId, kind: String(req.kind || 'applicants'), file_name: String(req.file_name || ''),
+        row_count: rows.length, added_count: 0, updated_count: 0, skipped_count: 0,
+        actor: me, created_at: now, status: 'running', failed_count: 0,
+        client_op_id: clientOpId, chunk_seq: chunkSeq
+      });
+      batchRecorded = true;
+      r65Batch.id = batchId;
+    } catch (batchErr) {
+      try { Logger.log('importCommit batch pre-create failed batch=' + batchId + ': ' + errMsg_(batchErr)); } catch (e) {}
+    }
+    var t = readTable_('applicants');
+    // R4 06-13: 索引は「キー -> 既存応募者の配列」。同一キーに複数名いる場合も
+    // 潰さず全員を候補に残し、候補が2名以上なら曖昧として自動統合しない
+    // (フロントの配列索引 + ambiguous 除外と対称にする)。
+    var byPhone = {}, byEmail = {}, byNameBirth = {};
+    function indexAdd_(map, key, row) {
+      if (!key) return;
+      (map[key] = map[key] || []).push(row);
+    }
+    function indexRemove_(map, key, row) {
+      var arr = key ? map[key] : null;
+      if (!arr) return;
+      var i = arr.indexOf(row);
+      if (i >= 0) arr.splice(i, 1);
+      if (!arr.length) delete map[key];
+    }
+    t.rows.forEach(function (r) {
+      var ph = normalizePhoneDigits_(r.phone); // R3: 全角数字も照合可能にする
+      indexAdd_(byPhone, ph, r);
+      var em = normalizeEmail_(r.email);
+      indexAdd_(byEmail, em, r);
+      var nb = str_(r.name) + '|' + cellDateYmd_(r.birth_date);
+      if (str_(r.name)) indexAdd_(byNameBirth, nb, r);
+    });
+    // R4 06-07: 新規応募者の採番は、開始時点に読み済みの既存最大番号からの
+    // 連番予約に変える (行ごとの nextId_ 全表走査をやめる)。書き込みは
+    // withLock_ 内に直列化されているため、メモリ上の連番で衝突しない。
+    var appPrefix = ID_PREFIX_['applicants'] || 'A';
+    var appSeq = 0;
+    t.rows.forEach(function (r) {
+      var m = String(r.applicant_id || '').match(new RegExp('^' + appPrefix + '(\\d+)$'));
+      if (m) appSeq = Math.max(appSeq, parseInt(m[1], 10));
+    });
+    function allocApplicantId_() {
+      appSeq++;
+      var n = String(appSeq);
+      while (n.length < 6) n = '0' + n;
+      return appPrefix + n;
+    }
+    // R6: イベント書き込みの高速化。従来は appendEvent_ が行ごとに
+    // nextId_ で applicant_events 全表を走査して採番しており、件数増で
+    // 二乗オーダーに膨らんでいた (実地: 約30行/分)。開始時点で最大番号を
+    // 1回だけ読み、連番予約 + appendRows_ 一括書き込みに変える。
+    // detail 文言・event_type・actor は従来の appendEvent_ 呼び出しと同一。
+    var evPrefix = ID_PREFIX_['applicant_events'] || 'E';
+    var evSeq = 0;
+    try {
+      readTable_('applicant_events').rows.forEach(function (r) {
+        var m = String(r.event_id || '').match(new RegExp('^' + evPrefix + '(\\d+)$'));
+        if (m) evSeq = Math.max(evSeq, parseInt(m[1], 10));
+      });
+    } catch (e) {}
+    var pendingEvents = [];
+    function flushEvents_() {
+      if (!pendingEvents.length) return;
+      var evs = pendingEvents; pendingEvents = [];
+      var res = appendRows_('applicant_events', evs);
+      res.errors.forEach(function (e) {
+        try { Logger.log('importCommit event write failed batch=' + batchId + ': ' + e.message); } catch (e2) {}
+      });
+    }
+    function queueEvent_(applicantId, detail) {
+      evSeq++;
+      var n = String(evSeq);
+      while (n.length < 6) n = '0' + n;
+      pendingEvents.push({ event_id: evPrefix + n, applicant_id: applicantId,
+        event_type: 'import', actor: me, delivery_id: '', response_id: '',
+        detail: detail || '', created_at: nowIso_() });
+      if (pendingEvents.length >= 200) flushEvents_();
+    }
+    // R6: 既存行の更新の高速化。従来は updateRowByPk_ が行ごとに applicants
+    // 全表を読み直していた (565件の最新応募更新が分単位に膨らむ主因)。
+    // 行番号 (_row) が判明している既存行はメモリ上で patch を適用し、
+    // 書き込みはチャンク末尾に「行まるごと setValues」へまとめる。
+    // 行番号不明 (同一チャンク内で新規追加された直後の行) は従来どおり
+    // updateRowByPk_ で即時に書く。
+    var pendingPatchRows = {}; // applicant_id -> row object (patch applied)
+    function queuePatch_(existing, patch) {
+      if (!existing || !existing._row) {
+        updateRowByPk_('applicants', existing && existing.applicant_id, patch);
+        return;
+      }
+      Object.keys(patch).forEach(function (k) { existing[k] = patch[k]; });
+      pendingPatchRows[existing.applicant_id] = existing;
+    }
+    function flushPatches_() {
+      var ids = Object.keys(pendingPatchRows);
+      if (!ids.length) return;
+      pendingPatchRows = {};
+      var sh = null, headers = t.headers;
+      try { sh = sheet_('applicants'); } catch (e) { sh = null; }
+      ids.forEach(function (id) {
+        // row object は索引経由で再取得する (pendingPatchRows の値そのもの)
+        var rowObj = null;
+        t.rows.forEach(function (r) { if (String(r.applicant_id) === String(id)) rowObj = r; });
+        if (!rowObj || !rowObj._row) return;
+        try {
+          if (!sh) throw new Error('sheet unavailable');
+          var arr = headers.map(function (h) { return rowObj[h] == null ? '' : rowObj[h]; });
+          sh.getRange(rowObj._row, 1, 1, headers.length).setValues([arr]);
+        } catch (e) {
+          failedRows++;
+          if (rowErrors.length < 5) rowErrors.push(errMsg_(e));
+          try { Logger.log('importCommit patch write failed batch=' + batchId + ': ' + errMsg_(e)); } catch (e2) {}
+        }
+      });
+    }
+    var optoutSet = optoutEmailSet_();
+    // R4 I-3: 座標の同一重複 (c) はバッチ + 既存全体で事前に数える。
+    var coordDupMap = coordDupCountMap_(
+      rows.concat(t.rows).map(function (r) {
+        return { lat: r.lat, lon: r.lon,
+          addressKey: str_(r.prefecture) + str_(r.municipality) + str_(r.address_rest) };
+      }), municipalityRepKeys_());
+    var coordDowngraded = 0;
+    var coordReasons = {};
+
+    var added = 0, updated = 0, skipped = 0, attrUpdated = 0;
+    // 除外理由の区分 (LIVE §12)。キーは区分名そのもの。
+    // 注: '対応履歴があり保護' は旧区分。追補4で「対応履歴があっても最新応募として登録する」
+    // 方式に変更済みのため、現在はこの理由では除外しない (区分としてのみ残し、通常は 0)。
+    var skippedReasons = {
+      'ファイル内の重複': 0, '対応履歴があり保護': 0, '既存と同じ・古い応募': 0,
+      '年齢条件の対象外': 0, '対象エリア以外': 0, '対象職種以外': 0,
+      '年齢不明': 0, '必須情報不備': 0, '重複の確認が必要': 0
+    };
+    function skip_(reason) { skipped++; if (skippedReasons[reason] != null) skippedReasons[reason]++; }
+    var seenInFile = {};
+    // F-03 (堅牢化): 行ごとの処理を個別に隔離する。1行の書き込み失敗で
+    // バッチ全体を止めず、取り込めた分は確定させ、最後に必ずバッチ記録を残す。
+    var failedRows = 0, rowErrors = [];
+    // R4 06-07 段階2: 新規応募者の書き込みはバッファに溜め、200行ごとに
+    // appendRows_ でまとめてフラッシュする (行ごとの appendRow_ を排除)。
+    // 判定・索引への反映は従来どおり行単位で即時に行い、書き込み失敗の
+    // 帰属だけがフラッシュ単位になる (F-03 の「1行失敗でも止めない」は維持)。
+    var pendingNew = []; // {attrs, phone, email, nbKey}
+    var pendingIds = {}; // applicant_id -> true (未フラッシュの新規行)
+    function flushNew_() {
+      if (!pendingNew.length) return;
+      var batch = pendingNew;
+      pendingNew = []; pendingIds = {};
+      var res = appendRows_('applicants', batch.map(function (p) { return p.attrs; }));
+      var failedIdx = {};
+      res.errors.forEach(function (e) {
+        failedIdx[e.index] = true;
+        failedRows++;
+        if (rowErrors.length < 5) rowErrors.push(e.message);
+        try { Logger.log('importCommit new-row write failed batch=' + batchId + ': ' + e.message); } catch (e2) {}
+      });
+      batch.forEach(function (p, i) {
+        if (failedIdx[i]) {
+          // 書けなかった行は索引から外す (後続行が実在しない行を更新対象にしない)
+          if (p.phone) indexRemove_(byPhone, p.phone, p.attrs);
+          if (p.email) indexRemove_(byEmail, p.email, p.attrs);
+          indexRemove_(byNameBirth, p.nbKey, p.attrs);
+          return;
+        }
+        queueEvent_(p.attrs.applicant_id, '新規登録 batch=' + batchId);
+        added++;
+      });
+    }
+    // 未フラッシュの新規行を更新対象にする前に、その書き込みを確定させる
+    function ensurePersisted_(existing) {
+      if (existing && pendingIds[existing.applicant_id]) flushNew_();
+    }
+    rows.forEach(function (input) {
+    try {
+      var fileKey = normalizePhoneDigits_(input.phone) + '|' + normalizeEmail_(input.email) + '|' + str_(input.name);
+      if ((str_(input.phone) || str_(input.email)) && seenInFile[fileKey]) { skip_('ファイル内の重複'); return; }
+      seenInFile[fileKey] = true;
+      var phone = normalizePhoneDigits_(input.phone);
+      var email = normalizeEmail_(input.email);
+      var nbKey = str_(input.name) + '|' + cellDateYmd_(input.birth_date);
+      // R3: 照合はキーごとに候補を集める。複数人へ当たる行は自動統合しない
+      // (曖昧な行は '重複の確認が必要' として人手確認に回す)。
+      var candById = {};
+      function collectCands_(arr) {
+        (arr || []).forEach(function (r) { candById[r.applicant_id] = r; });
+      }
+      if (phone) collectCands_(byPhone[phone]);
+      if (email) collectCands_(byEmail[email]);
+      if (str_(input.name)) collectCands_(byNameBirth[nbKey]);
+      var candIds = Object.keys(candById);
+      var existing = candIds.length === 1 ? candById[candIds[0]] : null;
+
+      // 応募属性だけを集める (ステータス類は含めない = リセットしない)
+      var attrs = pickApplicantAttrs_(input);
+      // R4 I-3: 持ち込み座標の受け入れ判定。降格したら座標なしで取り込む
+      // (原文の保持先が無いため、件数と理由は結果に必ず含めて可視化する)。
+      if (attrs.lat !== undefined || attrs.lon !== undefined) {
+        var cKey = coordKey_(attrs.lat, attrs.lon);
+        var cAcc = acceptCoord_(attrs.lat, attrs.lon,
+          municipalityRepPoint_(attrs.prefecture, attrs.municipality),
+          cKey ? coordDupMap[cKey] : null);
+        if (cAcc.verdict === 'downgraded') {
+          attrs.lat = ''; attrs.lon = '';
+          coordDowngraded++;
+          coordReasons[cAcc.reason] = (coordReasons[cAcc.reason] || 0) + 1;
+        } else if (cAcc.verdict === 'precise') { attrs.lat = cAcc.lat; attrs.lon = cAcc.lon; }
+      }
+      attrs.import_batch_id = batchId;
+      attrs.updated_at = now;
+      if (email && optoutSet[email]) attrs.mail_optout = true; // 停止は絶対に維持
+      // 追補17: 今回取り込む応募 (正規化後) がFSか + 既存行にFS登録歴があるか。
+      // has_fs_history はこの2つの OR で true にする一方通行 (false は決して書かない)。
+      var incomingFs = deriveFsHistory_({ source_company: input.source_company, hearing_json: attrs.hearing_json });
+      var existingFs = existing ? hasFsHistory_(existing) : false;
+      if (incomingFs || existingFs) attrs.has_fs_history = true;
+
+      // R3 (X4): フロント判定と一致させる除外。新規登録はしない。
+      // 既存行が一意に特定できた除外行については、登録・現在化はせず、
+      // FS フラグの永続化だけを行う (全行送信の既存要件と両立させる)。
+      var ageVal = null;
+      if (input.birth_date) ageVal = ageFromBirth_(input.birth_date);
+      else if (input.age !== undefined && input.age !== null && input.age !== '') ageVal = toNum_(input.age);
+      var exclusion = '';
+      if (candIds.length > 1) exclusion = '重複の確認が必要';
+      else if (!attrs.name || (!phone && !email)) exclusion = '必須情報不備';
+      else if (ageVal == null) exclusion = '年齢不明';
+      else if (ageVal >= 63) exclusion = '年齢条件の対象外';
+      else if (['kaigo', 'kango'].indexOf(str_(input.job_type)) < 0) exclusion = '対象職種以外';
+      else if (str_(input.prefecture) &&
+               KANSAI_PREFECTURES_.indexOf(str_(input.prefecture)) < 0 &&
+               KANTO_PREFECTURES_.indexOf(str_(input.prefecture)) < 0) exclusion = '対象エリア以外';
+      if (exclusion) {
+        if (existing && (incomingFs || existingFs) && !toBool_(existing.has_fs_history)) {
+          ensurePersisted_(existing);
+          queuePatch_(existing, { has_fs_history: true, updated_at: now });
+        }
+        skip_(exclusion); return;
+      }
+
+      if (existing) {
+        // 既存と同じ・古い応募は現在化しない (LIVE §12)。applied_at が既存以下なら除外。
+        var exApplied = cellDateIso_(existing.applied_at), inApplied = cellDateIso_(input.applied_at);
+        if (inApplied && exApplied && inApplied <= exApplied) {
+          // FS登録歴フラグの永続化は担保する (追補17)
+          if ((incomingFs || existingFs) && !toBool_(existing.has_fs_history)) {
+            ensurePersisted_(existing);
+            queuePatch_(existing, { has_fs_history: true, updated_at: now });
+          }
+          // R3 (I8): 属性のみ変更された行は黙って捨てない。最新応募の同一性
+          // (applied_at / source_company) とステータス類は守ったまま、応募属性の
+          // 差分だけを反映し「更新」に数える (冪等性 = 差分のみ)。
+          var attrPatch = diffApplicantAttrs_(existing, attrs);
+          if (Object.keys(attrPatch).length) {
+            attrPatch.updated_at = now;
+            attrPatch.import_batch_id = batchId;
+            if (incomingFs || existingFs) attrPatch.has_fs_history = true;
+            if (email && optoutSet[email]) attrPatch.mail_optout = true;
+            ensurePersisted_(existing);
+            queuePatch_(existing, attrPatch);
+            queueEvent_(existing.applicant_id,
+              '属性のみ更新 (応募日は既存が最新) batch=' + batchId);
+            updated++; attrUpdated++;
+            return;
+          }
+          skip_('既存と同じ・古い応募'); return;
+        }
+        // 会社照合は canonical で行う (原文は attrs.source_company のまま保持する)
+        if (attrs.source_company) attrs.source_company = str_(input.source_company);
+        ensurePersisted_(existing);
+        queuePatch_(existing, attrs);
+        queueEvent_(existing.applicant_id,
+          '新規応募あり (再応募として最新化) batch=' + batchId +
+          (attrs.source_company ? ' / ' + attrs.source_company : ''));
+        updated++;
+      } else {
+        attrs.applicant_id = allocApplicantId_(); // R4 06-07: 連番予約から採番
+        attrs.created_at = now;
+        // 追補17: 新規行はフラグを明示値で永続化する (FS応募なら true、それ以外は false)
+        attrs.has_fs_history = !!incomingFs;
+        // R3 (T4): 新規行の csv_status は CSV の値をそのまま保持する
+        // (従来は pickApplicantAttrs_ の対象外で常に '未対応' に潰れていた)。
+        // 空のときだけ '未対応'。未知の値は未分類として表示側で扱う。
+        attrs.csv_status = str_(input.csv_status) || '未対応';
+        if (attrs.sms_sent === undefined) attrs.sms_sent = false;
+        if (attrs.mail_optout === undefined) attrs.mail_optout = !!attrs.mail_optout;
+        // 同一バッチ内の重複行が次の照合で当たるよう索引にも入れる (配列へ push)
+        indexAdd_(byPhone, phone, attrs);
+        indexAdd_(byEmail, email, attrs);
+        if (str_(attrs.name)) indexAdd_(byNameBirth, nbKey, attrs);
+        // R4 06-07: 実書き込みはバッファへ (イベント記録と added 加算は
+        // フラッシュ成功時に行う)。200行たまったらその場でフラッシュする。
+        pendingNew.push({ attrs: attrs, phone: phone, email: email, nbKey: nbKey });
+        pendingIds[attrs.applicant_id] = true;
+        if (pendingNew.length >= 200) flushNew_();
+      }
+    } catch (rowErr) {
+      failedRows++;
+      if (rowErrors.length < 5) rowErrors.push(errMsg_(rowErr));
+      try { Logger.log('importCommit row failed batch=' + batchId + ': ' + errMsg_(rowErr)); } catch (e) {}
+    }
+    });
+
+    // 残りの新規行を書き切ってから件数を確定させる (R4 06-07)。
+    flushNew_();
+    // R6: 既存行の更新とイベントも書き切ってから件数を確定させる。
+    flushPatches_();
+    flushEvents_();
+    // F-03: 途中失敗時も「どこまで入ったか」が後から検証できるよう、
+    // バッチ記録は常に行う (全件成功=complete / 1件でも失敗=partial + failed_count)。
+    // R4 06-07: 記録は開始時に先行作成した running 行を更新して確定させる。
+    // 先行作成できなかった場合と更新に失敗した場合は、従来どおり最終結果を
+    // 新規行として残す (バッチ記録を欠かさないためのフォールバック)。
+    // R6.5: プレビューとの差異と行失敗を note に残す。差異ゼロ・失敗ゼロなら空。
+    var batchNote = '';
+    if (previewCounts) {
+      var pcA = toNum_(previewCounts.added) || 0;
+      var pcU = toNum_(previewCounts.updated) || 0;
+      var pcS = toNum_(previewCounts.skipped) || 0;
+      if (pcA !== added || pcU !== updated || pcS !== skipped) {
+        batchNote = 'プレビュー差異: プレビュー(新規' + pcA + '/更新' + pcU + '/除外' + pcS +
+          ') → サーバー実績(新規' + added + '/更新' + updated + '/除外' + skipped + ')';
+      }
+    }
+    if (failedRows) {
+      batchNote += (batchNote ? ' / ' : '') + '行単位の処理失敗 ' + failedRows + '件 (詳細はサーバーログ)';
+    }
+    var finalStatus = failedRows ? 'partial' : 'complete';
+    var finalBatch = {
+      batch_id: batchId, kind: String(req.kind || 'applicants'), file_name: String(req.file_name || ''),
+      row_count: rows.length, added_count: added, updated_count: updated, skipped_count: skipped,
+      actor: me, created_at: now,
+      status: finalStatus, failed_count: failedRows,
+      client_op_id: clientOpId, chunk_seq: chunkSeq, note: batchNote
+    };
+    if (batchRecorded) {
+      try {
+        updateRowByPk_('import_batches', batchId, {
+          added_count: added, updated_count: updated, skipped_count: skipped,
+          status: finalStatus, failed_count: failedRows, note: batchNote
+        });
+      } catch (updErr) {
+        try { appendRow_('import_batches', finalBatch); } catch (e) {}
+      }
+    } else {
+      appendRow_('import_batches', finalBatch);
+    }
+    // R4 06-02: 戻り値はサーバー実績そのもの (新規/更新/除外の実件数 + 除外理由の
+    // 内訳 + 行失敗) を含む。フロントはこれを集計してプレビューと突合する。
+    return { batch_id: batchId, row_count: rows.length, added: added, updated: updated, skipped: skipped,
+      attr_updated: attrUpdated,
+      failed: failedRows, status: finalStatus, row_errors: rowErrors,
+      coord_downgraded: coordDowngraded, coord_reasons: coordReasons,
+      client_op_id: clientOpId, chunk_seq: chunkSeq,
+      skipped_reasons: skippedReasons, note: batchNote };
+  });
+  } catch (commitErr) {
+    // R6.5: 処理開始後の致命的中断はバッチを failed として残す
+    // (running のまま放置すると「処理中なのか失敗なのか」判別できなくなる)。
+    // 生エラーはサーバーログ側に残し、画面向けの翻訳はフロントが行う。
+    if (r65Batch.id) {
+      try {
+        // status は 'running' のまま残す (R4 06-07 の不変条件: 先行作成した
+        // バッチ記録は途中死でも残る)。中断したことは note と failed_count で
+        // 記録し、画面側は「running + 中断note」を失敗として表示・再実行可能にする。
+        updateRowByPk_('import_batches', r65Batch.id, {
+          failed_count: rows.length,
+          note: '処理中に中断しました: ' + errMsg_(commitErr)
+        });
+      } catch (e) {}
+    }
+    throw commitErr;
+  }
+}
+
+/**
+ * 案件取り込み修正 (案B): 案件専用バルク取り込みコア。
+ * 従来の案件経路 (pushCasesFromAiPage → upsertCaseFromSource_ の行ごと全表読み)
+ * では 7,221 件規模が Apps Script の実行時間上限に収まらない (監査 C-2) ため、
+ * 応募者の importCommitCore_ と同じ作法で新設した:
+ * - チャンクごとに cases / case_sources を各1回だけ読み、(source, source_case_key)
+ *   の索引をメモリに構築して照合する (行ごとの読み直しはしない)。
+ * - 新規行は最大IDからの連番一括予約 + appendRows_ (setValues 一括) で書く。
+ *   更新行は行番号が判明しているため、メモリ上で patch を適用し、チャンク末尾に
+ *   「行まるごと setValues」へまとめる (case_sources 側も同じ)。
+ * - import_batches に kind='cases' で記録する (running 先行作成 → 実績で確定。
+ *   中断時は status='running' のまま note + failed_count を残す R6.5 不変条件)。
+ * - 冪等性は (client_op_id, chunk_seq) の完了バッチ再生 + (source, source_case_key)
+ *   の既存照合の二重構え (応募者側と同一水準)。
+ * - 照合・更新セマンティクスは upsertCaseFromSource_ と同一に保つ: 空値で既存を
+ *   潰さない、source_flags に出所を加える、座標は acceptCoord_ を通し、原文は
+ *   case_sources.raw_json に残す。新規案件はマッチ提案の生成待ちキューに積む
+ *   (一括版 enqueueMatchProposalCasesBulk_ で settings の読み書きはチャンク1回)。
+ * req: { file_name, kind:'cases', rows:[{...案件フィールド, source, source_case_key}] }
+ */
+function importCasesCommitCore_(req, me) {
+  var rows = req.rows || [];
+  if (!rows.length) throw new Error('rows が空です');
+  if (rows.length > 5000) throw new Error('1回の取り込みは 5000 行までです (分割してください)');
+  var clientOpId = str_(req.client_op_id || '');
+  var chunkSeq = (req.chunk_seq === undefined || req.chunk_seq === null || req.chunk_seq === '') ? '' : req.chunk_seq;
+  var previewCounts = (req.preview_counts && typeof req.preview_counts === 'object') ? req.preview_counts : null;
+  var r65Batch = { id: null };
+  try {
+  return withLock_(function () {
+    if (clientOpId) {
+      var prevBatches = readTable_('import_batches').rows;
+      for (var bi = 0; bi < prevBatches.length; bi++) {
+        var pb = prevBatches[bi];
+        if (str_(pb.client_op_id) === clientOpId &&
+            String(pb.chunk_seq == null ? '' : pb.chunk_seq) === String(chunkSeq) &&
+            str_(pb.kind) === 'cases' &&
+            str_(pb.status) === 'complete') {
+          return { batch_id: pb.batch_id, kind: 'cases', row_count: toNum_(pb.row_count) || rows.length,
+            added: toNum_(pb.added_count) || 0, updated: toNum_(pb.updated_count) || 0,
+            skipped: toNum_(pb.skipped_count) || 0,
+            failed: toNum_(pb.failed_count) || 0, status: str_(pb.status),
+            row_errors: [], note: str_(pb.note),
+            idempotent_replay: true, client_op_id: clientOpId, chunk_seq: chunkSeq };
+        }
+      }
+    }
+    var batchId = nextId_('import_batches');
+    var now = nowIso_();
+    var batchRecorded = false;
+    try {
+      appendRow_('import_batches', {
+        batch_id: batchId, kind: 'cases', file_name: String(req.file_name || ''),
+        row_count: rows.length, added_count: 0, updated_count: 0, skipped_count: 0,
+        actor: me, created_at: now, status: 'running', failed_count: 0,
+        client_op_id: clientOpId, chunk_seq: chunkSeq
+      });
+      batchRecorded = true;
+      r65Batch.id = batchId;
+    } catch (batchErr) {
+      try { Logger.log('importCasesCommit batch pre-create failed batch=' + batchId + ': ' + errMsg_(batchErr)); } catch (e) {}
+    }
+    // チャンクで1回だけ読む (cases / case_sources)。以降はメモリ索引で照合する。
+    var casesT = readTable_('cases');
+    var srcT = readTable_('case_sources');
+    var srcIndex = {}; // 'source|source_case_key' -> case_sources 行
+    srcT.rows.forEach(function (r) {
+      srcIndex[str_(r.source) + '|' + str_(r.source_case_key)] = r;
+    });
+    var caseById = {}; // case_id -> cases 行
+    casesT.rows.forEach(function (r) { caseById[str_(r.case_id)] = r; });
+    // 新規案件の採番は開始時点の最大番号からの連番予約 (行ごとの nextId_ 全表走査をしない)
+    var casePrefix = ID_PREFIX_['cases'] || 'C';
+    var caseSeq = 0;
+    casesT.rows.forEach(function (r) {
+      var m = String(r.case_id || '').match(new RegExp('^' + casePrefix + '(\\d+)$'));
+      if (m) caseSeq = Math.max(caseSeq, parseInt(m[1], 10));
+    });
+    function allocCaseId_() {
+      caseSeq++;
+      var n = String(caseSeq);
+      while (n.length < 6) n = '0' + n;
+      return casePrefix + n;
+    }
+    // 座標の同一重複 (c) はバッチ + 既存全体で事前に数える (応募者側と同じ作法)。
+    // 住所キーは cases の address 列そのもの (upsertCaseFromSource_ の集計と同一)。
+    var coordDupMap = coordDupCountMap_(
+      rows.concat(casesT.rows).map(function (r) {
+        return { lat: r.lat, lon: r.lon, addressKey: str_(r.address) };
+      }), municipalityRepKeys_());
+    var coordDowngraded = 0;
+    var coordReasons = {};
+
+    var added = 0, updated = 0, failedRows = 0, rowErrors = [];
+    // 新規行の書き込みバッファ (200行ごとに appendRows_ で一括フラッシュ)
+    var pendingNew = []; // {row, srcRow, sKey}
+    var newCaseIds = [];
+    function flushNew_() {
+      if (!pendingNew.length) return;
+      var batch = pendingNew;
+      pendingNew = [];
+      // 書き込み先の開始行を控える (ロック内で直列化されているため確定できる)。
+      // 成功した行には _row を割り当て、同一チャンク内の後続の更新行が
+      // flushPatches_ で「行まるごと setValues」に乗るようにする。
+      var startRow = 0;
+      try { startRow = sheet_('cases').getLastRow() + 1; } catch (e) { startRow = 0; }
+      var res = appendRows_('cases', batch.map(function (p) { return p.row; }));
+      var failedIdx = {};
+      res.errors.forEach(function (e) { failedIdx[e.index] = true; });
+      var okSrc = [];
+      var okCount = 0;
+      batch.forEach(function (p, i) {
+        if (failedIdx[i]) {
+          failedRows++;
+          if (rowErrors.length < 5) rowErrors.push('案件の書き込みに失敗しました: ' + p.row.case_id);
+          // 書けなかった行は索引から外す (後続行が実在しない行を更新対象にしない)
+          delete srcIndex[p.sKey];
+          delete caseById[p.row.case_id];
+          var ni = newCaseIds.indexOf(p.row.case_id);
+          if (ni >= 0) newCaseIds.splice(ni, 1);
+          try { Logger.log('importCasesCommit case write failed batch=' + batchId + ': ' + p.row.case_id); } catch (e2) {}
+          return;
+        }
+        if (startRow) p.row._row = startRow + okCount;
+        okCount++;
+        okSrc.push(p.srcRow);
+        added++;
+      });
+      if (okSrc.length) {
+        var startRowS = 0;
+        try { startRowS = sheet_('case_sources').getLastRow() + 1; } catch (e) { startRowS = 0; }
+        var res2 = appendRows_('case_sources', okSrc);
+        var failedSrc = {};
+        res2.errors.forEach(function (e) {
+          failedSrc[e.index] = true;
+          failedRows++;
+          if (rowErrors.length < 5) rowErrors.push('案件の出所記録の書き込みに失敗しました');
+          try { Logger.log('importCasesCommit source write failed batch=' + batchId + ': ' + e.message); } catch (e2) {}
+        });
+        if (startRowS) {
+          var okS = 0;
+          okSrc.forEach(function (sr, i) { if (!failedSrc[i]) { sr._row = startRowS + okS; okS++; } });
+        }
+      }
+    }
+    // 既存行の更新はメモリ上で patch を適用し、末尾に「行まるごと setValues」へまとめる
+    var pendingCasePatch = {}; // case_id -> cases 行 (patch 適用済み)
+    var pendingSrcPatch = {};  // 'source|key' -> case_sources 行 (raw_json/imported_at 適用済み)
+    function flushPatches_() {
+      var cIds = Object.keys(pendingCasePatch);
+      var sRows = Object.keys(pendingSrcPatch).map(function (k) { return pendingSrcPatch[k]; });
+      pendingCasePatch = {}; pendingSrcPatch = {};
+      if (cIds.length) {
+        var shC = null;
+        try { shC = sheet_('cases'); } catch (e) { shC = null; }
+        cIds.forEach(function (id) {
+          var rowObj = caseById[id];
+          if (!rowObj || !rowObj._row) return;
+          try {
+            if (!shC) throw new Error('sheet unavailable');
+            var arr = casesT.headers.map(function (h) { return rowObj[h] == null ? '' : rowObj[h]; });
+            shC.getRange(rowObj._row, 1, 1, casesT.headers.length).setValues([arr]);
+          } catch (e) {
+            failedRows++;
+            if (rowErrors.length < 5) rowErrors.push(errMsg_(e));
+            try { Logger.log('importCasesCommit patch write failed batch=' + batchId + ': ' + errMsg_(e)); } catch (e2) {}
+          }
+        });
+      }
+      if (sRows.length) {
+        var shS = null;
+        try { shS = sheet_('case_sources'); } catch (e) { shS = null; }
+        sRows.forEach(function (rowObj) {
+          if (!rowObj || !rowObj._row) return;
+          try {
+            if (!shS) throw new Error('sheet unavailable');
+            var arr = srcT.headers.map(function (h) { return rowObj[h] == null ? '' : rowObj[h]; });
+            shS.getRange(rowObj._row, 1, 1, srcT.headers.length).setValues([arr]);
+          } catch (e) {
+            failedRows++;
+            if (rowErrors.length < 5) rowErrors.push(errMsg_(e));
+            try { Logger.log('importCasesCommit source patch write failed batch=' + batchId + ': ' + errMsg_(e)); } catch (e2) {}
+          }
+        });
+      }
+    }
+    rows.forEach(function (input) {
+    try {
+      if (!input || typeof input !== 'object') throw new Error('案件データが空です');
+      var source = String(input.source || 'csv').trim() || 'csv';
+      if (CASE_SYNC_SOURCES_.indexOf(source) < 0) {
+        throw new Error('source は ' + CASE_SYNC_SOURCES_.join('/') + ' のいずれかです: ' + source);
+      }
+      var srcObj = input.case_source || {};
+      var sourceCaseKey = String(input.source_case_key || srcObj.source_case_key || '').trim();
+      if (!sourceCaseKey) throw new Error('source_case_key が必要です (冪等キーの一部です)');
+      var raw = srcObj.raw_json || input.raw_json || input;
+      var rawJson = (typeof raw === 'string') ? raw : JSON.stringify(raw);
+      // 入力から案件フィールドだけを拾う (upsertCaseFromSource_ と同じホワイトリスト。
+      // 空値は含めない = 既存値を空で潰さない)
+      var fields = {};
+      CASE_SYNC_FIELDS_.forEach(function (k) {
+        if (k === 'case_id' || k === 'created_at' || k === 'updated_at' || k === 'source_flags') return;
+        if (input[k] !== undefined && input[k] !== null && input[k] !== '') fields[k] = input[k];
+      });
+      if (fields.is_open !== undefined) fields.is_open = toBool_(fields.is_open);
+      if (!fields.updated_at_src) fields.updated_at_src = now;
+      fields.updated_at = now;
+      // 座標の受け入れ判定 (upsert と同一規則。重複数は事前集計マップから引く)
+      if (fields.lat !== undefined || fields.lon !== undefined) {
+        var rep = municipalityRepPoint_(fields.prefecture || input.prefecture,
+          fields.municipality || input.municipality);
+        var inKey = coordKey_(fields.lat, fields.lon);
+        var dupCount = inKey ? (coordDupMap[inKey] === undefined ? null : coordDupMap[inKey]) : null;
+        var acc = acceptCoord_(fields.lat, fields.lon, rep, dupCount);
+        if (acc.verdict === 'downgraded') {
+          fields.lat = ''; fields.lon = '';
+          coordDowngraded++;
+          coordReasons[acc.reason] = (coordReasons[acc.reason] || 0) + 1;
+        } else if (acc.verdict === 'precise') { fields.lat = acc.lat; fields.lon = acc.lon; }
+      }
+      var sKey = source + '|' + sourceCaseKey;
+      var existingSrc = srcIndex[sKey];
+      if (existingSrc) {
+        var caseId = str_(existingSrc.case_id);
+        var crow = caseById[caseId];
+        if (!crow) throw new Error('case_sources に対応する案件が見つかりません: ' + caseId);
+        Object.keys(fields).forEach(function (k) { crow[k] = fields[k]; });
+        crow.source_flags = mergeSourceFlags_(crow.source_flags, source);
+        if (!crow.facility_name_norm && crow.facility_name) {
+          crow.facility_name_norm = String(crow.facility_name).replace(/\s+/g, '');
+        }
+        // 未フラッシュの新規行を更新対象にする場合は、先に書き込みを確定させる
+        if (!crow._row) flushNew_();
+        pendingCasePatch[caseId] = crow;
+        existingSrc.raw_json = rawJson;
+        existingSrc.imported_at = now;
+        pendingSrcPatch[sKey] = existingSrc;
+        updated++;
+      } else {
+        var newId = allocCaseId_();
+        var row = {
+          case_id: newId, facility_id: '', facility_name: '', facility_name_norm: '',
+          corporation_name: '', prefecture: '', municipality: '', address: '', lat: '', lon: '',
+          job_type: '', service_type: '', employment_type: '', title: '', description: '',
+          nearest_station: '', salary_text: '', is_open: true, merged_from: '',
+          created_at: now
+        };
+        Object.keys(fields).forEach(function (k) { row[k] = fields[k]; });
+        row.source_flags = mergeSourceFlags_('', source);
+        if (!row.facility_name_norm && row.facility_name) {
+          row.facility_name_norm = String(row.facility_name).replace(/\s+/g, '');
+        }
+        var srcRow = { case_id: newId, source: source, source_case_key: sourceCaseKey,
+          raw_json: rawJson, imported_at: now };
+        pendingNew.push({ row: row, srcRow: srcRow, sKey: sKey });
+        srcIndex[sKey] = srcRow;
+        caseById[newId] = row;
+        newCaseIds.push(newId);
+        if (pendingNew.length >= 200) flushNew_();
+      }
+    } catch (rowErr) {
+      failedRows++;
+      if (rowErrors.length < 5) rowErrors.push(errMsg_(rowErr));
+      try { Logger.log('importCasesCommit row failed batch=' + batchId + ': ' + errMsg_(rowErr)); } catch (e) {}
+    }
+    });
+
+    flushNew_();
+    flushPatches_();
+    // 新規案件だけ生成待ちキューに積む (upsert と同じ。読み書きはチャンクで1回に集約)
+    if (newCaseIds.length) enqueueMatchProposalCasesBulk_(newCaseIds);
+    // バッチ記録の確定 (応募者側と同じ: プレビュー差異と行失敗を note に残す)
+    var batchNote = '';
+    if (previewCounts) {
+      var pcA = toNum_(previewCounts.added) || 0;
+      var pcU = toNum_(previewCounts.updated) || 0;
+      var pcS = toNum_(previewCounts.skipped) || 0;
+      if (pcA !== added || pcU !== updated || pcS !== 0) {
+        batchNote = 'プレビュー差異: プレビュー(新規' + pcA + '/更新' + pcU + '/除外' + pcS +
+          ') → サーバー実績(新規' + added + '/更新' + updated + '/除外0)';
+      }
+    }
+    if (failedRows) {
+      batchNote += (batchNote ? ' / ' : '') + '行単位の処理失敗 ' + failedRows + '件 (詳細はサーバーログ)';
+    }
+    var finalStatus = failedRows ? 'partial' : 'complete';
+    var finalBatch = {
+      batch_id: batchId, kind: 'cases', file_name: String(req.file_name || ''),
+      row_count: rows.length, added_count: added, updated_count: updated, skipped_count: 0,
+      actor: me, created_at: now,
+      status: finalStatus, failed_count: failedRows,
+      client_op_id: clientOpId, chunk_seq: chunkSeq, note: batchNote
+    };
+    if (batchRecorded) {
+      try {
+        updateRowByPk_('import_batches', batchId, {
+          added_count: added, updated_count: updated, skipped_count: 0,
+          status: finalStatus, failed_count: failedRows, note: batchNote
+        });
+      } catch (updErr) {
+        try { appendRow_('import_batches', finalBatch); } catch (e) {}
+      }
+    } else {
+      appendRow_('import_batches', finalBatch);
+    }
+    return { batch_id: batchId, kind: 'cases', row_count: rows.length, added: added, updated: updated,
+      skipped: 0, failed: failedRows, status: finalStatus, row_errors: rowErrors,
+      coord_downgraded: coordDowngraded, coord_reasons: coordReasons,
+      client_op_id: clientOpId, chunk_seq: chunkSeq, note: batchNote };
+  });
+  } catch (commitErr) {
+    if (r65Batch.id) {
+      try {
+        updateRowByPk_('import_batches', r65Batch.id, {
+          failed_count: rows.length,
+          note: '処理中に中断しました: ' + errMsg_(commitErr)
+        });
+      } catch (e) {}
+    }
+    throw commitErr;
+  }
+}
+
+/** 新規案件の生成待ちキューへの一括登録 (enqueueMatchProposalCase_ の一括版)。
+ * settings の読み取り・書き込みをチャンクで各1回に集約する。失敗しても
+ * 取り込み自体は成功として扱う (単件版と同じ)。ロック取得済みの文脈から呼ぶこと。 */
+function enqueueMatchProposalCasesBulk_(caseIds) {
+  try {
+    var cur = toList_(getSettingValue_(MATCH_QUEUE_SETTING_KEY, ''));
+    var have = {};
+    cur.forEach(function (id) { have[id] = true; });
+    var changed = false;
+    (caseIds || []).forEach(function (id) {
+      id = String(id);
+      if (!have[id]) { cur.push(id); have[id] = true; changed = true; }
+    });
+    if (!changed) return;
+    var exists = false;
+    readTable_('settings').rows.forEach(function (r) { if (String(r.key) === MATCH_QUEUE_SETTING_KEY) exists = true; });
+    if (exists) updateRowByPk_('settings', MATCH_QUEUE_SETTING_KEY, { value: cur.join(',') });
+    else appendRow_('settings', { key: MATCH_QUEUE_SETTING_KEY, value: cur.join(',') });
+  } catch (e) { /* キュー積みに失敗しても案件取り込み自体は成功として扱う */ }
+}
+
+// ===== R6.5: 大ファイル取り込みのサーバー側継続処理 (キュー) =====
+/**
+ * 背景: 数千行の取り込みはフロントがチャンクを送り続ける方式だと、アプリを
+ * 閉じた時点で止まってしまう。そこで大ファイルでは、フロントはまず全チャンクを
+ * import_queue に「登録」だけし (1チャンク=500行の一括 append で速い)、実際の
+ * 照合・書き込みは時間主導トリガー processImportQueue が importCommitCore_ で
+ * 行う。アプリを閉じてもサーバー側で最後まで処理され、次に開いたときに
+ * getImportStatus (totals.queue + batches) で進捗・完了が分かる。
+ * 冪等性: (client_op_id, chunk_seq) で登録・処理とも重複を防ぐ。再登録は
+ * already_queued / already_complete を返して何もしない。
+ */
+
+/** チャンクをキューに登録する (照合はしない)。 */
+function actionImportEnqueue_(req) {
+  var me = requireKikariUser_();
+  var rows = req.rows || [];
+  if (!rows.length) throw new Error('rows が空です');
+  if (rows.length > 5000) throw new Error('1回の登録は 5000 行までです (分割してください)');
+  var clientOpId = str_(req.client_op_id || '');
+  if (!clientOpId) throw new Error('client_op_id が必要です');
+  var chunkSeq = (req.chunk_seq === undefined || req.chunk_seq === null || req.chunk_seq === '') ? '' : req.chunk_seq;
+  return withLock_(function () {
+    var batches = readTable_('import_batches').rows;
+    for (var i = 0; i < batches.length; i++) {
+      var b = batches[i];
+      if (str_(b.client_op_id) === clientOpId && String(b.chunk_seq === undefined || b.chunk_seq === null ? '' : b.chunk_seq) === String(chunkSeq) && str_(b.status) === 'complete') {
+        return { registered: false, reason: 'already_complete', batch_id: str_(b.batch_id), client_op_id: clientOpId, chunk_seq: chunkSeq };
+      }
+    }
+    var q = readTable_('import_queue');
+    var existing = 0, maxQ = 0;
+    q.rows.forEach(function (r) {
+      var m = /^IQ(\d+)$/.exec(str_(r.queue_id));
+      if (m) maxQ = Math.max(maxQ, parseInt(m[1], 10));
+      if (str_(r.client_op_id) === clientOpId && String(r.chunk_seq === undefined || r.chunk_seq === null ? '' : r.chunk_seq) === String(chunkSeq)) existing++;
+    });
+    if (existing) return { registered: false, reason: 'already_queued', queued_rows: existing, client_op_id: clientOpId, chunk_seq: chunkSeq };
+    var now = nowIso_();
+    var metaJson = JSON.stringify({ preview_counts: req.preview_counts || null });
+    var objs = rows.map(function (r, i) {
+      maxQ++;
+      return { queue_id: 'IQ' + ('000000' + maxQ).slice(-6), client_op_id: clientOpId, chunk_seq: chunkSeq, row_seq: i,
+        file_name: str_(req.file_name || ''), kind: str_(req.kind || 'applicants'), target_area: str_(req.target_area || ''),
+        actor: me, payload_json: JSON.stringify(r || {}), meta_json: metaJson,
+        status: 'pending', batch_id: '', created_at: now, processed_at: '' };
+    });
+    appendRows_('import_queue', objs);
+    ensureImportQueueTrigger_();
+    return { registered: true, queued_rows: objs.length, client_op_id: clientOpId, chunk_seq: chunkSeq };
+  });
+}
+
+/** 継続処理トリガーを設置する (既にあれば何もしない)。ベストエフォート。 */
+function ensureImportQueueTrigger_() {
+  try {
+    if (typeof ScriptApp === 'undefined' || !ScriptApp.newTrigger) return false;
+    var triggers = ScriptApp.getProjectTriggers();
+    for (var i = 0; i < triggers.length; i++) {
+      if (triggers[i].getHandlerFunction && triggers[i].getHandlerFunction() === 'processImportQueue') return true;
+    }
+    ScriptApp.newTrigger('processImportQueue').timeBased().everyMinutes(1).create();
+    return true;
+  } catch (e) { return false; }
+}
+
+/** import_queue の指定列を、行オブジェクト群に対して連続範囲でまとめて書く。 */
+function writeQueueColumn_(sh, rows, colIdx, value) {
+  if (!sh || colIdx < 0 || !rows.length) return;
+  var nums = rows.map(function (r) { return r._row; }).sort(function (a, b) { return a - b; });
+  var start = nums[0], len = 1;
+  for (var i = 1; i <= nums.length; i++) {
+    if (i < nums.length && nums[i] === start + len) { len++; continue; }
+    var vals = [];
+    for (var k = 0; k < len; k++) vals.push([value]);
+    sh.getRange(start, colIdx + 1, len, 1).setValues(vals);
+    start = nums[i]; len = 1;
+  }
+}
+
+/** 最も古い pending チャンクを1つ claim する (短いロックで processing にする)。
+ * processing のまま15分以上経ったチャンクは中断とみなして再び拾う。 */
+function claimNextImportChunk_() {
+  var claim = null;
+  withLock_(function () {
+    var t = readTable_('import_queue');
+    var nowMs = Date.now();
+    var groups = {}, order = [];
+    t.rows.forEach(function (r) {
+      var st = str_(r.status);
+      var stale = st === 'processing' && r.processed_at && (nowMs - Date.parse(str_(r.processed_at)) > 15 * 60 * 1000);
+      if (st !== 'pending' && !stale) return;
+      var key = str_(r.client_op_id) + '|' + String(r.chunk_seq === undefined || r.chunk_seq === null ? '' : r.chunk_seq);
+      if (!groups[key]) { groups[key] = []; order.push(key); }
+      groups[key].push(r);
+    });
+    if (!order.length) return;
+    var grows = groups[order[0]].slice().sort(function (a, b) { return (toNum_(a.row_seq) || 0) - (toNum_(b.row_seq) || 0); });
+    var sh = sheet_('import_queue');
+    var nowIso = nowIso_();
+    writeQueueColumn_(sh, grows, t.headers.indexOf('status'), 'processing');
+    writeQueueColumn_(sh, grows, t.headers.indexOf('processed_at'), nowIso);
+    var first = grows[0];
+    var meta = {};
+    try { meta = JSON.parse(str_(first.meta_json) || '{}'); } catch (e) { meta = {}; }
+    var rows = grows.map(function (r) { try { return JSON.parse(str_(r.payload_json) || '{}'); } catch (e) { return {}; } });
+    claim = { queueIds: grows.map(function (r) { return str_(r.queue_id); }), actor: str_(first.actor),
+      req: { file_name: str_(first.file_name), kind: str_(first.kind || 'applicants'), rows: rows,
+        client_op_id: str_(first.client_op_id),
+        chunk_seq: (first.chunk_seq === undefined || first.chunk_seq === null) ? '' : first.chunk_seq,
+        preview_counts: meta.preview_counts || null } };
+  });
+  return claim;
+}
+
+/** 処理済みチャンクのキュー行を始末する。成功時は行を削除し (履歴は import_batches が正)、
+ * 失敗時は failed として残す (claim 対象から外れ、原因調査に使える)。 */
+function finishImportChunk_(group, res, err) {
+  withLock_(function () {
+    var t = readTable_('import_queue');
+    var byId = {};
+    t.rows.forEach(function (r) { byId[str_(r.queue_id)] = r; });
+    var rows = group.queueIds.map(function (id) { return byId[id]; }).filter(function (r) { return !!r; });
+    if (!rows.length) return;
+    var sh = sheet_('import_queue');
+    if (!err) {
+      var deleted = false;
+      try {
+        if (sh && typeof sh.deleteRows === 'function') {
+          var nums = rows.map(function (r) { return r._row; }).sort(function (a, b) { return b - a; });
+          var runTop = nums[0], runLen = 1;
+          for (var i = 1; i <= nums.length; i++) {
+            if (i < nums.length && nums[i] === runTop - runLen) { runLen++; continue; }
+            sh.deleteRows(runTop - runLen + 1, runLen);
+            runTop = nums[i]; runLen = 1;
+          }
+          deleted = true;
+        }
+      } catch (e) { deleted = false; }
+      if (deleted) return;
+    }
+    writeQueueColumn_(sh, rows, t.headers.indexOf('status'), err ? 'failed' : 'done');
+    if (res) writeQueueColumn_(sh, rows, t.headers.indexOf('batch_id'), str_(res.batch_id));
+    writeQueueColumn_(sh, rows, t.headers.indexOf('processed_at'), nowIso_());
+  });
+}
+
+/**
+ * 時間主導トリガーの入口。キューが空になるまで (1回の実行では最大3チャンク /
+ * 約4分まで) 処理する。ロックは claim / finish の短い区間と importCommitCore_
+ * 内部でのみ取る (二重ロックで待たせない)。
+ */
+function processImportQueue() {
+  var startedAt = Date.now();
+  var processed = 0, errors = 0;
+  while (processed < 3 && Date.now() - startedAt < 240000) {
+    var group = claimNextImportChunk_();
+    if (!group) break;
+    var res = null, err = null;
+    // 案件取り込み修正 (案B): kind='cases' のチャンクは案件コアへ振り分ける
+    // (従来は kind を見ずに応募者コアへ渡しており、案件行が応募者として
+    // 照合・記録される誤処理になった。監査 C-4)。
+    try { res = (group.req && group.req.kind === 'cases')
+      ? importCasesCommitCore_(group.req, group.actor)
+      : importCommitCore_(group.req, group.actor); }
+    catch (e) { err = e; errors++; }
+    try { finishImportChunk_(group, res, err); } catch (e2) { /* 始末に失敗しても次回の stale 回収で拾う */ }
+    processed++;
+  }
+  return { processed_chunks: processed, errors: errors };
+}
+
+// ===== R6.6 P3(b)/P4: 電話・area のデータ修復 (ドライラン付き移行関数) =====
+/**
+ * 電話列の書式化 + 先頭0落ちの修復。POOL_DIAGNOSIS §4(b) のデータ不整合の是正。
+ * 原因: appendRow_/setValues の USER_ENTERED 解釈で数字文字列が数値化され、
+ * 先頭0が落ちた (例: 08091251382 → 8091251382)。その結果 sms_target 判定と
+ * 電話キー照合が全行不発になっている。手順は PHONE_MIGRATION.md 参照。
+ * 実行前に必ずシートのバックアップを取ること。
+ * req: { dry_run: true/false (既定 true) }
+ * dry_run=true: 変更内容だけを返し、何も書かない。
+ * dry_run=false: 電話列を文字列書式 ('@') にしてから、修復対象をバルク setValues
+ *   (連続行は1回の setValues にまとめる。writeColumnRuns_) で書く。
+ *   冪等 (2回目は何もしない)。
+ * 判定 (planPhoneRepair_): 日本の電話番号は必ず 0 始まりであることを利用する。
+ *  - 携帯: 10桁で [789]0 始まり → 0 を補う (090/080/070)。
+ *  - 固定: 0を補った形が既知の市外局番で始まり、原則10桁 (050 のみ11桁) → 0 を補う。
+ *    0120/0800/0570 も同様。
+ *  - 上記のいずれにも当てはまらない行は「要人手判断」として needs_manual に回し、
+ *    推測で補完しない。電話が空の行は no_phone として数えるだけ。
+ */
+function planPhoneRepair_(rawPhone) {
+  var rawDigits = str_(rawPhone).replace(/[^0-9０-９]/g, '').replace(/[０-９]/g, function (c) {
+    return String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+  });
+  if (!rawDigits) return { action: 'empty' };
+  var digits = normalizePhoneDigits_(rawPhone);
+  if (digits.charAt(0) === '0') {
+    // 既に 0 始まり。+81 形や全角で格納されていた場合のみ正規形へ寄せる。
+    if (rawDigits !== digits) {
+      if (/^0[789]0\d{8}$/.test(digits) || isPlausibleLandline_(digits)) {
+        return { action: 'repair', repaired: digits, kind: 'normalize' };
+      }
+      return { action: 'manual', reason: '正規化後の番号が携帯・固定のいずれの形にも合わない: ' + digits };
+    }
+    // 0 始まりでも、携帯 (11桁)・固定 (原則10桁/050は11桁) のいずれの形にも
+    // 合わなければ要人手判断にする (例: 途中で1桁欠けた 090... (10桁))。
+    // 黙って ok にすると欠損番号が見えなくなる。
+    if (/^0[789]0\d{8}$/.test(digits) || isPlausibleLandline_(digits)) return { action: 'ok' };
+    return { action: 'manual', reason: '0始まりだが携帯・固定のいずれの形にも合わない: ' + digits };
+  }
+  // 先頭0落ちの疑い。
+  if (digits.length === 10 && /^[789]0/.test(digits)) {
+    return { action: 'repair', repaired: '0' + digits, kind: 'mobile' };
+  }
+  if (digits.length === 9 || digits.length === 10) {
+    var cand = '0' + digits;
+    if (isPlausibleLandline_(cand)) return { action: 'repair', repaired: cand, kind: 'landline' };
+  }
+  return { action: 'manual', reason: '桁数・市外局番から判定できない: ' + digits };
+}
+
+/** 0 始まりの電話番号が固定電話として妥当か (市外局番プレフィクス + 桁数)。
+ * 固定電話は原則10桁、050 (IP電話) のみ11桁。携帯 (090/080/070) は対象外。 */
+function isPlausibleLandline_(candidate) {
+  if (!candidate || candidate.charAt(0) !== '0') return false;
+  if (candidate.indexOf('050') === 0) return candidate.length === 11;
+  if (candidate.length !== 10) return false;
+  // 最長一致で市外局番プレフィクスを確認する (0120/0800/0570 が先)。
+  var codes = PHONE_AREA_CODES_.slice().sort(function (a, b) { return b.length - a.length; });
+  for (var i = 0; i < codes.length; i++) {
+    if (candidate.indexOf(codes[i]) === 0) return true;
+  }
+  return false;
+}
+
+/** 指定列を指定行へバルクで書く。連続する行は1回の setValues にまとめる。
+ * pairs: [{ row: シート行番号, value }]。戻り値は setValues の呼び出し回数。 */
+function writeColumnRuns_(sh, colIdx, pairs) {
+  if (!sh || colIdx < 0 || !pairs.length) return 0;
+  var sorted = pairs.slice().sort(function (a, b) { return a.row - b.row; });
+  var calls = 0;
+  var start = sorted[0].row, vals = [[sorted[0].value]];
+  for (var i = 1; i <= sorted.length; i++) {
+    if (i < sorted.length && sorted[i].row === start + vals.length) { vals.push([sorted[i].value]); continue; }
+    sh.getRange(start, colIdx + 1, vals.length, 1).setValues(vals);
+    calls++;
+    if (i < sorted.length) { start = sorted[i].row; vals = [[sorted[i].value]]; }
+  }
+  return calls;
+}
+
+function actionRepairPhones_(req) {
+  requireKikariUser_();
+  var dryRun = !(req && req.dry_run === false);
+  return withLock_(function () {
+    var t = readTable_('applicants');
+    var phoneCol = t.headers.indexOf('phone');
+    if (phoneCol < 0) throw new Error('applicants に phone 列がありません');
+    var repaired = [], needsManual = [];
+    var alreadyOk = 0, noPhone = 0;
+    var pairs = [];
+    t.rows.forEach(function (r) {
+      var plan = planPhoneRepair_(r.phone);
+      if (plan.action === 'ok') { alreadyOk++; return; }
+      if (plan.action === 'empty') { noPhone++; return; }
+      if (plan.action === 'repair') {
+        repaired.push({ applicant_id: str_(r.applicant_id), old_phone: str_(r.phone),
+          new_phone: plan.repaired, kind: plan.kind });
+        if (r._row) pairs.push({ row: r._row, value: plan.repaired });
+        return;
+      }
+      needsManual.push({ applicant_id: str_(r.applicant_id), phone: str_(r.phone), reason: plan.reason });
+    });
+    var formatSet = false, setValuesCalls = 0;
+    if (!dryRun && pairs.length) {
+      var sh = sheet_('applicants');
+      // 書き込み前に電話列を文字列書式にする (USER_ENTERED の数値化で先頭0が
+      // 再び落ちるのを防ぐ。これが無いと修復が無意味になる)。
+      try {
+        var lastRow = sh.getLastRow();
+        if (lastRow > 1) {
+          sh.getRange(2, phoneCol + 1, lastRow - 1, 1).setNumberFormat('@');
+          formatSet = true;
+        }
+      } catch (e) { formatSet = false; }
+      setValuesCalls = writeColumnRuns_(sh, phoneCol, pairs);
+    }
+    return { dry_run: dryRun, scanned: t.rows.length, already_ok: alreadyOk, no_phone: noPhone,
+      repaired_count: repaired.length, repaired: repaired,
+      needs_manual_count: needsManual.length, needs_manual: needsManual,
+      format_set: formatSet, written: dryRun ? 0 : pairs.length,
+      set_values_calls: setValuesCalls };
+  });
+}
+
+/**
+ * R6.6 P4: area 未設定行の修復。POOL_DIAGNOSIS §3.3 の 12行 (is_test 2行を除く
+ * 総数差) の是正。手順は AREA_MIGRATION.md 参照。実行前に必ずバックアップを取ること。
+ * req: { dry_run: true/false (既定 true) }。dry_run=true は変更内容だけを返し、
+ * 何も書かない。dry_run=false は prefecture/area 列をバルク setValues で書く。
+ * 冪等 (2回目は何もしない)。
+ */
+function planAreaRepair_(r) {
+  var area = str_(r.area);
+  if (area === 'kansai' || area === 'kanto') return { action: 'ok' };
+  var pref = str_(r.prefecture);
+  if (pref) {
+    if (KANSAI_PREFECTURES_.indexOf(pref) >= 0) return { action: 'repair', prefecture: pref, area: 'kansai', source: 'prefecture' };
+    if (KANTO_PREFECTURES_.indexOf(pref) >= 0) return { action: 'repair', prefecture: pref, area: 'kanto', source: 'prefecture' };
+    return { action: 'manual', reason: '都道府県が関西・関東のいずれでもない: ' + pref };
+  }
+  // 都道府県が空の場合のみ、住所 (address_rest) の先頭が都道府県名で始まる場合に補完する。
+  var addr = str_(r.address_rest);
+  var hit = '';
+  for (var i = 0; i < PREFECTURES_.length; i++) {
+    if (addr.indexOf(PREFECTURES_[i]) === 0) { hit = PREFECTURES_[i]; break; }
+  }
+  if (hit) {
+    if (KANSAI_PREFECTURES_.indexOf(hit) >= 0) return { action: 'repair', prefecture: hit, area: 'kansai', source: 'address_head' };
+    if (KANTO_PREFECTURES_.indexOf(hit) >= 0) return { action: 'repair', prefecture: hit, area: 'kanto', source: 'address_head' };
+    return { action: 'manual', reason: '住所先頭の都道府県が関西・関東外: ' + hit };
+  }
+  return { action: 'manual', reason: '都道府県・住所から導出できない' };
+}
+
+function actionRepairArea_(req) {
+  requireKikariUser_();
+  var dryRun = !(req && req.dry_run === false);
+  return withLock_(function () {
+    var t = readTable_('applicants');
+    var prefCol = t.headers.indexOf('prefecture');
+    var areaCol = t.headers.indexOf('area');
+    if (prefCol < 0 || areaCol < 0) throw new Error('applicants に prefecture/area 列がありません');
+    var repaired = [], needsManual = [], alreadyOk = 0;
+    var prefPairs = [], areaPairs = [];
+    t.rows.forEach(function (r) {
+      var plan = planAreaRepair_(r);
+      if (plan.action === 'ok') { alreadyOk++; return; }
+      if (plan.action === 'repair') {
+        repaired.push({ applicant_id: str_(r.applicant_id), prefecture: plan.prefecture,
+          area: plan.area, source: plan.source });
+        if (r._row) {
+          // 都道府県が空だった行 (address_head 経由) は prefecture 列も書く。
+          if (!str_(r.prefecture)) prefPairs.push({ row: r._row, value: plan.prefecture });
+          areaPairs.push({ row: r._row, value: plan.area });
+        }
+        return;
+      }
+      needsManual.push({ applicant_id: str_(r.applicant_id), prefecture: str_(r.prefecture),
+        address_rest: str_(r.address_rest), reason: plan.reason });
+    });
+    var setValuesCalls = 0;
+    if (!dryRun && (prefPairs.length || areaPairs.length)) {
+      var sh = sheet_('applicants');
+      setValuesCalls += writeColumnRuns_(sh, prefCol, prefPairs);
+      setValuesCalls += writeColumnRuns_(sh, areaCol, areaPairs);
+    }
+    return { dry_run: dryRun, scanned: t.rows.length, already_ok: alreadyOk,
+      repaired_count: repaired.length, repaired: repaired,
+      needs_manual_count: needsManual.length, needs_manual: needsManual,
+      written: dryRun ? 0 : areaPairs.length, set_values_calls: setValuesCalls };
+  });
+}
+
+/** 取り込み行から「応募属性」だけを抜く (ステータス・送信済みは既存値を守るため含めない) */
+function pickApplicantAttrs_(input) {
+  var keys = ['area','name','name_raw','surname','phone','email','birth_date','postal_code','prefecture',
+    'municipality','address_rest','nearest_station','lat','lon','job_type','qualifications',
+    'experience_years','desired_days_per_week','desired_time_slots','desired_start_date',
+    'source_company','applied_at','is_active_target','hearing_json'];
+  var out = {};
+  keys.forEach(function (k) {
+    if (input[k] !== undefined && input[k] !== null && input[k] !== '') out[k] = input[k];
+  });
+  if (out.phone) out.phone = String(out.phone).replace(/-/g, '');
+  if (out.email) out.email = normalizeEmail_(out.email);
+  if (!out.name_raw && out.name) out.name_raw = out.name;
+  // hearing_json に応募履歴 (history) をマージする: 過去の source_company を残し、
+  // has_fs_history (追補17) の導出フォールバックと importCommit のフラグ判定の材料にする (追補7)
+  if (out.source_company) {
+    var hj = {};
+    try { hj = JSON.parse(str_(input.hearing_json) || '{}'); } catch (e) { hj = {}; }
+    hj.history = hj.history || [];
+    hj.history.push({ company: out.source_company, applied_at: str_(out.applied_at || ''),
+      csv_status: str_(input.csv_status || '') });
+    out.hearing_json = JSON.stringify(hj);
+  }
+  return out;
+}
+
+/** optouts テーブルのメール集合 (正規化済み) */
+function optoutEmailSet_() {
+  var set = {};
+  readTable_('optouts').rows.forEach(function (r) {
+    var em = normalizeEmail_(r.email);
+    if (em) set[em] = true;
+  });
+  return set;
+}
+
+/** SMS記録・フォーム発行の可否 (R4 O-06: サーバー側の最後の砦)。
+ * 停止中なら理由文字列を返す (実行可なら '')。理由付きの抜け道は作らない:
+ * 停止中の人へ送る正規手段は停止解除の整備が先。 */
+function smsBlockedReason_(applicant) {
+  if (!applicant) return '応募者が見つかりません';
+  if (toBool_(applicant.mail_optout)) return '配信停止中のため実行できません';
+  var em = normalizeEmail_(applicant.email);
+  if (em && optoutEmailSet_()[em]) return '配信停止中のため実行できません';
+  return '';
+}
+
+// ===== 掘り起こし支援 (追補7) =====
+/** 接触記録 (要ドメイン認証)。event_type は phone_contact / sms_sent / note 等を受け付ける */
+function actionRecordContact_(req) {
+  var me = requireKikariUser_();
+  if (!req.applicant_id) throw new Error('applicant_id が必要です');
+  var type = String(req.event_type || 'phone_contact');
+  return withLock_(function () {
+    var now = nowIso_();
+    // R3 (C5): 画面で入力された最終接触日があればそれを正として保存する
+    // (従来は入力値を捨てて実行時刻で上書きしていた)。
+    var enteredLast = req.last_contact_at ? cellDateIso_(req.last_contact_at) : '';
+    var patch = { last_contact_at: enteredLast || now, updated_at: now };
+    if (req.next_contact_date !== undefined) patch.next_contact_date = String(req.next_contact_date || '');
+    if (type === 'sms_sent') { patch.sms_sent = true; patch.sms_last_sent_at = now; }
+    updateRowByPk_('applicants', req.applicant_id, patch);
+    appendEvent_(req.applicant_id, type, me, String(req.detail || '接触記録'), '', '');
+    return { recorded: req.applicant_id, last_contact_at: patch.last_contact_at, next_contact_date: patch.next_contact_date };
+  });
+}
+
+/** 次回連絡日の設定/クリア (要ドメイン認証)。next_contact_date='' でクリア */
+function actionSetNextContact_(req) {
+  var me = requireKikariUser_();
+  if (!req.applicant_id) throw new Error('applicant_id が必要です');
+  return withLock_(function () {
+    var ymd = String(req.next_contact_date || '');
+    updateRowByPk_('applicants', req.applicant_id, { next_contact_date: ymd, updated_at: nowIso_() });
+    appendEvent_(req.applicant_id, 'note', me,
+      ymd ? '次回連絡日を設定: ' + ymd : '次回連絡日をクリア', '', '');
+    return { applicant_id: req.applicant_id, next_contact_date: ymd };
+  });
+}
+
+/** ===== 掘り起こし自動優先順位 (革新2, INNOVATION.md §2.3 の確定式) =====
+ * DigScore = round(35*freshness + 25*stage + 30*startProximity + 10*contactGap)
+ *  freshness: 最終応募 applied_at から max(0, 1 - 経過日数/90)
+ *  stage: 本流8段 csvStageRank_ の stage/8 (終了/例外系は 0)
+ *  startProximity: 入職希望日まで d 日: d<=14 (過去含む)=1.0 / 〜30=0.8 / 〜60=0.5 / 〜90=0.25 / 90超=0.1 / 未定=0
+ *  contactGap: 最終接触 (無ければ応募日) から14日以上で min(1, (経過-14)/46)、14日未満は0
+ * 根拠文 reason_text は要素があるものだけを連結し、人が読んで納得できる形にする。 */
+function digMilestone_(sdYmd, today) {
+  if (!sdYmd) return null;
+  if (sdYmd < addDaysYmd_(today, -7)) return null; // 希望日を7日過ぎたら逆算対象から外す
+  var labels = { 60: '状況確認', 30: '案件提案', 14: '選考状況確認' };
+  var best = null;
+  [60, 30, 14].forEach(function (days) {
+    var at = addDaysYmd_(sdYmd, -days);
+    if (at && at <= today && (!best || at > best.at)) best = { days: days, at: at, label: labels[days] };
+  });
+  return best;
+}
+
+function digScore_(applicant, today, flags) {
+  flags = flags || {};
+  var appliedYmd = cellDateYmd_(applicant.applied_at);
+  var appliedDays = appliedYmd ? diffDaysYmd_(today, appliedYmd) : null;

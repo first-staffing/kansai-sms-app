@@ -171,11 +171,19 @@ body.applicantView .stickyTop,body.applicantView #summaryBar{display:none}
 "use strict";
 /* ===== CONFIG / API 2層 (DESIGN_V2 §1,§3 / タスクボード方式 outbox) ===== */
 const CONFIG={API_URL:"https://script.google.com/a/macros/kikari.co.jp/s/AKfycbz_zVmCNnwXIPj7PXdVobdsHQdJBZ87_9MYchlblChzHT29OFrs5cM9Kc0Q3l6NHMoOXg/exec",RELAY_URL:"https://kansai-form-relay.career-line-bot.workers.dev"}; // RELAY_URL: フェーズ7 Cloudflare 中継 (kansai-form-relay)。空なら中継を使わない
-const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){window._lsError=true;try{console.warn("LS.set failed",k,e)}catch(_){} return false}}}; /* F-05: try/catchで包み、容量超過時は例外で操作を消さず _lsError で画面通知 */
+const LS_AVAILABLE=(function(){try{const k="__ls_probe_r5__";localStorage.setItem(k,"1");const ok=localStorage.getItem(k)==="1";localStorage.removeItem(k);return ok}catch(e){return false}})();
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){if(LS_AVAILABLE)window._lsError=true;else window._lsUnavailable=true;try{console.warn("LS.set failed",k,e)}catch(_){} return false}}}; /* F-05: try/catchで包み、容量超過時は例外で操作を消さず _lsError で画面通知 */
 let outbox=LS.get("outbox",[]);
 function enqueue(type,payload){const op={opId:"OP"+Date.now()+"_"+Math.random().toString(36).slice(2,7),type,payload,at:new Date().toISOString(),status:"pending"};outbox.push(op);LS.set("outbox",outbox);persistApplicants();renderSummary();return API.commit(op);} /* F-04: モック固定をやめ API 2層経由に */
 const MockAPI={commit(op){return new Promise(res=>setTimeout(()=>{op.status="done";outbox=outbox.filter(o=>o.opId!==op.opId);LS.set("outbox",outbox);renderSummary();res(op)},350+Math.random()*400))}};
-const RealAPI={commit(op){const reqs=opToRequests(op);if(reqs===null){op.status="failed";op.error="変換できない操作です（種類: "+(op&&op.type||"不明")+"）。アプリを更新してください";LS.set("outbox",outbox);renderSummary();return Promise.resolve(op)}const results=[];let chain=Promise.resolve();reqs.forEach(function(req){chain=chain.then(function(){return fetch(CONFIG.API_URL,{method:"POST",credentials:"include",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req)}).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(j=>{if(j&&(j.ok===false||j.status==="error"))throw new Error(j.error||"API error");results.push(j&&typeof j==="object"&&("data" in j)?j.data:j)})})});return chain.then(()=>{op.status="done";op.results=results;op.result=results.length?results[results.length-1]:null;outbox=outbox.filter(o=>o.opId!==op.opId);LS.set("outbox",outbox);renderSummary();return op}).catch(e=>{op.status="failed";op.error=String(e&&e.message||e);LS.set("outbox",outbox);renderSummary();return op})}}; /* F-04: 成否判定。失敗時は pending/failed のまま保持し再送可能に。R3 Z1-D2: reqs===null (変換不能) も failed として保持する */
+function gasRunAvailable(){try{var g=window.google;return !!(g&&g.script&&g.script.run&&typeof g.script.run.withSuccessHandler==="function")}catch(e){return false}}
+function postJson_(req){if(gasRunAvailable()){return new Promise(function(resolve,reject){try{window.google.script.run.withSuccessHandler(function(j){resolve(j)}).withFailureHandler(function(err){reject(new Error(String(err&&err.message||err||"API error")))}).apiCall(req)}catch(e){reject(e)}})}return fetch(CONFIG.API_URL,{method:"POST",credentials:"include",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req)}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json()})}
+function unwrapData_(j){if(j&&(j.ok===false||j.status==="error"))throw new Error((j&&j.error)||"API error");return j&&typeof j==="object"&&("data" in j)?j.data:j}
+const PAGES_BASE_URL="https://first-staffing.github.io/kansai-sms-app/";
+function gasApplicantRouteRedirect_(){try{if(!gasRunAvailable())return false;var h=String(location.hash||"");if(h.indexOf("#/form")===0||h.indexOf("#/optout")===0){location.replace(PAGES_BASE_URL+String(location.search||"")+h);return true}}catch(e){}return false}
+try{window.addEventListener("hashchange",function(){gasApplicantRouteRedirect_()})}catch(e){}
+gasApplicantRouteRedirect_();
+const RealAPI={commit(op){const reqs=opToRequests(op);if(reqs===null){op.status="failed";op.error="変換できない操作です（種類: "+(op&&op.type||"不明")+"）。アプリを更新してください";LS.set("outbox",outbox);renderSummary();return Promise.resolve(op)}const results=[];let chain=Promise.resolve();reqs.forEach(function(req){chain=chain.then(function(){return postJson_(req).then(function(j){results.push(unwrapData_(j))})})});return chain.then(()=>{op.status="done";op.results=results;op.result=results.length?results[results.length-1]:null;outbox=outbox.filter(o=>o.opId!==op.opId);LS.set("outbox",outbox);renderSummary();return op}).catch(e=>{op.status="failed";op.error=String(e&&e.message||e);LS.set("outbox",outbox);renderSummary();return op})}}; /* F-04: 成否判定。失敗時は pending/failed のまま保持し再送可能に。R3 Z1-D2: reqs===null (変換不能) も failed として保持する */
 const API={commit(op){return CONFIG.API_URL?RealAPI.commit(op):MockAPI.commit(op)}};
 /* ===== chunk1: outbox op -> バックエンド (Apps Script dispatch_) の action 契約への変換層 =====
    op = {opId, type, payload} を受け、{action:..., ...} リクエストの配列を返す。
@@ -213,7 +221,7 @@ function opToRequests(op){
   }
 }
 /* 読み取り系 (mailPreviewTargets / getResponses 等) 用: {action:...} を POST し応答 JSON の data を返す。ok===false なら throw */
-function apiCall(req){return fetch(CONFIG.API_URL,{method:"POST",credentials:"include",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(req)}).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json()}).then(j=>{if(j&&(j.ok===false||j.status==="error"))throw new Error((j&&j.error)||"API error");return j&&typeof j==="object"&&("data" in j)?j.data:j})}
+function apiCall(req){return postJson_(req).then(unwrapData_)}
 /* ===== ユーティリティ ===== */
 const $=s=>document.querySelector(s);const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 /* R3 検証 #37: applied_at が undefined のレコードが1件あるだけで一覧全体が落ちないよう、応募日は必ずこのヘルパー経由で読む */
@@ -2272,10 +2280,12 @@ function refreshQueueWarning(){
   if(!CONFIG.API_URL||typeof apiCall!=="function")return;
   apiCall({action:"getSendQueueStats"}).then(function(stats){window._queueStats=stats;try{paintQueueWarning()}catch(e){}}).catch(function(e){window._syncState={status:"failed",at:new Date().toISOString()};try{renderSummary()}catch(_){}});
 }
+function pingUserName_(res){var em=String((res&&res.activeUserEmail)||"").trim().toLowerCase();if(!em)return "";try{var op=operators.find(function(o){return String((o&&o.email)||"").trim().toLowerCase()===em});if(op)return op.name||op.display||""}catch(e){}try{var rows=window._serverOperators||[];for(var i=0;i<rows.length;i++){if(String((rows[i]&&rows[i].email)||"").trim().toLowerCase()===em)return rows[i].display_name||rows[i].name||""}}catch(e){}return ""}
 function updateUserChip(){
   var el=null;try{el=document.getElementById("userChip")}catch(e){el=null}
   if(!el)return;
-  var name="";try{name=currentOpName()||""}catch(e){name=""}
+  var name="";try{name=pingUserName_(window._pingResult)}catch(e){name=""}
+  if(!name){try{name=currentOpName()||""}catch(e){name=""}}
   el.textContent=name?(name+"さんで利用中"):"利用者未設定";
 }
 function respSyncLabel(sync){
@@ -2325,8 +2335,8 @@ respSyncStatusHtml=function(){
 function schemaWarningModel(pingRes){var sc=pingRes&&pingRes.schema;if(!sc||sc.ok!==false)return {show:false,missing:[]};return {show:true,missing:Array.isArray(sc.missing)?sc.missing:[]}}
 function schemaWarningText(m){var names=((m&&m.missing)||[]).map(function(x){return typeof x==="string"?x:((x.table||"")+(x.column?"."+x.column:(x.name?"."+x.name:"")))}).filter(Boolean);return "シート列が不足しています: "+(names.slice(0,3).join("、")||"詳細不明")+(names.length>3?" 他 "+(names.length-3)+"件":"")+"（スナップショットが保存されません）"}
 function paintSchemaWarning(){var m=schemaWarningModel(window._pingResult);if(!m.show)return;var html='<span class="badge bad">'+esc(schemaWarningText(m))+"</span>";var el=null;try{el=document.getElementById("schemaWarning")}catch(e){el=null}if(el){el.innerHTML=html;return}var bar=null;try{bar=document.querySelector("#summaryBar")}catch(e){bar=null}if(bar&&bar.insertAdjacentHTML)bar.insertAdjacentHTML("beforeend",'<span id="schemaWarning">'+html+"</span>")}
-function checkServerSchema(){if(!CONFIG.API_URL||typeof apiCall!=="function")return Promise.resolve(null);return apiCall({action:"ping"}).then(function(res){window._pingResult=res;try{paintSchemaWarning()}catch(e){}return res}).catch(function(){return null})}
-if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{queueWarningModel:queueWarningModel,queueWarningText:queueWarningText,respSyncLabel:respSyncLabel,updateUserChip:updateUserChip,schemaWarningModel:schemaWarningModel,schemaWarningText:schemaWarningText,checkServerSchema:checkServerSchema})}
+function checkServerSchema(){if(!CONFIG.API_URL||typeof apiCall!=="function")return Promise.resolve(null);return apiCall({action:"ping"}).then(function(res){window._pingResult=res;try{paintSchemaWarning()}catch(e){}try{updateUserChip()}catch(e){}return res}).catch(function(){return null})}
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{queueWarningModel:queueWarningModel,queueWarningText:queueWarningText,respSyncLabel:respSyncLabel,updateUserChip:updateUserChip,schemaWarningModel:schemaWarningModel,schemaWarningText:schemaWarningText,checkServerSchema:checkServerSchema,pingUserName_:pingUserName_,gasRunAvailable:gasRunAvailable,postJson_:postJson_,gasApplicantRouteRedirect_:gasApplicantRouteRedirect_,getLsAvailable:function(){return LS_AVAILABLE}})}
 try{updateUserChip()}catch(e){}
 try{checkServerSchema()}catch(e){}
 </script>
@@ -2715,7 +2725,7 @@ function applyServerTemplates_(res){
   return {changed:changed};
 }
 function applyServerOperators_(res){
-  var rows=(res&&Array.isArray(res.operators))?res.operators:[];var my=String((res&&res.my_email)||"").toLowerCase();var changed=false;
+  var rows=(res&&Array.isArray(res.operators))?res.operators:[];try{window._serverOperators=rows}catch(e){}var my=String((res&&res.my_email)||"").toLowerCase();var changed=false;
   rows.forEach(function(r){
     if(!r||!r.email)return;
     var local=operators.find(function(o){return o.email===r.email});if(!local)return;

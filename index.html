@@ -183,8 +183,13 @@ const PAGES_BASE_URL="https://first-staffing.github.io/kansai-sms-app/";
 function gasApplicantRouteRedirect_(){try{if(!gasRunAvailable())return false;var h=String(location.hash||"");if(h.indexOf("#/form")===0||h.indexOf("#/optout")===0){location.replace(PAGES_BASE_URL+String(location.search||"")+h);return true}}catch(e){}return false}
 try{window.addEventListener("hashchange",function(){gasApplicantRouteRedirect_()})}catch(e){}
 gasApplicantRouteRedirect_();
-const RealAPI={commit(op){const reqs=opToRequests(op);if(reqs===null){op.status="failed";op.error="変換できない操作です（種類: "+(op&&op.type||"不明")+"）。アプリを更新してください";LS.set("outbox",outbox);renderSummary();return Promise.resolve(op)}const results=[];let chain=Promise.resolve();reqs.forEach(function(req){chain=chain.then(function(){return postJson_(req).then(function(j){results.push(unwrapData_(j))})})});return chain.then(()=>{op.status="done";op.results=results;op.result=results.length?results[results.length-1]:null;outbox=outbox.filter(o=>o.opId!==op.opId);LS.set("outbox",outbox);renderSummary();return op}).catch(e=>{op.status="failed";op.error=String(e&&e.message||e);LS.set("outbox",outbox);renderSummary();return op})}}; /* F-04: 成否判定。失敗時は pending/failed のまま保持し再送可能に。R3 Z1-D2: reqs===null (変換不能) も failed として保持する */
-const API={commit(op){return CONFIG.API_URL?RealAPI.commit(op):MockAPI.commit(op)}};
+let _r6ImportCommitTail=Promise.resolve();
+function _r6Sleep(ms){return new Promise(function(resolve){setTimeout(resolve,ms)})}
+function _r6RetryableError(e){var m=String(e&&e.message||e||"");return /別の書き込み処理が実行中|ロック|Failed to fetch|NetworkError|HTTP 5\d\d|timeout|timed out/i.test(m)}
+function _r6SetProgress(op,current,total,attempt){try{op.progress={current:current,total:total,attempt:attempt||0,at:new Date().toISOString()};window._outboxProgress={opId:op.opId,type:op.type,current:current,total:total,attempt:attempt||0};var el=document.getElementById("importProgress");if(el)el.textContent="サーバーへ反映中: "+current+" / "+total+" チャンク"+(attempt?"（再試行 "+attempt+"回目）":"");renderSummary()}catch(e){}}
+function _r6CommitRequest(req,op,index,total){var attempt=0;var run=function(){return postJson_(req).then(function(j){return unwrapData_(j)}).catch(function(e){if(attempt<4&&_r6RetryableError(e)){attempt++;_r6SetProgress(op,index+1,total,attempt);return _r6Sleep(Math.min(8000,500*Math.pow(2,attempt-1))).then(run)}throw e})};_r6SetProgress(op,index+1,total,0);return run()}
+const RealAPI={commit(op){const reqs=opToRequests(op);if(reqs===null){op.status="failed";op.error="変換できない操作です（種類: "+(op&&op.type||"不明")+"）。アプリを更新してください";LS.set("outbox",outbox);renderSummary();return Promise.resolve(op)}const results=[];let chain=Promise.resolve();reqs.forEach(function(req,idx){chain=chain.then(function(){return _r6CommitRequest(req,op,idx,reqs.length).then(function(data){results.push(data);_r6SetProgress(op,idx+1,reqs.length,0)})})});return chain.then(()=>{op.status="done";op.results=results;op.result=results.length?results[results.length-1]:null;outbox=outbox.filter(o=>o.opId!==op.opId);LS.set("outbox",outbox);renderSummary();return op}).catch(e=>{op.status="failed";op.error=String(e&&e.message||e);LS.set("outbox",outbox);renderSummary();return op})}}; /* F-04: 成否判定。失敗時は pending/failed のまま保持し再送可能に。R3 Z1-D2: reqs===null (変換不能) も failed として保持する */
+const API={commit(op){if(op&&op.type==="import_commit"&&!op._r6Serialized){op._r6Serialized=true;var run=_r6ImportCommitTail.then(function(){return CONFIG.API_URL?RealAPI.commit(op):MockAPI.commit(op)});_r6ImportCommitTail=run.then(function(){return null},function(){return null});return run}return CONFIG.API_URL?RealAPI.commit(op):MockAPI.commit(op)}};
 /* ===== chunk1: outbox op -> バックエンド (Apps Script dispatch_) の action 契約への変換層 =====
    op = {opId, type, payload} を受け、{action:..., ...} リクエストの配列を返す。
    applicants / operators / templates / state はアプリ内グローバルを参照する。 */
@@ -3123,4 +3128,838 @@ if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{outboxCounts:outbox
 
 </script>
 
+
+<script>
+/* ===== R6: 大規模データ対応 (サーバー検索・サーバー集計・確定直列化の受け皿・容量パージ) =====
+   方針: サーバー接続が確認できた運営者画面では、応募者一覧と件数集計を
+   サーバー側ページング/集計で置き換え、応募者全件を端末に保存しない。
+   接続できない環境 (モック/テスト/オフライン) では従来のローカル動作を維持する。 */
+window._r6ServerMode=false;
+window._r6ApplicantSummary=null;
+window._r6ListCache={key:"",items:[],total:null,loading:false,error:""};
+window._r6RespSummary=null;
+function _r6LsRaw(key){try{return localStorage.getItem(key)}catch(e){return null}}
+function purgeLegacyApplicantState(){
+  var raw=_r6LsRaw("applicants_state");
+  if(!raw)return {purged:false,reason:"empty"};
+  var records=-1;try{var parsed=JSON.parse(raw);if(parsed&&Array.isArray(parsed.records))records=parsed.records.length;else if(Array.isArray(parsed))records=parsed.length}catch(e){}
+  if(raw.length>1000000||records>1000){
+    try{localStorage.removeItem("applicants_state")}catch(e){}
+    window._r6PurgedLegacyState={chars:raw.length,records:records,at:new Date().toISOString()};
+    return {purged:true,chars:raw.length,records:records};
+  }
+  return {purged:false,chars:raw.length,records:records};
+}
+try{purgeLegacyApplicantState()}catch(e){}
+function serverApplicantToLocal(it){
+  if(!it||typeof it!=="object")return null;
+  var id=String(it.applicant_id||it.id||"");if(!id)return null;
+  var a={id:id,applicant_id:id,name:String(it.name||""),furigana:"",
+    prefecture:String(it.prefecture||""),municipality:String(it.municipality||""),
+    address:String(it.prefecture||"")+String(it.municipality||""),
+    lat:(it.lat===""||it.lat==null)?null:Number(it.lat),lon:(it.lon===""||it.lon==null)?null:Number(it.lon),
+    precision:"",area:String(it.area||""),job_type:String(it.job_type||""),
+    qualifications:String(it.qualifications||""),
+    experience_years:(it.experience_years===""||it.experience_years==null)?null:Number(it.experience_years),
+    birth_date:String(it.birth_date||""),phone:"",email:"",
+    applied_at:String(it.applied_at||""),source_company:String(it.source_company||""),
+    csv_status:String(it.csv_status||""),app_status:String(it.app_status||""),
+    sms_sent:!!it.sms_sent,mail_optout:!!it.mail_optout,
+    nearest_station:String(it.nearest_station||""),
+    desired_days:String(it.desired_days_per_week||""),desired_slots:String(it.desired_time_slots||""),
+    desired_start_date:String(it.desired_start_date||""),
+    last_contact_at:String(it.last_contact_at||""),next_contact_date:String(it.next_contact_date||""),
+    has_fs_history:!!(it.has_fs_history||it.has_past_fs),is_test:!!it.is_test,
+    new_application:false,history:[],events:[]};
+  if(a.applied_at||a.source_company)a.history=[{at:a.applied_at,kind:"\u5fdc\u52df",company:a.source_company,status:a.csv_status}];
+  if(!isFinite(a.lat))a.lat=null;if(!isFinite(a.lon))a.lon=null;
+  try{refreshProgress(a)}catch(e){}
+  return a;
+}
+function serverFilterForList_(){
+  var f={area:state.area};
+  if(F.pref)f.prefecture=F.pref;
+  if(F.muni)f.municipalities=[F.muni];
+  if(F.job)f.job_type=F.job;
+  if(F.sent)f.sms_state=F.sent;
+  if(F.csv)f.csv_statuses=[F.csv];
+  if(F.companies&&F.companies.length)f.source_companies=F.companies.slice();
+  if(F.from)f.applied_from=F.from;
+  if(F.to)f.applied_to=F.to;
+  if(F.preset==="today"){var t=todayStr();f.applied_from=t;f.applied_to=t}
+  if(F.preset==="7d")f.applied_from=mailDateDaysAgo(7);
+  if(F.startFrom)f.start_from=F.startFrom;
+  if(F.startTo)f.start_to=F.startTo;
+  if(F.fsOnly)f.has_fs_history=true;
+  if(F.showTest)f.include_test=true;
+  if(F.q){var q=String(F.q);if(/^[0-9\-+ ]{3,}$/.test(q))f.phone=q;else f.keyword=q}
+  return f;
+}
+function fetchApplicantSummaryR6_(){
+  if(typeof apiCall!=="function")return Promise.resolve(null);
+  return apiCall({action:"getApplicantSummary",area:state.area}).then(function(res){
+    if(res&&typeof res.total==="number"){window._r6ApplicantSummary=res;try{renderSummary()}catch(e){}}
+    return res;
+  }).catch(function(){return null});
+}
+function fetchApplicantPageR6_(want){
+  var filter=serverFilterForList_();
+  var pageSize=50;var items=[];var total=null;
+  var step=function(page){
+    return apiCall({action:"searchApplicants",filter:filter,page:page,page_size:pageSize}).then(function(res){
+      var raw=(res&&Array.isArray(res.items))?res.items:[];
+      if(res&&typeof res.total==="number")total=res.total;
+      raw.forEach(function(it){var a=serverApplicantToLocal(it);if(a)items.push(a)});
+      if(items.length<want&&raw.length===pageSize&&(total==null||items.length<total))return step(page+1);
+      return {items:items.slice(0,want),total:(total==null?items.length:total)};
+    });
+  };
+  return step(1);
+}
+function _r6ListKey(){try{return JSON.stringify({area:state.area,F:F,mode:state.mode,tab:state.followTab||"",seg:window._smsSegFilter||""})}catch(e){return String(Date.now())}}
+function activateServerModeR6_(){
+  if(window._r6ServerMode)return Promise.resolve(true);
+  window._r6ServerMode=true;window._persistFallback=false;
+  try{purgeLegacyApplicantState()}catch(e){}
+  var jobs=[];
+  jobs.push(fetchApplicantSummaryR6_());
+  if(typeof syncResponsesFromServer==="function")jobs.push(syncResponsesFromServer());
+  return Promise.all(jobs).then(function(){try{renderSummary()}catch(e){}return true}).catch(function(){return true});
+}
+/* 保存経路の切替: サーバーモードでは応募者・回答を端末へ保存しない (outbox と UI 設定のみ) */
+var _r6LocalPersist=persistApplicants;
+persistApplicants=function(force){
+  if(window._r6ServerMode){window._persistFallback=false;_persistInfo={mode:"server",records:0,chars:0,fallback:false};return true}
+  return _r6LocalPersist(force);
+};
+var _r6LocalSaveAll=saveAll;
+saveAll=function(){
+  if(!window._r6ServerMode)return _r6LocalSaveAll();
+  LS.set("templates",templates);LS.set("smsModes",smsModes);LS.set("operators",operators);
+  LS.set("campaigns",state.campaigns);LS.set("specialSent",state.specialSent);
+  LS.set("imports",state.imports);LS.set("deliveries",state.deliveries);
+  return true;
+};
+/* 集計の切替: サーバー集計があればそれを使う */
+var _r6LocalAreaSummary=areaSummary;
+areaSummary=function(area){
+  var sm=window._r6ApplicantSummary;
+  if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[area]){var x=sm.areas[area];return {total:x.total,sent:x.sent,smsTarget:x.sms_target}}
+  if(window._r6ServerMode&&sm&&sm.area===area&&typeof sm.total==="number")return {total:sm.total,sent:sm.sent,smsTarget:sm.sms_target};
+  return _r6LocalAreaSummary(area);
+};
+var _r6LocalPrefCounts=areaPrefCounts;
+areaPrefCounts=function(area){
+  var sm=window._r6ApplicantSummary;
+  if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[area])return {total:sm.areas[area].total,byPref:sm.areas[area].pref_counts||{}};
+  return _r6LocalPrefCounts(area);
+};
+var _r6LocalCsvCounts=csvStatusCounts;
+csvStatusCounts=function(area){
+  var sm=window._r6ApplicantSummary;
+  if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[area])return sm.areas[area].csv_status_counts||{};
+  return _r6LocalCsvCounts(area);
+};
+var _r6LocalCompanyCounts=companyCounts;
+companyCounts=function(pool){
+  var sm=window._r6ApplicantSummary;
+  if(window._r6ServerMode&&sm&&sm.areas&&sm.areas[state.area]&&(!pool||pool===applicants))return sm.areas[state.area].company_counts||{};
+  return _r6LocalCompanyCounts(pool);
+};
+/* 一覧の切替: サーバーモードではページ単位で取得し、端末にはそのページだけを置く */
+var _r6PrevViewList=viewList;
+viewList=function(){
+  if(!window._r6ServerMode||state.mode==="special"||state.mode==="reverse"||state.mode==="dig")return _r6PrevViewList();
+  var key=_r6ListKey();var cache=window._r6ListCache;
+  if(cache.key!==key){cache={key:key,items:[],total:null,loading:false,error:""};window._r6ListCache=cache}
+  var want=Math.max(20,state.visible||20);
+  var haveEnough=cache.total!=null&&(cache.items.length>=Math.min(want,cache.total));
+  if(!haveEnough&&!cache.loading){
+    cache.loading=true;
+    fetchApplicantPageR6_(want).then(function(res){
+      cache.items=res.items;cache.total=res.total;cache.loading=false;cache.error="";
+      if((location.hash||"").indexOf("#/list")===0)route();
+    }).catch(function(e){
+      cache.loading=false;cache.error=String(e&&e.message||e);
+      if((location.hash||"").indexOf("#/list")===0)route();
+    });
+  }
+  var saved=applicants;
+  applicants=cache.items;
+  try{_r6PrevViewList()}finally{applicants=saved}
+  try{
+    var app=document.getElementById?document.getElementById("app"):null;
+    if(app&&cache.total!=null&&state.mode!=="follow"){
+      app.innerHTML=app.innerHTML.replace("\u7d5e\u8fbc "+cache.items.length+"\u4ef6","\u7d5e\u8fbc "+cache.total+"\u4ef6\uff08\u30b5\u30fc\u30d0\u30fc\u691c\u7d22\uff09");
+      if(cache.total>(state.visible||20)&&cache.items.length>=(state.visible||20)&&app.innerHTML.indexOf("\u3055\u3089\u306b20\u4ef6\u8868\u793a")<0){
+        app.insertAdjacentHTML("beforeend",'<button class="primary" style="width:100%" onclick="state.visible+=20;route()">\u3055\u3089\u306b20\u4ef6\u8868\u793a</button>');
+      }
+    }
+    if(app&&cache.loading)app.insertAdjacentHTML("afterbegin",'<p class="small">\u30b5\u30fc\u30d0\u30fc\u304b\u3089\u8aad\u307f\u8fbc\u307f\u4e2d\u2026</p>');
+    if(app&&cache.error)app.insertAdjacentHTML("afterbegin",'<div class="card"><p>\u30b5\u30fc\u30d0\u30fc\u691c\u7d22\u306b\u5931\u6557\u3057\u307e\u3057\u305f: '+esc(cache.error)+'</p><button onclick="window._r6ListCache={key:\'\',items:[],total:null,loading:false,error:\'\'};route()">\u518d\u8a66\u884c</button></div>');
+  }catch(e){}
+};
+/* 回答同期の切替: サーバーモードではサーバーの行だけで置き換える (シードと混ぜない) */
+var _r6PrevSyncResponses=syncResponsesFromServer;
+syncResponsesFromServer=function(){
+  if(!window._r6ServerMode)return _r6PrevSyncResponses();
+  if(!CONFIG.API_URL)return Promise.resolve({ok:false,skipped:true});
+  var openItems=[];var openTotal=null;
+  var fetchOpen=function(off){
+    return apiCall({action:"getResponses",all_senders:true,handled:false,limit:200,offset:off}).then(function(res){
+      var items=(res&&Array.isArray(res.items))?res.items:[];
+      if(res&&typeof res.total==="number")openTotal=res.total;
+      openItems=openItems.concat(items);
+      if(items.length>=200&&off<10000&&(openTotal==null||openItems.length<openTotal))return fetchOpen(off+200);
+      return openItems;
+    });
+  };
+  return Promise.all([fetchOpen(0),
+    apiCall({action:"getResponses",all_senders:true,handled:true,sort:"recent",limit:100}),
+    apiCall({action:"getResponseSummary",all_senders:true})
+  ]).then(function(pair){
+    var summary=(pair&&pair[2])||null;window._r6RespSummary=summary;
+    var handledItems=(pair&&pair[1]&&Array.isArray(pair[1].items))?pair[1].items:[];
+    var items=openItems.concat(handledItems);
+    var ids={};items.forEach(function(it){var cid=it&&(it.response_id||it.id);if(cid)ids[String(cid)]=true});
+    var localPending=(state.responses||[]).filter(function(r){return r&&ids[r.id]});
+    var merged=mergeResponses(localPending,items,null);
+    var changed=false;try{changed=JSON.stringify(merged)!==JSON.stringify(state.responses)}catch(e){changed=true}
+    state.responses=merged;
+    window._respSync={ok:true,at:new Date().toISOString(),summary:summary};
+    return {ok:true,at:window._respSync.at,summary:summary,changed:changed};
+  }).catch(function(e){
+    window._respSync={ok:false,error:String(e&&e.message||e)};
+    return {ok:false,error:window._respSync.error,changed:false};
+  });
+};
+/* 詳細の切替: 一覧項目に無い連絡先・座標をサーバー詳細で補う */
+var _r6PrevFetchDetail=fetchServerDetail;
+fetchServerDetail=function(a){
+  if(window._r6ServerMode&&a&&CONFIG.API_URL&&typeof apiCall==="function"){
+    var now=Date.now();
+    if(!a._r6DetailAt||now-a._r6DetailAt>=60000){
+      a._r6DetailAt=now;
+      apiCall({action:"getApplicant",applicant_id:a.id}).then(function(res){
+        var det=(res&&res.applicant)||null;if(!det)return;
+        if(det.phone!=null)a.phone=String(det.phone||"");
+        if(det.email!=null)a.email=String(det.email||"");
+        if(det.lat!=null&&det.lat!=="")a.lat=Number(det.lat);
+        if(det.lon!=null&&det.lon!=="")a.lon=Number(det.lon);
+        if(det.address_rest!=null)a.address=String(a.prefecture||"")+String(a.municipality||"")+String(det.address_rest||"");
+        if(det.desired_days_per_week)a.desired_days=String(det.desired_days_per_week);
+        if(det.desired_time_slots)a.desired_slots=String(det.desired_time_slots);
+        if(det.experience_years!=null&&det.experience_years!=="")a.experience_years=Number(det.experience_years);
+      }).catch(function(){});
+    }
+  }
+  return _r6PrevFetchDetail(a);
+};
+/* 取り込み確定の切替: サーバーモードでは端末側へ全件を複写せず、サーバー確定だけを行う */
+var _r6PrevCommitImport=commitImport;
+commitImport=function(){
+  if(!window._r6ServerMode)return _r6PrevCommitImport();
+  if(importCommitting)return;
+  if(!importPreview)return;
+  if(window._importDemo){alert("\u3053\u308c\u306f\u8868\u793a\u78ba\u8a8d\u7528\u306e\u30b5\u30f3\u30d7\u30eb\u3067\u3059\u3002\u5b9f\u969b\u306e\u53d6\u308a\u8fbc\u307f\u306fCSV\u30d5\u30a1\u30a4\u30eb\u3092\u9078\u3093\u3067\u304f\u3060\u3055\u3044\u3002");return}
+  importCommitting=true;
+  var snap=importPreview;importPreview=null;
+  var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
+  snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});
+  var unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length;
+  state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending"});
+  saveAll();
+  var groups=[];try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}
+  var totalChunks=0;var ops=[];
+  groups.forEach(function(g){
+    var srows=(g.rows||[]).map(function(x){return importRowToServer(x&&x.r?x.r:x)});
+    if(!srows.length)return;
+    totalChunks+=Math.ceil(srows.length/500);
+    ops.push(enqueue("import_commit",{file_name:g.file_name||g.file||"",kind:"applicants",target_area:state.area,rows:srows}));
+  });
+  try{var slot=document.getElementById("impResult");if(slot)slot.innerHTML='<div class="card"><h3>\u30b5\u30fc\u30d0\u30fc\u3078\u53cd\u6620\u4e2d</h3><p id="importProgress">\u30b5\u30fc\u30d0\u30fc\u3078\u53cd\u6620\u4e2d: 0 / '+totalChunks+' \u30c1\u30e3\u30f3\u30af</p><p class="small">\u30c1\u30e3\u30f3\u30af\u306f\u524d\u306e\u5b8c\u4e86\u3092\u5f85\u3063\u3066\u304b\u3089\u9806\u306b\u9001\u308a\u307e\u3059\u3002\u753b\u9762\u3092\u9589\u3058\u306a\u3044\u3067\u304f\u3060\u3055\u3044\u3002</p></div>'}catch(e){}
+  try{pollImportStatusDuringCommit_()}catch(e){}
+  Promise.all(ops).then(function(doneOps){
+    var agg=aggregateImportResults(doneOps);window._lastImportResult=agg;
+    if(state.imports&&state.imports[0]){state.imports[0].server=agg.server;state.imports[0].sync=agg.sync;saveAll()}
+    window._r6ListCache={key:"",items:[],total:null,loading:false,error:""};
+    fetchApplicantSummaryR6_();
+    if(agg.sync==="failed")showToast("\u30b5\u30fc\u30d0\u30fc\u540c\u671f\u306b\u5931\u6557\u3057\u307e\u3057\u305f\uff08outbox\u306b\u6b8b\u3063\u3066\u3044\u307e\u3059\u3002\u518d\u9001\u3067\u304d\u307e\u3059\uff09","bad");
+    else if(agg.sync==="partial")showToast("\u30b5\u30fc\u30d0\u30fc\u5b9f\u7e3e\u304c\u30d7\u30ec\u30d3\u30e5\u30fc\u3068\u7570\u306a\u308a\u307e\u3059\uff08\u7d50\u679c\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\uff09","warn");
+    else if(agg.server)showToast("\u30b5\u30fc\u30d0\u30fc\u5b9f\u7e3e\u3068\u4e00\u81f4\u3057\u307e\u3057\u305f");
+    importCommitting=false;
+    try{route()}catch(e){}
+  }).catch(function(){importCommitting=false});
+};
+/* 取り込み進捗: 確定後は再送で競合せず、import_batches の状態を読む */
+function fetchImportStatusR6_(){
+  if(typeof apiCall!=="function")return Promise.resolve(null);
+  return apiCall({action:"getImportStatus"}).then(function(res){
+    if(res&&res.totals)window._r6ImportStatus=res;
+    return res;
+  }).catch(function(){return null});
+}
+function importStatusText_(st){
+  if(!st||!st.totals)return "";
+  var t=st.totals;
+  return "サーバー処理状況: バッチ "+t.batches+"件（完了 "+t.complete+" / 処理中 "+t.running+" / 一部失敗 "+t.partial+"）・取込 "+t.rows+"行（新規 "+t.added+" / 更新 "+t.updated+" / 除外 "+t.skipped+" / 失敗 "+t.failed+"）";
+}
+function pollImportStatusDuringCommit_(){
+  var startedAt=Date.now();
+  var timer=setInterval(function(){
+    if(!importCommitting||Date.now()-startedAt>30*60*1000){clearInterval(timer);return}
+    fetchImportStatusR6_().then(function(st){
+      var el=document.getElementById?document.getElementById("importProgress"):null;
+      if(el&&st)el.textContent=importStatusText_(st)+"。このままお待ちください（再送する必要はありません）";
+    });
+  },15000);
+  return timer;
+}
+var _r6PrevViewImport=viewImport;
+viewImport=function(){
+  _r6PrevViewImport();
+  if(!window._r6ServerMode)return;
+  fetchImportStatusR6_().then(function(st){
+    try{
+      var app=document.getElementById?document.getElementById("app"):null;
+      if(!app||!st)return;
+      if((location.hash||"").indexOf("#/import")!==0)return;
+      var rows=(st.batches||[]).map(function(b){
+        return "<tr><td>"+esc(b.file_name||"")+"</td><td>"+esc(b.status||"")+"</td><td>"+(b.row_count||0)+"行</td><td>新規 "+(b.added||0)+" / 更新 "+(b.updated||0)+" / 除外 "+(b.skipped||0)+"</td></tr>";
+      }).join("");
+      app.insertAdjacentHTML("beforeend",'<div class="card"><h3>サーバーでの取り込み進捗</h3><p>'+esc(importStatusText_(st))+'</p>'+(rows?'<div style="overflow:auto"><table><tbody>'+rows+"</tbody></table></div>":"")+'<p class="small">処理中（running）のバッチがある間は、同じCSVを再送しないでください。サーバー偻で順次処理されます。</p></div>');
+    }catch(e){}
+  });
+};
+
+/* 起動: 疎通が確認できたらサーバーモードへ */
+var _r6PrevCheckSchema=checkServerSchema;
+checkServerSchema=function(){
+  var p=_r6PrevCheckSchema();
+  if(p&&typeof p.then==="function")return p.then(function(res){
+    if(res&&(res.pong===true||res.activeUserEmail||res.schema))activateServerModeR6_();
+    return res;
+  });
+  return p;
+};
+try{
+  if(typeof apiCall==="function"&&CONFIG.API_URL){
+    apiCall({action:"ping"}).then(function(res){
+      if(res&&(res.pong===true||res.activeUserEmail||res.schema))activateServerModeR6_();
+    }).catch(function(){});
+  }
+}catch(e){}
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  activateServerModeR6:activateServerModeR6_,serverApplicantToLocal:serverApplicantToLocal,
+  serverFilterForList:serverFilterForList_,fetchApplicantPageR6:fetchApplicantPageR6_,
+  fetchApplicantSummaryR6:fetchApplicantSummaryR6_,purgeLegacyApplicantState:purgeLegacyApplicantState,
+  getR6ListCache:function(){return window._r6ListCache},getR6Summary:function(){return window._r6ApplicantSummary},
+  isR6ServerMode:function(){return !!window._r6ServerMode},commitRequestWithRetry:_r6CommitRequest,
+  fetchImportStatusR6:fetchImportStatusR6_,importStatusText:importStatusText_,
+  getF:function(){return F},getR6State:function(){return state},getR6ApplicantSummary:function(){return window._r6ApplicantSummary}
+})}
+</script>
+<script>
+/* ===== R6.5: CSV取り込みエラー防止 (検証・原子性・一致保証・エラーの平易化) =====
+   方針: ファイル選択時点で壊れたCSVを止め、確定はチャンク単位で
+   「全件着地」か「失敗として記録」のどちらかにし、失敗チャンクは
+   バッチ画面からそのチャンクだけ再実行できるようにする。
+   プレビューと確定の食い違いは、サーバー実績で履歴を上書きし、
+   差異の理由を履歴とサーバーのバッチ note の両方に残す。 */
+var R65_MAX_FILE_ROWS=30000;
+var R65_QUEUE_THRESHOLD=1000;
+var R65_CHUNK_STORE_KEY="r65_import_chunks";
+
+/* --- 厳密CSVパース (診断つき): parseCsvText と同じ字句規則で読み、
+       引用符の閉じ忘れの開始行と、列数がヘッダーと合わない行 (行番号つき) を記録する。
+       parseCsvText 本体の挙動は変えない (これは検証専用の並行実装)。 --- */
+function strictParseCsv65(text){
+  if(text&&text.charCodeAt(0)===0xFEFF)text=text.slice(1);
+  text=String(text||"");
+  var firstLine=(text.split(/\r\n|\r|\n/,1)[0]||"");
+  var delim=((firstLine.match(/\t/g)||[]).length>(firstLine.match(/,/g)||[]).length)?"\t":",";
+  var rows=[],rowLines=[],cur="",inQ=false,fieldStart=true,row=[];
+  var line=1,rowStartLine=1,quoteLine=0,unclosedQuoteLine=0;
+  function endField(){row.push(cur);cur="";fieldStart=true}
+  function endRow(){endField();rows.push(row);rowLines.push(rowStartLine);row=[]}
+  for(var i=0;i<text.length;i++){
+    var ch=text[i];
+    if(inQ){
+      if(ch==='"'){if(text[i+1]==='"'){cur+='"';i++}else inQ=false}
+      else{cur+=ch;if(ch==="\n")line++}
+    }
+    else if(ch==='"'&&fieldStart){inQ=true;fieldStart=false;quoteLine=line}
+    else if(ch===delim){endField()}
+    else if(ch==="\n"||ch==="\r"){if(ch==="\r"&&text[i+1]==="\n")i++;endRow();line++;rowStartLine=line}
+    else{cur+=ch;fieldStart=false}
+  }
+  if(inQ){
+    unclosedQuoteLine=quoteLine;
+    var extra=cur.split(/\r\n|\r|\n/);cur=extra[0]||"";endRow();
+    for(var k=1;k<extra.length;k++){rows.push(extra[k].split(delim));rowLines.push(rowStartLine+k)}
+  }
+  else if(cur!==""||row.length)endRow();
+  var outRows=[],outLines=[];
+  rows.forEach(function(r,idx){
+    if(r.some(function(c){return String(c).trim()!==""})){outRows.push(r);outLines.push(rowLines[idx])}
+  });
+  /* 列数チェックは RAW のセル数で比べる。末尾の空セル (末尾カンマ) は正常。
+     ヘッダーより少ない行は不一致。多い行は、はみ出したセルが全部空なら正常。 */
+  var headerCols=outRows.length?outRows[0].length:0;
+  var mismatches=[];
+  outRows.forEach(function(r,idx){
+    if(idx===0)return;
+    if(r.length<headerCols){mismatches.push({line:outLines[idx],expected:headerCols,actual:r.length});return}
+    if(r.length>headerCols&&r.slice(headerCols).some(function(c){return String(c).trim()!==""})){
+      mismatches.push({line:outLines[idx],expected:headerCols,actual:r.length});
+    }
+  });
+  return {rows:outRows,rowLines:outLines,diag:{unclosedQuoteLine:unclosedQuoteLine,colMismatches:mismatches,headerCols:headerCols}};
+}
+
+/* --- ファイル検証: 問題があれば {errors:[平易な日本語]} を返す (空なら合格) --- */
+function validateImportData65(rows,diag){
+  var errors=[];
+  if(!rows||!rows.length){errors.push("ファイルにデータ行がありません（空のファイルです）。中身のあるCSVを選んでください");return {errors:errors,warnings:[]}}
+  var head=rows[0].map(function(h){return String(h==null?"":h).replace(/^﻿+/,"").trim()});
+  var norm=function(s){return String(s||"").normalize("NFKC").toLowerCase().replace(/[\s　]/g,"")};
+  var seen={},dups=[];
+  head.forEach(function(h){var n=norm(h);if(!n)return;if(seen[n]&&dups.indexOf(h)<0)dups.push(h);seen[n]=true});
+  if(dups.length)errors.push("見出し（ヘッダー）が重複しています: "+dups.join("、")+"。同じ名前の列が2つあると、どちらの列を使うか判断できません。元のシステムで列名を分けてから取り込んでください");
+  var dataCount=rows.length-1;
+  if(dataCount>R65_MAX_FILE_ROWS)errors.push("データ行が "+dataCount+" 行あります（上限は "+R65_MAX_FILE_ROWS+" 行です）。"+Math.ceil(dataCount/15000)+" 個くらいに分割してから取り込んでください（目安: 15,000行ずつ）");
+  if(diag&&diag.unclosedQuoteLine)errors.push(diag.unclosedQuoteLine+" 行目で始まる引用符（\"）が閉じていません。その行のセルを確認してください（セル内に \" がある場合は \"\" と二重にするか、セル全体を \" で囲ってください）");
+  if(diag&&diag.colMismatches&&diag.colMismatches.length){
+    var ms=diag.colMismatches;
+    var shown=ms.slice(0,5).map(function(m){return m.line+"行目（"+m.actual+"列／ヘッダーは"+m.expected+"列）"}).join("、");
+    errors.push("列数がヘッダーと合わない行があります: "+shown+(ms.length>5?"、ほか"+(ms.length-5)+"件":"")+"。セル内のカンマが引用符で囲われていないか、カンマの入れ忘れがないか確認してください");
+  }
+  var hasExact=function(list){var nl=list.map(norm);return head.some(function(h){return list.indexOf(h)>=0||nl.indexOf(norm(h))>=0})};
+  var hasPat=function(re){return head.some(function(h){return re.test(norm(h))})};
+  if(!hasExact(SYNONYMS.name)&&!hasPat(/氏名|名前|求職者|応募者|お名前/))errors.push("氏名の列が見つかりません。見出しに「氏名」を含む列が必要です");
+  var hasPhone=hasExact(SYNONYMS.phone)||hasPat(/電話|携帯|tel/i);
+  var hasEmail=hasExact(SYNONYMS.email)||hasPat(/メール|e-mail|email/i);
+  if(!hasPhone&&!hasEmail)errors.push("電話番号・メールアドレスの列がどちらも見つかりません。応募者と照合できないため取り込めません。どちらかの列を入れてください");
+  var hasBirth=hasExact(SYNONYMS.birth_date)||hasPat(/生年月日|誕生日/);
+  var hasAge=hasExact(SYNONYMS.age)||hasPat(/年齢/);
+  if(!hasBirth&&!hasAge)errors.push("生年月日・年齢の列がどちらも見つかりません（年齢を確認できない人は全員除外されます）。見出しに「生年月日」を含む列を入れてください");
+  return {errors:errors,warnings:[]};
+}
+
+/* --- サーバーエラーの翻訳: 画面には「何が・なぜ・どうすれば」を出す --- */
+function translateImportError65(msg){
+  var m=String(msg||"");
+  if(!m)return "サーバー同期に失敗しました。取り込み画面から再送できます";
+  if(/別の書き込み処理が実行中|ロック/.test(m))return "サーバーが他の書き込み処理で混み合っています。少し待ってから再送してください（データは壊れていません）";
+  if(/5000/.test(m))return "1回の送信が上限（5,000行）を超えています。ファイルを分割して取り込んでください";
+  if(/rows が空/.test(m))return "送信する行がありませんでした。ファイルの内容を確認してください";
+  if(/Failed to fetch|NetworkError|network/i.test(m))return "通信できませんでした。ネットワーク接続を確認してから再送してください";
+  if(/401|403|ログイン|認証/.test(m))return "ログイン状態が切れている可能性があります。会社のGoogleアカウントでログインし直してください";
+  return "サーバーでエラーが発生しました: "+m+"。再送しても直らない場合は、この文面をそのまま管理者へ伝えてください";
+}
+
+/* --- 履歴の確定: プレビュー件数ではなくサーバー実績で上書きし、差異があれば理由を残す --- */
+function importHistoryFromServer65(previewCounts,agg){
+  if(!agg||!agg.server)return null;
+  var s=agg.server;
+  var latest=Math.max(0,(Number(s.updated||0))-(Number(s.attr_updated||0)));
+  var out={new:Number(s.added||0),latest:latest,updated:Number(s.attr_updated||0),
+    skip:Number(s.skipped||0),excluded:0,failed:Number(s.failed||0)};
+  var diffs=[];
+  if(previewCounts){
+    if(out.new!==Number(previewCounts.new||0))diffs.push("新規 "+Number(previewCounts.new||0)+"→"+out.new);
+    var pUpd=Number(previewCounts.latest||0)+Number(previewCounts.updated||0);
+    if(pUpd!==Number(s.updated||0))diffs.push("更新 "+pUpd+"→"+Number(s.updated||0));
+    var pSkip=Number(previewCounts.skip||0)+Number(previewCounts.excluded||0);
+    if(pSkip!==out.skip)diffs.push("除外 "+pSkip+"→"+out.skip);
+  }
+  if(diffs.length){
+    var reasons=Object.keys(s.skipped_reasons||{}).filter(function(k){return Number(s.skipped_reasons[k]||0)>0})
+      .map(function(k){return k+" "+Number(s.skipped_reasons[k])+"件"}).join("、");
+    out.diff_note="プレビューとの差異（"+diffs.join(" / ")+"）"+(reasons?"。サーバー側の除外理由: "+reasons:"")+"。取り込みの前後で既存データが変わった場合に差異が出ます";
+  }
+  return out;
+}
+
+/* --- decodeFile の差し替え: 戻り値の契約は同一。判定した文字コードと
+       文字化け量を window._r65LastDecode に残し、検証で使う --- */
+var _r65OrigDecodeFile=decodeFile;
+decodeFile=async function(file){
+  var buf=await file.arrayBuffer();
+  var sig=new Uint8Array(buf.slice(0,2));
+  var enc="",text="";
+  if(sig[0]===255&&sig[1]===254){enc="utf-16le";text=new TextDecoder("utf-16le").decode(buf)}
+  else if(sig[0]===254&&sig[1]===255){enc="utf-16be";text=new TextDecoder("utf-16be").decode(buf)}
+  else{
+    try{text=new TextDecoder("utf-8",{fatal:true}).decode(buf);enc="utf-8"}
+    catch(e){text=new TextDecoder("shift-jis").decode(buf);enc="shift-jis"}
+  }
+  var fffd=0,ctrl=0;
+  for(var i=0;i<text.length;i++){var c=text.charCodeAt(i);if(c===0xFFFD)fffd++;else if(c<0x20&&c!==9&&c!==10&&c!==13)ctrl++}
+  window._r65LastDecode={encoding:enc,fffd:fffd,ctrl:ctrl,fileName:(file&&file.name)||""};
+  return text;
+};
+
+/* --- 検証で止まったファイル / 警告の表示 --- */
+function renderR65ImportIssues_(){
+  try{
+    var blocked=window._r65Blocked||[];
+    var warnings=window._r65Warnings||[];
+    if(!blocked.length&&!warnings.length)return;
+    var slot=document.getElementById("impResult");
+    if(!slot)return;
+    var html="";
+    if(blocked.length){
+      html+='<div class="card"><h3>取り込めなかったファイル</h3>'+blocked.map(function(b){
+        return '<p><b>'+esc(b.file)+'</b></p>'+b.errors.map(function(e){return '<p class="small">・'+esc(e)+'</p>'}).join("");
+      }).join("")+'<p class="small">上記を直してから、そのファイルだけもう一度選んでください（他のファイルの取り込みには影響しません）。</p></div>';
+    }
+    if(warnings.length){
+      html+='<div class="card"><h3>取り込み時の注意</h3>'+warnings.map(function(w){
+        return '<p class="small">・'+esc(w.file)+': '+esc(w.message)+'</p>';
+      }).join("")+'</div>';
+    }
+    if(importPreview||!slot.innerHTML)slot.insertAdjacentHTML("beforeend",html);
+    else slot.innerHTML=html;
+  }catch(e){}
+}
+
+/* --- previewImport の差し替え: 選択時点で検証し、問題のあるファイルは
+       プレビューに進ませない (ファイル単位で隔離し、他ファイルは通常どおり進める) --- */
+var _r65PrevPreviewImport=previewImport;
+previewImport=async function(){
+  var inp=$("#impFiles");
+  var files=[...(inp?inp.files:[])];
+  window._r65Blocked=[];window._r65Warnings=[];window._r65RebuildFailed=false;
+  if(!files.length)return _r65PrevPreviewImport();
+  var keep=[];
+  for(var fi=0;fi<files.length;fi++){
+    var f=files[fi];
+    if(isExcelFile(f.name)){keep.push(f);continue}
+    var text=null;
+    try{text=await decodeFile(f)}catch(e){text=null}
+    if(typeof text!=="string"){keep.push(f);continue} /* 検証できない場合は従来動作に任せる */
+    var errs=[];
+    var dec=window._r65LastDecode||{};
+    if(dec.ctrl>0)errs.push("文字コードを判定できませんでした（判別できない文字が含まれています）。Excelで開いて「CSV UTF-8」または「Shift-JIS」で保存し直してください");
+    else if(dec.fffd>=3)errs.push("文字コードを判定できませんでした（一部の文字が化けています）。UTF-8かShift-JISで保存し直してください");
+    var strict=strictParseCsv65(text);
+    var v=validateImportData65(strict.rows,strict.diag);
+    v.errors.forEach(function(m){errs.push(m)});
+    if(errs.length){window._r65Blocked.push({file:f.name,errors:errs});continue}
+    if(dec.fffd>0)window._r65Warnings.push({file:f.name,message:"一部の文字が置き換え文字になっています（"+dec.fffd+"文字）。文字コードを確認してください"});
+    keep.push(f);
+  }
+  if(window._r65Blocked.length&&inp){
+    try{var dt=new DataTransfer();keep.forEach(function(f){dt.items.add(f)});inp.files=dt.files}
+    catch(e){window._r65RebuildFailed=true}
+  }
+  if(!keep.length){
+    importPreview=null;
+    var slot=$("#impResult");
+    if(slot)slot.innerHTML="";
+    renderR65ImportIssues_();
+    return;
+  }
+  await _r65PrevPreviewImport();
+  renderR65ImportIssues_();
+};
+
+/* --- opToRequests の差し替え: チャンク再実行時の chunk_seq と
+       プレビュー件数の受け渡し (通常経路のリクエスト形状は変えない) --- */
+var _r65PrevOpToRequests=opToRequests;
+opToRequests=function(op){
+  var reqs=_r65PrevOpToRequests(op);
+  try{
+    if(op&&op.type==="import_commit"&&Array.isArray(reqs)&&reqs.length){
+      var p=op.payload||{};
+      if(p.chunk_seq_offset!=null&&reqs.length===1)reqs[0].chunk_seq=Number(p.chunk_seq_offset);
+      if(Array.isArray(p.preview_counts_by_chunk)){
+        reqs.forEach(function(r,i){
+          var pc=p.preview_counts_by_chunk[p.chunk_seq_offset!=null?0:i];
+          if(pc)r.preview_counts=pc;
+        });
+      }
+    }
+  }catch(e){}
+  return reqs;
+};
+
+/* --- 失敗チャンクの保存と再実行 (チャンク単位の原子性・再開) --- */
+function r65LoadChunkStore_(){try{var v=LS.get(R65_CHUNK_STORE_KEY,[]);return Array.isArray(v)?v:[]}catch(e){return[]}}
+function r65SaveChunkStore_(store){try{LS.set(R65_CHUNK_STORE_KEY,store)}catch(e){}}
+function persistFailedImportChunks65_(doneOps,opsMeta){
+  var store=r65LoadChunkStore_();var changed=false;
+  (doneOps||[]).forEach(function(op,oi){
+    if(!op||!Array.isArray(op.results))return;
+    var meta=opsMeta&&opsMeta[oi];if(!meta)return;
+    op.results.forEach(function(r,seq){
+      if(!r||typeof r!=="object")return;
+      if(r.status==="partial"||Number(r.failed||0)>0){
+        var rows=meta.srows.slice(seq*500,seq*500+500);
+        if(!rows.length)return;
+        store=store.filter(function(e){return !(e.opId===op.opId&&Number(e.chunk_seq)===seq)});
+        store.push({opId:op.opId,chunk_seq:seq,file_name:meta.file_name,target_area:meta.target_area,rows:rows,at:new Date().toISOString()});
+        changed=true;
+      }
+    });
+  });
+  if(changed){while(store.length>12)store.shift();r65SaveChunkStore_(store)}
+}
+function findImportChunkRows65(clientOpId,seq){
+  seq=Number(seq);
+  try{
+    var ops=(typeof outbox!=="undefined"&&Array.isArray(outbox))?outbox:[];
+    for(var i=0;i<ops.length;i++){
+      var op=ops[i];
+      if(op&&op.opId===clientOpId&&op.type==="import_commit"&&op.payload&&Array.isArray(op.payload.rows)){
+        var rows=op.payload.rows.slice(seq*500,seq*500+500);
+        if(rows.length)return {rows:rows,file_name:op.payload.file_name||"",target_area:op.payload.target_area||""};
+      }
+    }
+  }catch(e){}
+  var store=r65LoadChunkStore_();
+  for(var j=0;j<store.length;j++){
+    if(store[j].opId===clientOpId&&Number(store[j].chunk_seq)===seq){
+      return {rows:store[j].rows,file_name:store[j].file_name||"",target_area:store[j].target_area||""};
+    }
+  }
+  return null;
+}
+function retryImportChunk65(clientOpId,seq){
+  seq=Number(seq);
+  var found=findImportChunkRows65(clientOpId,seq);
+  if(!found){alert("このチャンクのデータはこの端末に残っていません。元のCSVファイルから再取り込みしてください（取り込み済みの行は二重登録されません）");return}
+  /* 再実行の成功で元opが outbox から消えても他のチャンクを失わないよう、
+     元opの全チャンクを先に保存へ退避する */
+  try{
+    var orig=(typeof outbox!=="undefined"?outbox:[]).find(function(o){return o&&o.opId===clientOpId&&o.type==="import_commit"});
+    if(orig&&orig.payload&&Array.isArray(orig.payload.rows)&&orig.payload.rows.length>500){
+      var store=r65LoadChunkStore_();
+      for(var s=0;s*500<orig.payload.rows.length;s++){
+        if(!store.some(function(e){return e.opId===clientOpId&&Number(e.chunk_seq)===s})){
+          store.push({opId:clientOpId,chunk_seq:s,file_name:orig.payload.file_name||"",target_area:orig.payload.target_area||"",rows:orig.payload.rows.slice(s*500,s*500+500),at:new Date().toISOString()});
+        }
+      }
+      while(store.length>12)store.shift();
+      r65SaveChunkStore_(store);
+    }
+  }catch(e){}
+  var op={opId:clientOpId,type:"import_commit",payload:{file_name:found.file_name,kind:"applicants",target_area:found.target_area||state.area,rows:found.rows,chunk_seq_offset:seq},at:new Date().toISOString(),status:"pending"};
+  showToast("チャンクを再実行しています…");
+  API.commit(op).then(function(done){
+    if(done&&done.status==="done"){
+      var r=(done.results&&done.results[0])||{};
+      if(r.status==="complete"){
+        var store=r65LoadChunkStore_().filter(function(e){return !(e.opId===clientOpId&&Number(e.chunk_seq)===seq)});
+        r65SaveChunkStore_(store);
+      }
+      showToast("チャンクを再実行しました: 新規 "+(r.added||0)+" / 更新 "+(r.updated||0)+" / 除外 "+(r.skipped||0)+(r.status==="partial"?"（一部失敗が残っています）":""));
+    }else{
+      showToast(translateImportError65(done&&done.error),"bad");
+    }
+    try{fetchImportStatusR6_()}catch(e){}
+    try{route()}catch(e){}
+  });
+}
+
+/* --- commitImport の差し替え (R6 のサーバーモード確定 + R6.5 の保証) --- */
+var _r65PrevCommitImport=commitImport;
+commitImport=function(){
+  /* 検証で止めたファイルが (入力の組み直しに失敗して) プレビューに混ざっていたら確定しない */
+  try{
+    var blocked=window._r65Blocked||[];
+    if(blocked.length&&window._r65RebuildFailed){
+      var badNames={};blocked.forEach(function(b){badNames[b.file]=1});
+      var hit=(window._importPerFile||[]).some(function(pf){return badNames[pf.file]&&pf.rows>0});
+      if(hit){alert("取り込めないファイルが含まれています:\n"+blocked.map(function(b){return "・"+b.file+": "+b.errors.join(" / ")}).join("\n")+"\nファイルの内容を直してから、もう一度確認してください");return}
+    }
+  }catch(e){}
+  if(!window._r6ServerMode)return _r65PrevCommitImport();
+  if(importCommitting)return;
+  if(!importPreview)return;
+  if(window._importDemo){alert("これは表示確認用のサンプルです。実際の取り込みはCSVファイルを選んでください。");return}
+  importCommitting=true;
+  var snap=importPreview;importPreview=null;
+  var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
+  snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});
+  var unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length;
+  state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending",preview_counts:{new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded}});
+  saveAll();
+  var groups=[];try{groups=splitJudgedByFile(snap.judged,window._importPerFile)}catch(e){groups=[{rows:snap.judged}]}
+  var groupData=[];
+  groups.forEach(function(g){
+    var srows=(g.rows||[]).map(function(x){return importRowToServer(x&&x.r?x.r:x)});
+    if(!srows.length)return;
+    var pcbc=[];
+    for(var s=0;s<srows.length;s+=500){
+      var pc={added:0,updated:0,skipped:0};
+      (g.rows||[]).slice(s,s+500).forEach(function(x){
+        var c=x&&x.j?x.j.category:"";
+        if(c==="new")pc.added++;else if(c==="latest"||c==="updated")pc.updated++;else pc.skipped++;
+      });
+      pcbc.push(pc);
+    }
+    groupData.push({file_name:g.file_name||g.file||"",target_area:state.area,srows:srows,pcbc:pcbc});
+  });
+  var totalRows=groupData.reduce(function(a,g){return a+g.srows.length},0);
+  if(totalRows>R65_QUEUE_THRESHOLD){commitImportViaQueue65_(snap,counts,groupData);return}
+  var totalChunks=0;var ops=[];var opsMeta=[];
+  groupData.forEach(function(g){
+    totalChunks+=g.pcbc.length;
+    opsMeta.push({file_name:g.file_name,target_area:g.target_area,srows:g.srows});
+    ops.push(enqueue("import_commit",{file_name:g.file_name,kind:"applicants",target_area:g.target_area,rows:g.srows,preview_counts_by_chunk:g.pcbc}));
+  });
+  try{var slot=document.getElementById("impResult");if(slot)slot.innerHTML='<div class="card"><h3>サーバーへ反映中</h3><p id="importProgress">サーバーへ反映中: 0 / '+totalChunks+' チャンク</p><p class="small">チャンクは前の完了を待ってから順に送ります。画面を閉じないでください。</p></div>'}catch(e){}
+  try{pollImportStatusDuringCommit_()}catch(e){}
+  Promise.all(ops).then(function(doneOps){
+    var agg=aggregateImportResults(doneOps);window._lastImportResult=agg;
+    try{persistFailedImportChunks65_(doneOps,opsMeta)}catch(e){}
+    if(state.imports&&state.imports[0]){
+      state.imports[0].server=agg.server;state.imports[0].sync=agg.sync;
+      var hu=importHistoryFromServer65(counts,agg);
+      if(hu){
+        state.imports[0].new=hu.new;state.imports[0].latest=hu.latest;state.imports[0].updated=hu.updated;
+        state.imports[0].skip=hu.skip;state.imports[0].excluded=hu.excluded;state.imports[0].failed=hu.failed;
+        if(hu.diff_note)state.imports[0].diff_note=hu.diff_note;
+      }
+      saveAll();
+    }
+    window._r6ListCache={key:"",items:[],total:null,loading:false,error:""};
+    fetchApplicantSummaryR6_();
+    if(agg.sync==="failed"){
+      var fe=(doneOps||[]).find(function(o){return o&&o.status==="failed"});
+      showToast(translateImportError65(fe&&fe.error),"bad");
+    }
+    else if(agg.sync==="partial")showToast("一部のチャンクが完了しませんでした。取り込み画面の「取り込みの確認・再実行」から、そのチャンクだけ再実行できます","warn");
+    else if(agg.server)showToast("サーバー実績と一致しました");
+    importCommitting=false;
+    try{route()}catch(e){}
+  }).catch(function(){importCommitting=false});
+};
+
+/* --- 大ファイルのキュー方式 (R6.5 速度要件): 全チャンクをサーバーへ登録だけし、
+   実際の取り込みはサーバー側の継続処理に任せる。opId はファイル内容ハッシュ由来にし、
+   登録が途中で失敗しても同じファイルの再確定で未登録分だけ続きから登録される
+   (サーバー側が client_op_id / chunk_seq で重複を弾く)。 --- */
+function commitImportViaQueue65_(snap,counts,groupData){
+  var opIds=groupData.map(function(g,i){
+    var pf=(window._importPerFile||[])[i];
+    var h=pf&&pf.hash?String(pf.hash):"";
+    if(h)return "OPQ"+h+"_"+g.srows.length;
+    return "OP"+Date.now()+"_"+i+"_"+Math.random().toString(36).slice(2,7);
+  });
+  if(state.imports&&state.imports[0]){state.imports[0].sync="queued";state.imports[0].queue_ops=opIds;saveAll()}
+  var jobs=[];
+  groupData.forEach(function(g,gi){
+    for(var s=0,seq=0;s<g.srows.length;s+=500,seq++){
+      jobs.push({opId:opIds[gi],seq:seq,req:{action:"importEnqueue",file_name:g.file_name,kind:"applicants",target_area:g.target_area,rows:g.srows.slice(s,s+500),client_op_id:opIds[gi],chunk_seq:seq,preview_counts:g.pcbc[seq]}});
+    }
+  });
+  try{var slot=document.getElementById("impResult");if(slot)slot.innerHTML='<div class="card"><h3>サーバーへ登録中</h3><p id="importProgress">サーバーへ登録中: 0 / '+jobs.length+' チャンク</p><p class="small">登録が終われば、アプリを閉じてもサーバー側で取り込みが最後まで進みます。</p></div>'}catch(e){}
+  var done=0,failMsg="";
+  var chain=Promise.resolve();
+  jobs.forEach(function(j){
+    chain=chain.then(function(){
+      return apiCall(j.req).then(function(){done++}).catch(function(e){if(!failMsg)failMsg=String(e&&e.message||e||"")});
+    }).then(function(){
+      try{var el=document.getElementById("importProgress");if(el)el.textContent="サーバーへ登録中: "+done+" / "+jobs.length+" チャンク"}catch(e){}
+    });
+  });
+  chain.then(function(){
+    importCommitting=false;
+    if(failMsg){
+      if(state.imports&&state.imports[0]){state.imports[0].sync="queue_failed";saveAll()}
+      showToast(translateImportError65(failMsg)+"（登録できなかったチャンクがあります。同じファイルでもう一度確定すると、未登録分だけ続きから登録されます）","bad");
+    }else{
+      showToast("サーバーに登録しました。アプリを閉じても処理が続きます（進捗は取り込み画面で確認できます）");
+      pollImportQueueUntilDone65_(opIds,jobs.length);
+    }
+    try{route()}catch(e){}
+  }).catch(function(){importCommitting=false});
+}
+
+/* キュー処理の完了を見届けて履歴をサーバー実績で確定する (アプリを開いている間だけ)。
+   閉じていてもサーバー側のバッチ記録が正であり、取り込み画面で確認できる。 */
+function pollImportQueueUntilDone65_(opIds,chunkCount){
+  var startedAt=Date.now();
+  function check(){
+    fetchImportStatusR6_().then(function(st){
+      if(!st)return;
+      var mine=(st.batches||[]).filter(function(b){return opIds.indexOf(b.client_op_id)>=0});
+      var finished=mine.filter(function(b){return b.status==="complete"||b.status==="partial"||b.status==="failed"}).length;
+      var q=st.queue||{pending_rows:1,processing_rows:0};
+      if(finished>=chunkCount&&!q.pending_rows&&!q.processing_rows){
+        var agg={server:{added:0,updated:0,attr_updated:0,skipped:0,failed:0},sync:mine.some(function(b){return b.status!=="complete"})?"partial":"ok"};
+        mine.forEach(function(b){agg.server.added+=b.added||0;agg.server.updated+=b.updated||0;agg.server.skipped+=b.skipped||0;agg.server.failed+=b.failed||0});
+        if(state.imports&&state.imports[0]&&state.imports[0].queue_ops&&state.imports[0].queue_ops.join()===opIds.join()){
+          var hu=importHistoryFromServer65(state.imports[0].preview_counts,agg);
+          if(hu){
+            state.imports[0].new=hu.new;state.imports[0].latest=hu.latest;state.imports[0].updated=hu.updated;
+            state.imports[0].skip=hu.skip;state.imports[0].excluded=hu.excluded;state.imports[0].failed=hu.failed;
+            state.imports[0].server=agg.server;
+            state.imports[0].diff_note=(hu.diff_note?hu.diff_note+" ":"")+"（サーバー処理のため、最新応募と属性更新はサーバー実績では合算表示です）";
+          }
+          state.imports[0].sync=agg.sync;
+          saveAll();
+        }
+        showToast(agg.sync==="ok"?"サーバー側の取り込みが完了しました":"サーバー側の取り込みが一部失敗で完了しました。取り込み画面で確認してください",agg.sync==="ok"?undefined:"warn");
+        return;
+      }
+      if(Date.now()-startedAt<30*60*1000)setTimeout(check,15000);
+    }).catch(function(){});
+  }
+  check();
+}
+
+/* --- viewImport の差し替え: 中断・一部失敗バッチの表示とチャンク再実行 --- */
+var _r65PrevViewImport=viewImport;
+viewImport=function(){
+  _r65PrevViewImport();
+  if(!window._r6ServerMode)return;
+  fetchImportStatusR6_().then(function(st){
+    try{
+      var app=document.getElementById?document.getElementById("app"):null;
+      if(!app||!st)return;
+      if((location.hash||"").indexOf("#/import")!==0)return;
+      var nowMs=Date.now();
+      var items=[];
+      (st.batches||[]).forEach(function(b){
+        var note=String(b.note||"");
+        var staleRunning=(b.status==="running"&&b.created_at&&(nowMs-Date.parse(b.created_at)>30*60*1000));
+        var interrupted=(b.status==="running"&&(note.indexOf("中断")>=0||staleRunning));
+        var actionable=(b.status==="partial"||b.status==="failed"||interrupted);
+        if(!actionable&&!note)return;
+        var statusLabel=b.status==="partial"?"一部失敗":(b.status==="failed"?"失敗":(interrupted?"中断":"完了"));
+        var html='<div style="border-top:1px solid #ddd;padding:6px 0"><p class="small"><b>'+esc(b.file_name||"")+"</b>（チャンク "+(Number(b.chunk_seq||0)+1)+"）: "+statusLabel+" / 新規 "+(b.added||0)+" ・ 更新 "+(b.updated||0)+" ・ 除外 "+(b.skipped||0)+" ・ 失敗 "+(b.failed||0)+"</p>";
+        if(note)html+='<p class="small">'+esc(note)+"</p>";
+        if(actionable){
+          var found=b.client_op_id?findImportChunkRows65(b.client_op_id,b.chunk_seq):null;
+          if(found)html+='<button class="primary" onclick="retryImportChunk65(\''+esc(b.client_op_id)+"',"+Number(b.chunk_seq||0)+')">このチャンクだけ再実行</button>';
+          else html+='<p class="small">このチャンクのデータはこの端末に残っていません。元のCSVファイルから再取り込みしてください（取り込み済みの行は二重登録されません）。</p>';
+        }
+        html+="</div>";
+        items.push(html);
+      });
+      var q=st.queue||null;
+      if(q&&(q.pending_rows||q.processing_rows)){
+        items.unshift('<p class="small">サーバー側で取り込み処理中: 残り '+q.pending_chunks+' チャンク（'+q.pending_rows+' 行）'+(q.processing_rows?' ・ 処理中 '+q.processing_rows+' 行':'')+'。アプリを閉じても処理は続きます。</p>');
+      }
+      var latestDiff=(state.imports&&state.imports[0]&&state.imports[0].diff_note)||"";
+      if(!items.length&&!latestDiff)return;
+      app.insertAdjacentHTML("beforeend",'<div class="card"><h3>取り込みの確認・再実行</h3>'+(latestDiff?'<p class="small">'+esc(latestDiff)+"</p>":"")+items.join("")+"</div>");
+    }catch(e){}
+  });
+};
+
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  strictParseCsv65:strictParseCsv65,validateImportData65:validateImportData65,
+  translateImportError65:translateImportError65,importHistoryFromServer65:importHistoryFromServer65,
+  findImportChunkRows65:findImportChunkRows65,retryImportChunk65:retryImportChunk65,
+  persistFailedImportChunks65:persistFailedImportChunks65_,
+  getR65ChunkStore:r65LoadChunkStore_,R65_MAX_FILE_ROWS:R65_MAX_FILE_ROWS,opToRequests:opToRequests,
+  R65_QUEUE_THRESHOLD:R65_QUEUE_THRESHOLD,commitImportViaQueue65:commitImportViaQueue65_
+})}
+
+</script>
 </body></html>

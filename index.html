@@ -862,7 +862,7 @@ const localCount=(window._mailTargets||[]).length;const opC=operators.find(o=>o.
 const showConfirm=function(serverRes){const info=buildMailConfirmInfo(serverRes,localCount,senderLabel,subjectC,MF.mode,scheduledC);window._mailConfirmInfo=info;showModal(`<h3>送信前の確認</h3><p class="kv">対象人数: ${info.count}名（${esc(info.countSource)}）\n送信者: ${esc(info.sender)}\n件名: ${esc(info.subject)}\n配信モード: ${esc(info.modeLabel)}${info.scheduledAt?`\n予約日時: ${esc(info.scheduledAt)}`:""}</p><div class="flex"><button class="primary" onclick="confirmSendMail()">この内容で送信する</button><button onclick="cancelMailConfirm()">戻る</button></div>`);return info};
 if(!CONFIG.API_URL){showConfirm(null);return Promise.resolve(null)}
 return fetchMailPreview().then(function(res){showConfirm(res);return res}).catch(function(e){showConfirm(null);return null})}
-function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.applicant_id===first.applicant.id&&window._mailPreviewServer.body)||(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${t.length}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
+function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${t.length}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
 /* ===== R3 方式変更: 画面からのバッチ送信 (施設メール配信と同じ方式) =====
    配信作成後、この画面が sendNextBatch を繰り返し呼んで自分のキューを送り切る。
    実行はアクセスユーザーとして走るため、その人の Gmail から送られ送信済みに残る。
@@ -1293,8 +1293,9 @@ function registerPhoneAppointment(id){
   var r=state.responses.find(function(x){return x.id===id});if(!r)return;
   if(r.calendar_event_id){showToast("登録済みのため再登録できません（二重登録防止）");return}
   var a=applicants.find(function(x){return x.id===r.applicant_id});
-  var title="\u3010電話アポ\u3011 "+(a?smsRecipientName(a.name):"")+" 様";
-  var detail={title:title,applicant_id:r.applicant_id,applicant_name:a?a.name:"",phone:a?a.phone:"",phone_consult:r.phone_consult||"",interview:r.interview||"",intent:r.intent||"",selected_cases:r.selected_cases||[],card_url:"#/list?applicant="+r.applicant_id,response_id:r.id};
+  var nmR68=r.applicant_name||(a?a.name:"");
+  var title="\u3010電話アポ\u3011 "+(nmR68?smsRecipientName(nmR68):"")+" 様";
+  var detail={title:title,applicant_id:r.applicant_id,applicant_name:nmR68,phone:a?a.phone:"",phone_consult:r.phone_consult||"",interview:r.interview||"",intent:r.intent||"",selected_cases:r.selected_cases||[],card_url:"#/list?applicant="+r.applicant_id,response_id:r.id};
   r.calendar_event_id="CAL-"+r.id+"-"+Date.now();r.registered_by=currentOpName();r.registered_at=new Date().toISOString();r.calendar_title=title;r.calendar_detail=detail;
   if(a)a.events.push({at:new Date().toISOString(),kind:"phone_appointment",detail:title+" をカレンダー登録希望: "+(r.phone_consult||r.interview||"")});
   saveAll();enqueue("createPhoneAppointment",detail);showToast("カレンダーに登録しました: "+title+" ／ 登録者 "+r.registered_by);route();
@@ -1474,7 +1475,7 @@ viewResponses=function(){
     }
     var telBtn=(r.phone_consult&&a)?`<a class="btn primary" href="tel:${esc(a.phone)}" style="min-width:44px;min-height:44px">電話</a>`:"";
     var senderDisp=respIsUnknown(r)?"送信元不明":esc(r.sender_name||"-")+(r.sender?`（${esc(r.sender)}）`:"");
-    var respNameHtml=a?esc(smsRecipientName(a.name))+" 様":"応募者不明（ID: "+esc(r.applicant_id||"")+"）";
+    var respNameHtml=(r.applicant_name?esc(smsRecipientName(r.applicant_name))+" 様":a?esc(smsRecipientName(a.name))+" 様":"応募者不明（ID: "+esc(r.applicant_id||"")+"）");
     var respBadgesHtml=`<span class="badge warn">回答種別: ${esc(r.intent)}</span> ${r.isNew?`<span class="badge warn">新着</span>`:""} <span class="badge ${st==="handled"?"ok":st==="in_progress"?"":"bad"}">${st==="handled"?"対応済み":st==="in_progress"?"対応中":"未対応"}</span> <span class="badge">${esc(respChannelLabel(r))}</span> ${phoneBadgeHtml(r)} ${calBadgeHtml(r)}${r.notify_status==="failed"?'<span class="badge bad">通知未達</span>':""}`;
     var respNameLine=`<p style="font-size:15px"><b>${respNameHtml}</b> ${respBadgesHtml} <span class="small">${esc(String(r.at).slice(0,16).replace("T"," "))}</span></p>`;
     var respHeadHtml=r.phone_consult?(`<p><b>電話相談希望: ${esc(r.phone_consult)}</b>${pi&&pi.hint?` <span class="small">（抽出日: ${esc(pi.hint)}）</span>`:""} ／ 面談希望日: ${esc(r.interview||"-")} ／ 見学希望日: ${esc(r.tour||"-")}</p>`+respNameLine):respNameLine;
@@ -2825,32 +2826,43 @@ function localMailPreviewHtml_(first,note){
   return '<h4>デモ用ローカルプレビュー（実際の送信文面とは異なります）</h4>'+(note?'<p class="small">'+esc(note)+'</p>':'')+'<p class="small">宛先: '+esc(first.applicant.name)+"（"+esc(first.applicant.email||"")+"）／件名: "+esc(subj)+'</p><p class="kv small">'+esc(body)+"</p>";
 }
 function fetchMailPreviewBody_(){
-  var first=(window._mailTargets||[])[0];if(!first)return;
+  /* R6.8 defect C: the preview target is the SERVER's first target
+     (mailPreviewTargets preview[0]). The old code used the local list's first
+     entry, which in server mode is seed/stale data, so the server rejected
+     the applicant id and the preview always fell back to the demo body.
+     On failure we no longer show the demo body as a preview: the failure and
+     a retry button are shown instead (the demo body differs from the real
+     send text, so it must not stand in for the preview). */
   var subj=($("#mSubj")?$("#mSubj").value:templates.mail_subject);
   var tpl=($("#mBody")?$("#mBody").value:templates.mail_body);
-  apiCall({action:"mailPreviewBody",applicant_id:first.applicant.id,subject:subj,body_template:tpl,recommended_case_ids:(first.recommended||[]).map(function(c){return c.id}),sender_email:MF.sender,include_form:state.attachFormMail!==false}).then(function(res){
+  fetchMailPreview().then(function(res){
+    var pv=res&&res.preview&&res.preview[0];
+    if(!pv||!pv.applicant_id)throw new Error("サーバーが対象者を返しませんでした（対象が0件の可能性があります）");
+    return apiCall({action:"mailPreviewBody",applicant_id:pv.applicant_id,subject:subj,body_template:tpl,recommended_case_ids:[],sender_email:MF.sender,include_form:state.attachFormMail!==false}).then(function(b){
+      if(!b||!b.body)throw new Error("サーバーがプレビュー本文を返しませんでした");
+      window._mailPreviewServer={applicant_id:pv.applicant_id,subject:b.subject||"",body:b.body};
+      window._mailServerFirst={applicant_id:pv.applicant_id,name:pv.name||""};
+      var el=document.getElementById("mailPreviewCard");if(!el)return;
+      el.innerHTML='<h4>生成済み文面プレビュー（サーバーの先頭対象者あて）</h4><p class="small">サーバーで生成したプレビューです。フォームURLのトークン部分のみ、送信時に受信者ごとの値になります。</p><p class="small">宛先: '+esc(pv.name||pv.applicant_id)+'／件名: '+esc(b.subject||"")+'</p><p class="kv small">'+esc(b.body)+"</p>";
+    });
+  }).catch(function(e){
+    window._mailPreviewServer=null;
     var el=document.getElementById("mailPreviewCard");if(!el)return;
-    if(res&&res.body){
-      window._mailPreviewServer={applicant_id:first.applicant.id,subject:res.subject||"",body:res.body};
-      el.innerHTML='<h4>生成済み文面プレビュー（先頭の対象者あて）</h4><p class="small">サーバーで生成したプレビューです。フォームURLのトークン部分のみ、送信時に受信者ごとの値になります。</p><p class="small">宛先: '+esc(first.applicant.name)+"（"+esc(first.applicant.email||"")+"）／件名: "+esc(res.subject||"")+'</p><p class="kv small">'+esc(res.body)+"</p>";
-    }else{
-      el.innerHTML=localMailPreviewHtml_(first,"サーバー生成を取得できなかったため、ローカル文面を表示しています。");
-    }
-  }).catch(function(){
-    var el=document.getElementById("mailPreviewCard");if(!el)return;
-    el.innerHTML=localMailPreviewHtml_(first,"サーバー生成を取得できなかったため、ローカル文面を表示しています。");
+    el.innerHTML='<h4>プレビューを生成できませんでした</h4><p class="small">サーバー生成に失敗したため、プレビューは表示していません。デモ文面は実際の送信文面と異なるため、プレビューの代わりには使いません。</p><p class="small">理由: '+esc(String(e&&e.message||e))+'</p><p><button type="button" onclick="fetchMailPreviewBody_()">再試行する</button></p>';
   });
 }
 mailPreviewHtml=function(){
   var t=window._mailTargets||[];
-  if(!t.length)return '<p class="small">生成済み文面プレビュー: 対象を確認すると、先頭の対象者あての文面（サーバー生成）を表示します。</p>';
-  var first=t[0];
   if(!CONFIG.API_URL){
-    return '<div class="card">'+localMailPreviewHtml_(first,"")+"</div>";
+    if(!t.length)return '<p class="small">生成済み文面プレビュー: 対象を確認すると、先頭の対象者あての文面を表示します。</p>';
+    return '<div class="card">'+localMailPreviewHtml_(t[0],"")+"</div>";
   }
+  /* R6.8 defect C: in server mode the server is the source of truth for
+     targets, so start the server preview even when the local target list is
+     empty (the local list is not the server's list in server mode). */
   window._mailPreviewServer=null;
   try{fetchMailPreviewBody_()}catch(e){}
-  return '<div class="card" id="mailPreviewCard"><h4>生成済み文面プレビュー（先頭の対象者あて）</h4><p class="small">サーバーで文面を生成中…</p></div>';
+  return '<div class="card" id="mailPreviewCard"><h4>生成済み文面プレビュー（サーバーの先頭対象者あて）</h4><p class="small">サーバーで文面を生成中…</p></div>';
 };
 
 /* ---------- テンプレ/運営者のサーバー同期 (13-#1 修正2 / 13-#8) ---------- */
@@ -4774,5 +4786,102 @@ if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
   findImportChunkRows65:findImportChunkRows65,retryImportChunk65:retryImportChunk65,
   persistFailedImportChunks65:persistFailedImportChunks65_
 })}
+</script>
+
+<script>
+/* ===== Round 6.8 fixes: defect B (form required groups) / defect C (test-send feedback) =====
+   Design basis for B: DESIGN_V2 + FORM_TEAM_REPORT sec.6 -- the only required
+   groups are (1) interested cases and (2) phone-available datetime; "anytime"
+   satisfies (2). Everything else (experience / desired rate / free text) is
+   optional. The form's own hint text says the same. Validation reuses
+   formAnsweredSteps_(), the same semantics as the progress bar. */
+function formRequiredCheckR68_(){
+  var steps=null; try{steps=formAnsweredSteps_()}catch(e){}
+  var caseDone=steps?!!steps.caseDone:!!document.querySelector(".fCase:checked");
+  var phoneDone=steps?!!steps.phoneDone:false;
+  var hasFormDom=!!(document.getElementById("fCallBlock")||document.querySelector(".fCase"));
+  return {caseDone:caseDone,phoneDone:phoneDone,hasFormDom:hasFormDom};
+}
+function showFormRequiredNoticeR68_(chk){
+  var miss=[];
+  if(!chk.caseDone)miss.push("気になる案件");
+  if(!chk.phoneDone)miss.push("お電話できる日時");
+  var bar=document.querySelector(".formSubmitBar");
+  var n=document.getElementById("formRequiredNotice");
+  if(!n){
+    n=document.createElement("div"); n.id="formRequiredNotice"; n.className="fNotice"; n.setAttribute("role","alert");
+    if(bar&&bar.parentNode)bar.parentNode.insertBefore(n,bar);
+    else if(bar)bar.appendChild(n);
+    else document.body.appendChild(n);
+  }
+  var lines=miss.map(function(m){
+    return m==="気になる案件"
+      ? "・気になる案件を1つ以上選んでください"
+      : "・お電話できる日時を選んでください（日付・時間帯、または「いつでも可」でも大丈夫です）";
+  }).join("<br>");
+  n.innerHTML="<b>まだ選ばれていない項目があります（送信はされていません）</b><br>"+lines;
+  try{showToast("未選択の必須項目があります: "+miss.join(" / "),"warn")}catch(e){}
+  try{
+    var target=!chk.caseDone?(document.querySelector(".fCase")||n):(document.getElementById("fCallBlock")||n);
+    if(target&&target.scrollIntoView)target.scrollIntoView({block:"center"});
+  }catch(e){}
+}
+var _submitFormR68=submitForm;
+submitForm=function(){
+  var chk=formRequiredCheckR68_();
+  if(chk.hasFormDom&&(!chk.caseDone||!chk.phoneDone)){ showFormRequiredNoticeR68_(chk); return; }
+  var n=document.getElementById("formRequiredNotice"); if(n&&n.parentNode)n.parentNode.removeChild(n);
+  return _submitFormR68();
+};
+/* Defect C (test send): the click always leaves a persistent result in
+   #testMailResult (created delivery id / skip reason / error). Queue stats
+   are refreshed at click time first, so a stale snapshot cannot silently
+   block the click; the existing safety gates (send in progress / waiting
+   production queue) still apply, but their reason is now shown persistently
+   instead of only as a transient toast. */
+function paintTestMailResultR68_(html){
+  try{
+    var mp=document.getElementById("mailProg"); if(!mp)return;
+    var el=document.getElementById("testMailResult");
+    if(!el){ el=document.createElement("div"); el.id="testMailResult"; if(mp.parentNode)mp.parentNode.insertBefore(el,mp.nextSibling); }
+    el.innerHTML=html;
+  }catch(e){}
+}
+var _testMailR68=testMail;
+testMail=function(){
+  paintTestMailResultR68_('<p class="small">テスト配信の作成を確認しています…</p>');
+  var proceed=function(){
+    var r;
+    try{ r=_testMailR68(); }catch(e){
+      paintTestMailResultR68_('<p><span class="badge bad">テスト配信の作成に失敗しました: '+esc(String(e&&e.message||e))+"</span></p>");
+      return null;
+    }
+    if(r==null){
+      var w8=0; try{w8=queueWarningModel(window._queueStats).waiting||0}catch(e){}
+      var why;
+      if(window._sendRun&&window._sendRun.active)why="送信処理が実行中のため、テスト送信は開始できませんでした。送信が終わってからお試しください";
+      else if(w8>0)why="未送信の本番配信が "+w8+" 件残っているため、テスト送信はできません。先に送信を再開して送り切ってください";
+      else why="テスト送信はキャンセルされました";
+      paintTestMailResultR68_('<p><span class="badge warn">'+esc(why)+"</span></p>");
+      return null;
+    }
+    return Promise.resolve(r).then(function(res){
+      if(res&&(res.delivery_id||res.target_count!=null)){
+        paintTestMailResultR68_('<p><span class="badge ok">テスト配信を作成しました</span></p><p class="small">配信ID: '+esc(String(res.delivery_id||""))+" / 対象: "+(res.target_count!=null?res.target_count:"")+"件"+(res.idempotent_replay?"（同一内容の配信が既にあったため、新規作成ではなく既存の配信です。二重送信はしません）":"")+"<br>送信の進捗は上の表示で確認できます。テスト送信先の受信箱もご確認ください。</p>");
+      }else{
+        var mp=document.getElementById("mailProg");
+        var detail=mp?(mp.textContent||"").trim():"";
+        paintTestMailResultR68_('<p><span class="badge bad">テスト配信を作成できませんでした'+(detail?": "+esc(detail):"")+"</span></p>");
+      }
+      return res;
+    });
+  };
+  if(CONFIG.API_URL&&typeof apiCall==="function"){
+    return apiCall({action:"getSendQueueStats"}).then(function(stats){
+      window._queueStats=stats; try{paintTestMailAvailability()}catch(e){}
+    }).catch(function(){}).then(proceed);
+  }
+  return proceed();
+};
 </script>
 </body></html>

@@ -6449,4 +6449,160 @@ runSendBatches = function(d){
   return _runSendBatches614(d);
 };
 
+</script>
+<script>
+/* ================= R615: サーバーモードの一覧でもSMS作成できるようにする + 主経路を1タップ直接遷移へ =================
+   (1) バックエンドの一覧API（actionSearchApplicants_）は DESIGN_V2 §10 の仕様で
+   phone/email を返さないため、サーバーモードのローカルレコードは常に
+   phone:"" になる。6.14 の「番号なし応募者は押せない表示」ルールが一覧全員に
+   効いてしまった（実データ側には番号がある）ので、カードのボタンは番号が
+   ローカルに無くても押せるようにし、番号はタップ時に getApplicant で補う。
+   連絡停止の人は従来どおりバッジ表示のままで、この置換の対象にはならない。
+   (2) 主経路の仕様変更（ユーザー指示 2026-11-23）: 6.14 の「モーダルで
+   プレビュー確認 → SMSを開く」をやめ、タップ →（番号取得・フォーム発行を
+   ボタンの読み込み表示で待ち）→ 揃った瞬間に端末のSMS作成画面へ直接遷移
+   する。安全条件は維持する: 番号が空のまま遷移しない／フォームONなのに
+   URL無しで遷移しない。失敗時は遷移せず、ボタンの近くに短く表示する。
+   6.14 のモーダル（openSmsCompose614）は主経路から外すが、関数自体は残す。 */
+
+/* ---- 1. カード: SMSボタンを1タップ直接遷移（openSmsDirect615）へ ---- */
+var _cardHtml615 = cardHtml;
+cardHtml = function(a){
+  var h = "";
+  try { h = String(_cardHtml615(a) || ""); } catch(e) { return ""; }
+  try {
+    if (a && a.id) {
+      var changed = false;
+      if (h.indexOf("SMS作成（電話番号なし）") >= 0) {
+        h = h.replace('<button class="btn" disabled>SMS作成（電話番号なし）</button>',
+          '<button class="btn primary" onclick="openSmsDirect615(\'' + a.id + '\',this)">SMS作成を開く</button>');
+        changed = true;
+      }
+      var oc = 'onclick="openSmsCompose614(\'' + a.id + '\')"';
+      if (h.indexOf(oc) >= 0) {
+        h = h.replace(oc, 'onclick="openSmsDirect615(\'' + a.id + '\',this)"');
+        changed = true;
+      }
+      if (changed && h.indexOf("r614main") < 0) {
+        /* 6.14 の主アクション用マーカー（52px）をボタンの行に付ける
+           （flex 行はカード内に複数あるので、ボタン直前の行を対象にする） */
+        var _bi = h.indexOf("openSmsDirect615");
+        var _mi = _bi >= 0 ? h.lastIndexOf('<div class="flex" style="margin-top:8px">', _bi) : -1;
+        if (_mi >= 0) {
+          h = h.slice(0, _mi) + '<div class="flex r614main" style="margin-top:8px">' + h.slice(_mi + '<div class="flex" style="margin-top:8px">'.length);
+        }
+      }
+    }
+  } catch(e) {}
+  return h;
+};
+
+/* ---- 2. SMS作成の主経路: 1タップで端末の作成画面へ直接遷移 ----
+   タップ → ボタンに読み込み表示（番号がローカルに無い場合は getApplicant で
+   取得し、フォームONならトークン発行の完了を待つ）→ 番号と（フォームONなら）
+   URL入りの最終本文が揃った瞬間に sms: へ遷移する。確認画面は挟まない。
+   遷移は r615NavigateSms_ に寄せてある（テストから差し替え可能にするため）。 */
+function r615NavigateSms_(href){ location.href = href; }
+function r615SetBusy_(btn, on, label){
+  if (!btn) return;
+  try {
+    if (on) {
+      if (btn.getAttribute("data-r615busy") === "1") return;
+      btn.setAttribute("data-r615busy", "1");
+      btn.setAttribute("data-r615label", btn.textContent || "");
+      btn.disabled = true;
+      if (label) btn.textContent = label;
+    } else {
+      btn.removeAttribute("data-r615busy");
+      btn.disabled = false;
+      var l = btn.getAttribute("data-r615label");
+      if (l) btn.textContent = l;
+    }
+  } catch(e) {}
+}
+function r615CardError_(btn, msg){
+  try {
+    if (btn && btn.parentNode) {
+      var el = btn.parentNode.querySelector(".r615err");
+      if (!el) {
+        el = document.createElement("span");
+        el.className = "r615err small";
+        el.style.cssText = "color:#c0392b;font-weight:700";
+        btn.parentNode.appendChild(el);
+      }
+      el.textContent = msg;
+      setTimeout(function(){ try { el.remove(); } catch(e) {} }, 8000);
+      return;
+    }
+  } catch(e) {}
+  try { showToast(msg, "warn"); } catch(e) {}
+}
+function openSmsDirect615(id, btn){
+  var a = null;
+  try { a = applicants.find(function(x){ return x.id === id; }); } catch(e) {}
+  if (!a) return;
+  if (btn && btn.getAttribute("data-r615busy") === "1") return;
+  var fail = function(msg){ r615SetBusy_(btn, false); r615CardError_(btn, msg); };
+  var nav = function(phone, body){
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      /* 文面ガードでブロックされた場合は遷移しない（理由をボタンの近くに出す） */
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    r615SetBusy_(btn, false);
+    r615NavigateSms_(href);
+  };
+  var proceed = function(){
+    var phone = String(a.phone || "").replace(/[^0-9]/g, "");
+    if (!phone) { fail("電話番号なし"); return; }
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var attach = true;
+    try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+    var url = "";
+    try { url = attach ? formUrlFor(a) : ""; } catch(e) {}
+    if (attach && !url) {
+      try { issueFormInvite(a, "sms", null); } catch(e) { fail("フォーム発行に失敗しました"); return; }
+      var maxPoll = 60;
+      try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+      var n = 0;
+      var timer = setInterval(function(){
+        n++;
+        var u = "";
+        try { u = formUrlFor(a); } catch(e) {}
+        if (u || n > maxPoll) {
+          clearInterval(timer);
+          if (u) nav(phone, r614BodyWithUrl_(st.body, u));
+          else fail("フォームURLの発行に時間がかかっています。もう一度タップしてください");
+        }
+      }, 250);
+      return;
+    }
+    nav(phone, r614BodyWithUrl_(st.body, url));
+  };
+  r615SetBusy_(btn, true, "発行中…");
+  var phone0 = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phone0) { proceed(); return; }
+  var canFetch = false;
+  try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+  if (!canFetch) { fail("電話番号なし"); return; }
+  if (btn) { try { btn.textContent = "番号を確認中…"; } catch(e) {} }
+  apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+    var det = (res && res.applicant) || null;
+    if (det) {
+      /* 取得した連絡先をローカルレコードへ反映する（詳細画面の電話ボタン等と揃える。
+         fetchServerDetail の R6 ラッパーと同じマージ） */
+      if (det.phone != null) a.phone = String(det.phone || "");
+      if (det.email != null) a.email = String(det.email || "");
+    }
+    if (!String(a.phone || "").replace(/[^0-9]/g, "")) { fail("電話番号なし"); return; }
+    if (btn) { try { btn.textContent = "発行中…"; } catch(e) {} }
+    proceed();
+  }).catch(function(){ fail("電話番号を確認できませんでした"); });
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; window.__APP_LOGIC__.r615NavigateSms_ = r615NavigateSms_; } } catch(e) {}
 </script></body></html>

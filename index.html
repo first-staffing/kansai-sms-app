@@ -9035,7 +9035,504 @@ try {
   };
   try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.cardHtml = cardHtml; } catch(e) {}
 } catch(e) {}
+</script>
+<style>
+/* ================================================================
+   R6161 修正 (公開後実地テスト不合格5件, 2026-11-24)
+   切り分け: FIX_R6161_PLAN.md / 報告: FIX_R6161_REPORT.md
+   既存ブロックは編集せず、再定義とラッパで差し替える (従来ラウンドと同じ方式)。
+   ================================================================ */
 
+/* ---- 不合格3: カードのボタン横並び (CSS 特異度) ----
+   6.14 の #app .r614card .r614main>button.btn.primary{flex:1 1 100%} (特異度 1,4,1) が
+   6.16 の .r616card ルール (0,4,0) に勝っていた。!important + 後置で 42% を確定させる。 */
+#app .r616card .r614main>button.btn.primary,
+#app .r616card .r616main>button.btn.primary,
+#app .r616card .r614main>a.btn.primary,
+#app .r616card .r616main>a.btn.primary{flex:1 1 42% !important}
+#app .r616card .r614main>button.r616recBtn,
+#app .r616card .r616main>button.r616recBtn{flex:1 1 42% !important}
+#app .r616card .r614main>label.r616sentLbl,
+#app .r616card .r616main>label.r616sentLbl{flex:1 1 100% !important}
+</style>
+<script>
+/* ================= R6161 修正ブロック ================= */
+window._r6161 = "6.16.1";
+
+/* ---- 共通: 応募者の解決 (不合格2) ----
+   サーバーモードでは表示中の応募者はグローバル applicants ではなく
+   一覧キャッシュ / ロスター側にいる。3か所を順に探す。 */
+function r6161FindApplicant_(id){
+  var pools = [];
+  try { if (typeof applicants !== "undefined" && Array.isArray(applicants)) pools.push(applicants); } catch(e) {}
+  try { if (window._r6ListCache && Array.isArray(window._r6ListCache.items)) pools.push(window._r6ListCache.items); } catch(e) {}
+  try { if (window._r616Roster && Array.isArray(window._r616Roster.items)) pools.push(window._r616Roster.items); } catch(e) {}
+  for (var i = 0; i < pools.length; i++) {
+    var hit = null;
+    try { hit = pools[i].find(function(x){ return x && x.id === id; }); } catch(e) {}
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/* ---- 不合格1: ロスター掃引の作り直し ----
+   元実装の契約 (res.items / serverApplicantToLocal / _r616RosterLoading /
+   _r616RosterFailedArea) をそのままに、2点だけ変える:
+   ・掃引中に total が変わったら「データ変更中」とみなして掃引し直す (上限あり)。
+     途中のページが全て重複でも打ち切らない (並び替えで added=0 になるため)。
+   ・失敗ラッチは 60 秒のクールダウンにする (永久ラッチのデッドロック解消)。
+   有効化条件は従来どおり「重複除去後の件数が最新の total 以上」。 */
+r616WarmRoster_ = function(force){
+  if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return;
+  if (window._r616RosterLoading) return;
+  if (!force && r616RosterReady_()) return;
+  if (!force && window._r616RosterFailedArea === state.area
+      && (Date.now() - (window._r616RosterFailedAt || 0)) < 60000) return;
+  if (force) { window._r616RosterFailedArea = null; window._r616RosterFailedAt = 0; }
+  window._r616RosterLoading = true;
+  var area = state.area;
+  var attempt = function(){
+    var items = [], seen = {}, firstTotal = null, total = null, drifted = false;
+    var step = function(page){
+      return apiCall({ action: "searchApplicants", filter: { area: area }, page: page, page_size: 200 }).then(function(res){
+        var raw = (res && Array.isArray(res.items)) ? res.items : [];
+        if (res && typeof res.total === "number") {
+          if (firstTotal == null) firstTotal = res.total;
+          if (res.total !== firstTotal) drifted = true;
+          total = res.total;
+        }
+        raw.forEach(function(it){
+          var a = serverApplicantToLocal(it);
+          if (a && a.id && !seen[a.id]) { seen[a.id] = 1; items.push(a); }
+        });
+        if (total != null && items.length >= total) return { ok: true, drifted: drifted, items: items };
+        if (!raw.length) return { ok: false, drifted: drifted, items: items };
+        if (page >= 300) return { ok: false, drifted: drifted, items: items };
+        return step(page + 1);
+      });
+    };
+    return step(1);
+  };
+  var run = function(triesLeft){
+    return attempt().then(function(r){
+      if (r.ok && r.items.length > 0) {
+        window._r616RosterLoading = false;
+        window._r616Roster = { area: area, items: r.items, at: Date.now(), serverTotalAtLand: _r616LastServerTotal };
+        window._r616RosterFailedAt = 0;
+        try { if ((location.hash || "").indexOf("#/list") === 0) route(); } catch(e) {}
+        return;
+      }
+      if (r.drifted && triesLeft > 0) return run(triesLeft - 1);
+      window._r616RosterLoading = false;
+      window._r616RosterFailedAt = Date.now();
+      window._r616RosterFailedArea = area;
+    }).catch(function(){
+      window._r616RosterLoading = false;
+      window._r616RosterFailedAt = Date.now();
+      window._r616RosterFailedArea = area;
+    });
+  };
+  run(2);
+};
+
+/* ---- 不合格1 副次: テスト求職者表示 ON のときはシードしない ----
+   ロスターはテスト求職者を含まないため、シードするとテスト求職者が
+   一覧から消える。ON のときはサーバーページ方式に委ねる。 */
+var r6161OrigSeed_ = r616SeedListCache_;
+r616SeedListCache_ = function(){
+  try { if (typeof F !== "undefined" && F.showTest) return false; } catch(e) {}
+  return r6161OrigSeed_.apply(this, arguments);
+};
+
+/* ---- 不合格4: 残件数の母数を表示中の一覧に合わせる ---- */
+var r6161OrigListTotal_ = r616ListTotal_;
+r616ListTotal_ = function(){
+  try {
+    if (window._r6ServerMode && window._r6ListCache && typeof _r6ListKey === "function"
+        && window._r6ListCache.key === _r6ListKey()
+        && typeof window._r6ListCache.total === "number") {
+      var items = window._r6ListCache.items || [];
+      if (window._smsSegFilter) {
+        if (items.length >= window._r6ListCache.total) {
+          return items.filter(function(a){ return segmentOf(a) === window._smsSegFilter; }).length;
+        }
+        return window._r6ListCache.total;
+      }
+      return window._r6ListCache.total;
+    }
+  } catch(e) {}
+  return r6161OrigListTotal_.apply(this, arguments);
+};
+
+/* ---- 不合格4 副次: 「さらに表示」の継ぎ足し元もキャッシュに合わせる ----
+   キャッシュが全件を保持しているとき (ロスター着地後) だけキャッシュから
+   継ぎ足し、それ以外は従来のボタン動作 (サーバーページ取得) に委ねる。 */
+var r6161OrigAppendMore_ = r616AppendMore_;
+r616AppendMore_ = function(from){
+  try {
+    if (window._r6ServerMode && window._r6ListCache
+        && typeof window._r6ListCache.total === "number"
+        && (window._r6ListCache.items || []).length >= window._r6ListCache.total) {
+      var list = (window._r6ListCache.items || []).slice();
+      if (window._smsSegFilter) list = list.filter(function(a){ return segmentOf(a) === window._smsSegFilter; });
+      if (from < list.length) {
+        var host = document.getElementById("r6ListHost");
+        if (host) {
+          var tmp = document.createElement("div");
+          tmp.innerHTML = list.slice(from, state.visible).map(cardHtml).join("");
+          while (tmp.firstChild) host.appendChild(tmp.firstChild);
+          return true;
+        }
+      }
+      return false;
+    }
+  } catch(e) {}
+  return r6161OrigAppendMore_.apply(this, arguments);
+};
+
+/* ---- 不合格1 副次: 検索窓の入力を再描画で失わない ----
+   route() の直前に #r4Search の実値とキャレットを保存し、F.q へ即時反映。
+   再描画後に同じ要素へ値とキャレットを同期的に戻す。 */
+var r6161RoutePrev_ = route;
+route = function(){
+  var snap = null;
+  try {
+    var inp = document.getElementById("r4Search");
+    if (inp && document.activeElement === inp) {
+      var s = null, en = null;
+      try { s = inp.selectionStart; en = inp.selectionEnd; } catch(_e) {}
+      snap = { v: inp.value, s: s, e: en };
+      if (typeof F !== "undefined" && F.q !== inp.value) F.q = inp.value;
+    }
+  } catch(e) {}
+  var r = r6161RoutePrev_.apply(this, arguments);
+  if (snap) {
+    try {
+      var ni = document.getElementById("r4Search");
+      if (ni) {
+        if (ni.value !== snap.v) ni.value = snap.v;
+        ni.focus();
+        var L = ni.value.length;
+        var ss = (snap.s == null) ? L : Math.min(snap.s, L);
+        var ee = (snap.e == null) ? ss : Math.min(snap.e, L);
+        ni.setSelectionRange(ss, ee);
+      }
+    } catch(e) {}
+  }
+  return r;
+};
+
+/* ---- 不合格2 副次: 初回SMS (圧縮版) の本文を上限内に収める ----
+   合成点 (personalize) で、圧縮版テンプレのときだけ段階的に詰める。
+   超過していない通常文面は一切変えない。 */
+function r6161FitFirstBody_(body){
+  var limit = 320;
+  try { if (typeof SMS_LIMITS !== "undefined" && SMS_LIMITS.first_compact) limit = SMS_LIMITS.first_compact; } catch(e) {}
+  var size = function(t){ try { return smsSize(t).len; } catch(e) { return String(t || "").length; } };
+  var b = String(body || "");
+  if (size(b) <= limit) return b;
+  /* (1) 電話日時の依頼行を落とす (回答フォーム側で電話相談日時を聞けるため) */
+  b = b.split("\n").filter(function(l){ return l.indexOf("お電話できる日時") < 0; }).join("\n");
+  if (size(b) <= limit) return b;
+  /* (2) 不足項目名の列挙を「など」で締めて短くする */
+  var lines = b.split("\n");
+  var idx = -1;
+  for (var i = 0; i < lines.length; i++) { if (lines[i].indexOf("も分かる項目だけで返信ください") >= 0) { idx = i; break; } }
+  if (idx >= 0) {
+    var m = lines[idx].match(/^(よければ、)(.+?)(も分かる項目だけで返信ください)(.*)$/);
+    if (m) {
+      var names = m[2].split("・");
+      var best = m[1] + "など" + m[3] + (m[4] || "");
+      for (var k = names.length; k >= 1; k--) {
+        var cand = m[1] + names.slice(0, k).join("・") + "など" + m[3] + (m[4] || "");
+        var trial = lines.slice(); trial[idx] = cand;
+        if (size(trial.join("\n")) <= limit) { best = cand; break; }
+      }
+      lines[idx] = best;
+      b = lines.join("\n");
+    }
+  }
+  if (size(b) <= limit) return b;
+  /* (3) 案件くだりの行を落とす */
+  b = b.split("\n").filter(function(l){ return l.indexOf("気になる案件があれば") < 0; }).join("\n");
+  return b;
+}
+var r6161PersonalizePrev_ = personalize;
+personalize = function(tpl, a){
+  var out = r6161PersonalizePrev_.apply(this, arguments);
+  try {
+    var compact = null;
+    try { if (typeof templates !== "undefined") compact = templates.sms_first_compact; } catch(e) {}
+    if (tpl && compact && tpl === compact) out = r6161FitFirstBody_(out);
+  } catch(e) {}
+  return out;
+};
+
+/* ---- 不合格2 副次2: URL マージ後の最終本文にもフィットをかける ----
+   発行フローでは URL が合成後に r614BodyWithUrl_ で末尾追加される
+   (案内文 + URL で +151 字) ため、合成点だけのフィットでは足りない。
+   圧縮版の判別行を含む本文に限り、マージ結果へも同じフィットをかける。 */
+var r6161BodyWithUrlPrev_ = r614BodyWithUrl_;
+r614BodyWithUrl_ = function(body, url){
+  var out = r6161BodyWithUrlPrev_.apply(this, arguments);
+  try {
+    if (out && String(out).indexOf("フォームからご回答いただけます") >= 0) out = r6161FitFirstBody_(out);
+  } catch(e) {}
+  return out;
+};
+
+/* ---- 不合格2 主: openSmsDirect615 の応募者解決を一覧キャッシュ/ロスターまで広げる ----
+   本体は 6.15.3 最終定義の複写で、冒頭の解決だけ r6161FindApplicant_ に差し替えた。 */
+function openSmsDirect615(id, btn){
+  var a = null;
+  try { a = r6161FindApplicant_(id); } catch(e) {}
+  if (!a) return;
+  if (btn && btn.getAttribute("data-r615busy") === "1") return;
+  var done = false;
+  var issueRecId = null;
+  var issueWaiter = null;
+  var launchStarted = false;
+  var stopWait = function(){
+    if (issueWaiter) { r6153UnwaitIssue_(id, issueWaiter); issueWaiter = null; }
+  };
+  var fail = function(msg){
+    if (done) return; done = true;
+    stopWait();
+    r6151RemoveSmsAnchor_(btn);
+    rTopRemoveLaunchAnchor_(btn);
+    r615SetBusy_(btn, false);
+    r615CardError_(btn, msg);
+  };
+  var finish = function(phone, urlOverride){
+    if (done || launchStarted) return;
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var url = "";
+    try { url = urlOverride || formUrlFor(a); } catch(e) {}
+    var body = "";
+    try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    var finishLegacy = function(){
+      if (done) return;
+      done = true;
+      stopWait();
+      r615SetBusy_(btn, false);
+      try { window._r6151LastSmsHref = href; } catch(e) {}
+      var anchor = r6151ShowSmsAnchor_(btn, href);
+      if (anchor) {
+        try { anchor.click(); } catch(e) {}
+      } else {
+        try { r615NavigateSms_(href); } catch(e) {}
+      }
+    };
+    var canApi = false;
+    try { canApi = !!(window._r6ServerMode && typeof apiCall === "function"); } catch(e) {}
+    if (!rTopEnabled_() || !canApi) { finishLegacy(); return; }
+    launchStarted = true;
+    if (btn) { try { btn.textContent = "起動ページを準備中…"; } catch(e) {} }
+    apiCall({ action: "issueSmsLaunch", applicant_id: id, phone: phone, body: body })
+      .then(function(res){
+        if (done) return;
+        if (res && res.launch_token) {
+          done = true;
+          stopWait();
+          r615SetBusy_(btn, false);
+          try { window._rTopLastLaunchUrl = rTopLaunchUrl_(res.launch_token); } catch(e) {}
+          var anchor = rTopShowLaunchAnchor_(btn, rTopLaunchUrl_(res.launch_token));
+          if (anchor) {
+            try { anchor.click(); } catch(e) {}
+          } else {
+            try { window.top.location.href = rTopLaunchUrl_(res.launch_token); } catch(e) {}
+          }
+        } else {
+          finishLegacy();
+        }
+      })
+      .catch(function(err){
+        if (done) return;
+        var msg = "";
+        try { msg = String((err && err.message) || err || ""); } catch(e) {}
+        if (rTopIsValidationError_(msg)) { fail(msg); return; }
+        finishLegacy();
+      });
+  };
+  r615SetBusy_(btn, true, "発行中…");
+  var attach = true;
+  try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+  var phoneState = "wait";
+  var phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phoneVal) phoneState = "ok";
+  var urlState = attach ? "wait" : "ok";
+  var issuedUrl = "";
+  var issueFailMsg = "";
+  var check = function(){
+    if (done) return;
+    if (phoneState === "ng") { fail("電話番号なし"); return; }
+    if (urlState === "ng") {
+      if (issueFailMsg) r6153PurgeIssueRecord_(issueRecId);
+      fail(issueFailMsg || "フォームURLの発行に時間がかかっています。もう一度タップしてください");
+      return;
+    }
+    if (phoneState === "ok" && urlState === "ok") finish(phoneVal, issuedUrl);
+  };
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else {
+      var issueStart = Date.now();
+      try { delete window._r6153IssueOutcome[a.id]; } catch(e) {}
+      var dRec = null, issueErr = false;
+      try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return; }
+      issueRecId = (dRec && dRec.id) || null;
+      var u1 = "";
+      try { u1 = formUrlFor(a); } catch(e) {}
+      if (u1) { urlState = "ok"; }
+      else {
+        issueWaiter = r6153WaitIssue_(a.id, issueStart, function(rec){
+          if (done) return;
+          if (rec.state === "failed") {
+            issueFailMsg = r6153IssueFailMessage_(rec.error);
+            urlState = "ng";
+            check();
+          } else if (rec.state === "ok" && rec.url) {
+            issuedUrl = rec.url;
+            urlState = "ok";
+            check();
+          }
+        });
+        var maxPoll = 60;
+        try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+        var n = 0;
+        var timer = setInterval(function(){
+          if (done) { clearInterval(timer); return; }
+          n++;
+          var u = "";
+          try { u = formUrlFor(a); } catch(e) {}
+          if (u) { clearInterval(timer); urlState = "ok"; check(); return; }
+          var rec2 = null;
+          try { rec2 = window._r6153IssueOutcome[a.id]; } catch(e) {}
+          if (rec2 && rec2.at >= issueStart - 1000) {
+            if (rec2.state === "failed") {
+              clearInterval(timer);
+              issueFailMsg = r6153IssueFailMessage_(rec2.error);
+              urlState = "ng";
+              check();
+              return;
+            }
+            if (rec2.state === "ok" && rec2.url) {
+              clearInterval(timer);
+              issuedUrl = rec2.url;
+              urlState = "ok";
+              check();
+              return;
+            }
+          }
+          if (n > maxPoll) { clearInterval(timer); urlState = "ng"; check(); }
+        }, 250);
+      }
+    }
+  }
+  if (phoneState === "wait") {
+    var canFetch = false;
+    try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+    if (!canFetch) { phoneState = "ng"; check(); }
+    else {
+      if (btn) { try { btn.textContent = "番号を確認中…"; } catch(e) {} }
+      apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+        var det = (res && res.applicant) || null;
+        if (det) {
+          if (det.phone != null) a.phone = String(det.phone || "");
+          if (det.email != null) a.email = String(det.email || "");
+        }
+        phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+        phoneState = phoneVal ? "ok" : "ng";
+        if (btn && phoneState === "ok") { try { btn.textContent = "発行中…"; } catch(e) {} }
+        check();
+      }).catch(function(){ fail("電話番号を確認できませんでした"); });
+    }
+  }
+  check();
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+/* ---- 不合格2 副次: SMS作成モーダル (openSmsCompose614) も同じ解決を使う ----
+   本体は書き換えず、未登録なら解決した応募者を applicants へ足してから委譲する。 */
+var r6161ComposePrev_ = openSmsCompose614;
+openSmsCompose614 = function(id){
+  try {
+    var found = false;
+    try { found = applicants.some(function(x){ return x && x.id === id; }); } catch(e) {}
+    if (!found) {
+      var a = r6161FindApplicant_(id);
+      if (a) { try { applicants.push(a); } catch(e) {} }
+    }
+  } catch(e) {}
+  return r6161ComposePrev_.apply(this, arguments);
+};
+
+/* ---- 不合格5: プレビューのファイル行に会社名を出す ----
+   ファイル名補完のときは既存ラッパが「会社名: ○○（ファイル名から）」を付ける。
+   ここでは列から決まった会社名を「会社名: ○○」として補う。 */
+function r6161FileCompany_(file){
+  try {
+    var fc = window._r616FileCompany || {};
+    if (file && fc[file]) return { name: fc[file], fromName: true };
+    var srcs = window._importSources || [];
+    for (var i = 0; i < srcs.length; i++) {
+      if (!srcs[i] || srcs[i].file !== file) continue;
+      var counts = {};
+      (srcs[i].mapped || []).forEach(function(r){
+        var c = "";
+        try { c = normalizeCompany((r && r.source_company) || ""); } catch(e) {}
+        if (c && c !== "会社名未登録") counts[c] = (counts[c] || 0) + 1;
+      });
+      var best = "", bn = 0;
+      Object.keys(counts).forEach(function(k){ if (counts[k] > bn) { bn = counts[k]; best = k; } });
+      if (best) return { name: best, fromName: false };
+    }
+  } catch(e) {}
+  return null;
+}
+function r6161AnnotateCompanies_(){
+  try {
+    var box = document.getElementById("impResult");
+    if (!box) return;
+    var files = (window._importSources || []).map(function(s){ return s && s.file; }).filter(Boolean);
+    if (!files.length) return;
+    box.querySelectorAll("p.small").forEach(function(p){
+      var t = p.textContent || "";
+      if (t.charAt(0) !== "・" || t.indexOf("会社名:") >= 0) return;
+      for (var i = 0; i < files.length; i++) {
+        if (t.indexOf("・" + files[i]) === 0) {
+          var info = r6161FileCompany_(files[i]);
+          if (info && !info.fromName) p.textContent = t + " ／ 会社名: " + info.name;
+          break;
+        }
+      }
+    });
+  } catch(e) {}
+}
+var r6161RipPrev_ = renderImportPreview;
+renderImportPreview = function(res, file){
+  var r = r6161RipPrev_.apply(this, arguments);
+  r6161AnnotateCompanies_();
+  return r;
+};
+var r6161RipsPrev_ = renderImportPreviewServer;
+renderImportPreviewServer = function(res, file){
+  var r = r6161RipsPrev_.apply(this, arguments);
+  r6161AnnotateCompanies_();
+  return r;
+};
 </script>
 
 </body></html>

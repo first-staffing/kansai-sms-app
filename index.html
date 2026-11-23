@@ -5685,4 +5685,354 @@ if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
   r612Scrub:r612Scrub_,r612CountsBlocked:r612CountsBlocked_,r612ResponsesBlocked:r612ResponsesBlocked_
 })}
 </script>
+<script>
+/* ===== ラウンド6.13: 案件マスター (サーバー) を CASES へ取り込む =====
+   実地 (2026-11-23 16:37, Deploy A): 「案件を探す」の総件数が 全81件
+   (同梱サンプル80件 + その端末のローカル取り込み分) で止まり、サーバーの
+   案件マスター (7,235件) が画面に出なかった。サーバーには getCaseMaster
+   (スナップショット / updated_since 差分, 追補14) が実装済みだが、
+   フロント (6.12 含む全版) から一度も呼ばれていなかったのが原因。
+   本ブロックの役割:
+   - サーバーモードでは getCaseMaster で CASES をサーバー案件に置き換え、
+     以後は server_time を保持して updated_since 差分で upsert する。
+   - 置き換えが着地するまでは、サンプル案件を「実データ」として見せない
+     (6.11/6.12 のゲート思想を案件側へ拡張)。失敗時は従来表示へ倒す。
+   - ローカル取り込みの先行反映行 (CIMP〜) は置き換えで巻き込まず、
+     サーバー側に同一案件が届いた時点でそちらを正として落とす。 */
+
+var _r613BootAt = Date.now();
+var _r613CaseSync = { status: "idle", at: "", serverTime: "", count: 0, error: "", persisted: false };
+var _r613FetchStarted = false;
+var R613_CASES_LS_KEY = "r613_case_master_v1";
+/* 永続化は server_time と案件本体を1オブジェクトで原子的に扱う。
+   片方だけ残ると「差分の土台が無いのに since だけ進む」事故になるため、
+   サイズ超過・保存失敗時は両方とも保存しない (次回はスナップショット)。 */
+var R613_PERSIST_MAX_CHARS = 4500000;
+
+function r613ServerExpected_() {
+  try {
+    if (window._r69ApplicantRoute) return false; /* フォーム側は担当者初期化の対象外 (R611 と同じ) */
+    return !!(typeof CONFIG !== "undefined" && CONFIG.API_URL);
+  } catch (e) { return false }
+}
+/* 案件ゲート: サーバーモード有効化後、サーバー案件が CASES に入るまでは
+   案件系の表示・計算を止める。有効化前は端末モード (従来表示) であり、
+   応募者データ面 (R6: 有効化後にサーバー行へ切替) と同じ扱いに揃える。
+   件数のゲートは従来どおり R611/R612 の期待ベースが担当する。
+   開く条件: サーバーを期待しない / 有効化前 / サーバー案件が着地済み
+   (復元含む) / 取得失敗が確定 / 起動から60秒 (安全弁)。 */
+function r613CasesLoading_() {
+  try {
+    if (!r613ServerExpected_()) return false;
+    if (!window._r6ServerMode) return false;
+    if (window._r613CasesFromServer) return false;
+    if (_r613CaseSync.status === "error") return false;
+    if (Date.now() - _r613BootAt > 60000) return false;
+    return true;
+  } catch (e) { return false }
+}
+
+/* --- 変換: サーバー案件 (caseSyncItem_ のホワイトリスト形) → 端末の案件形 ---
+   元フィールドとの対応は FIX_R613_REPORT.md の対応表を参照。
+   acquired は updated_at_src の日付部分。時刻付き ISO は JST 日付へ直す
+   (毎朝のシート同期は 07:10 JST = 前日 22:10 UTC に走るため、UTC 日付の
+   ままだと「本日」フィルタから1日ずれて落ちる)。日付だけの値はそのまま。 */
+function r613DateOnly_(iso) {
+  var s = String(iso || "");
+  if (!s) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var d = new Date(s);
+  if (isNaN(d)) return s.slice(0, 10);
+  return new Date(d.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+function serverCaseToLocal(it) {
+  if (!it || typeof it !== "object") return null;
+  var id = String(it.case_id || "");
+  if (!id) return null;
+  var lat = (it.lat === "" || it.lat == null) ? null : Number(it.lat);
+  var lon = (it.lon === "" || it.lon == null) ? null : Number(it.lon);
+  if (!isFinite(lat)) lat = null;
+  if (!isFinite(lon)) lon = null;
+  /* 出所: caseSourceLabel は "sheet"→スプシ / "excel"→追加Excel /
+     それ以外→Claude案件リスト。サーバーの source_flags (sms_app / ai_page /
+     manual / csv のカンマ区切り) をこの語彙へ寄せる。シート同期で生きている
+     sms_app を最優先し、アプリ取り込み由来の csv は「追加Excel」に寄せる。 */
+  var flags = String(it.source_flags || "");
+  var source = "";
+  if (/(^|,)sms_app(,|$)/.test(flags)) source = "sheet";
+  else if (/(^|,)csv(,|$)/.test(flags)) source = "excel";
+  return {
+    id: id,
+    facility: String(it.facility_name || ""),
+    service: String(it.service_type || ""),
+    prefecture: String(it.prefecture || ""),
+    municipality: String(it.municipality || ""),
+    address: String(it.address || ""),
+    lat: lat, lon: lon,
+    /* precision はサーバーの案件表に列自体が無く、返却ホワイトリストにも
+       入っていない。表示専用 (おすすめ計算は座標そのものを使う) のため、
+       座標があれば「その施設の座標」として 町名、無ければ 不明 とする。
+       サーバーの座標は ai_page 施設DB・アプリ取り込みの実座標のみが
+       保存されており、市区町村代表点はサーバーに保存されない
+       (代表点は端末側の表示代替) ため、この対応が最も歪みが小さい。 */
+    precision: (lat != null && lon != null) ? "町名" : "不明",
+    job_type: String(it.job_type || ""),
+    hours: "", days: "",
+    salary: String(it.salary_text || ""),
+    billing: null,
+    acquired: r613DateOnly_(it.updated_at_src),
+    open: it.is_open !== false,
+    source: source,
+    _r613UpdatedAt: String(it.updated_at || "")
+  };
+}
+
+/* CIMP 先行反映行とサーバー行の同一判定キー。取り込み時にサーバーへ送る
+   source_case_key (caseSourceKeyCsv_) と同じ組み立てで、端末行・サーバー
+   変換行のどちらにも同じ関数を適用する。 */
+function r613DedupKeyOfCase_(c) {
+  try { return caseSourceKeyCsv_(c.facility, c.address, c.job_type, c.service, c.salary) }
+  catch (e) { return String(c && c.id || "") }
+}
+function r613IsLocalImportRow_(c) { return !!c && String(c.id || "").indexOf("CIMP") === 0 }
+
+/* スナップショット適用: CASES をサーバー案件で置き換える。
+   その時点で CASES にある CIMP 行 (取り込み直後の先行反映) のうち、
+   サーバー側に同一案件がまだ無いものだけを残す (二重表示の回避)。 */
+function r613ApplyCaseSnapshot_(items) {
+  var rows = [], seen = {};
+  (items || []).forEach(function (it) {
+    var c = serverCaseToLocal(it);
+    if (c && !seen[c.id]) { seen[c.id] = true; rows.push(c) }
+  });
+  var serverKeys = {};
+  rows.forEach(function (c) { serverKeys[r613DedupKeyOfCase_(c)] = true });
+  var kept = [];
+  try {
+    kept = CASES.filter(function (c) {
+      return r613IsLocalImportRow_(c) && !serverKeys[r613DedupKeyOfCase_(c)];
+    });
+  } catch (e) { kept = [] }
+  CASES = kept.concat(rows);
+  _r613CaseSync.count = rows.length;
+  window._r613CasesFromServer = true;
+  try { bumpDataVersion() } catch (e) {}
+}
+/* 差分適用: id で upsert (既存は同位置で置換、新規は末尾へ)。
+   今回の差分に同一案件が届いた CIMP 行は、サーバー行を正として落とす。 */
+function r613ApplyCaseDelta_(items) {
+  var idx = {};
+  CASES.forEach(function (c, i) { idx[c.id] = i });
+  var arrivedKeys = {};
+  (items || []).forEach(function (it) {
+    var c = serverCaseToLocal(it);
+    if (!c) return;
+    arrivedKeys[r613DedupKeyOfCase_(c)] = true;
+    if (Object.prototype.hasOwnProperty.call(idx, c.id)) CASES[idx[c.id]] = c;
+    else { idx[c.id] = CASES.length; CASES.push(c) }
+  });
+  CASES = CASES.filter(function (c) {
+    return !(r613IsLocalImportRow_(c) && arrivedKeys[r613DedupKeyOfCase_(c)]);
+  });
+  _r613CaseSync.count = CASES.filter(function (c) { return !r613IsLocalImportRow_(c) }).length;
+  window._r613CasesFromServer = true;
+  try { bumpDataVersion() } catch (e) {}
+}
+
+function r613PersistCases_() {
+  try {
+    var rows = CASES.filter(function (c) { return !r613IsLocalImportRow_(c) });
+    var payload = JSON.stringify({
+      server_time: _r613CaseSync.serverTime || "",
+      saved_at: new Date().toISOString(),
+      cases: rows
+    });
+    if (!payload || payload.length > R613_PERSIST_MAX_CHARS) { _r613CaseSync.persisted = false; return false }
+    localStorage.setItem(R613_CASES_LS_KEY, payload);
+    _r613CaseSync.persisted = true;
+    return true;
+  } catch (e) { _r613CaseSync.persisted = false; return false }
+}
+/* 前回セッションのサーバー案件を同期的に復元する (本ブロック実行時点)。
+   復元できれば CASES は最初からサーバー案件であり、ゲートは開いた状態で
+   起動する (鮮度は直後の差分取得で担保する)。 */
+function r613RestorePersistedCases_() {
+  try {
+    if (!r613ServerExpected_()) return false;
+    var raw = null;
+    try { raw = localStorage.getItem(R613_CASES_LS_KEY) } catch (e) {}
+    if (!raw) return false;
+    var obj = JSON.parse(raw);
+    if (!obj || !Array.isArray(obj.cases) || !obj.cases.length) return false;
+    CASES = obj.cases;
+    _r613CaseSync.serverTime = String(obj.server_time || "");
+    _r613CaseSync.count = obj.cases.length;
+    _r613CaseSync.status = "restored";
+    _r613CaseSync.persisted = true;
+    window._r613CasesFromServer = true;
+    try { bumpDataVersion() } catch (e) {}
+    return true;
+  } catch (e) { return false }
+}
+
+function r613MaybeReroute_() {
+  try {
+    var h = String(location.hash || "");
+    if (h === "" || h === "#/" || h.indexOf("#/proposals") === 0) {
+      if (typeof route === "function") route();
+    }
+  } catch (e) {}
+}
+
+/* 取得本体: serverTime を保持していれば差分、無ければスナップショット。
+   updated_since には server_time から5分の重なりを持たせて送る
+   (取得と同時刻に更新された案件の取りこぼし防止。upsert なので
+   重なった分が再送されても重複は作らない)。 */
+function fetchCaseMasterR613_() {
+  if (_r613FetchStarted) return Promise.resolve(false);
+  if (!r613ServerExpected_() || typeof apiCall !== "function") return Promise.resolve(false);
+  _r613FetchStarted = true;
+  _r613CaseSync.status = "loading";
+  var sinceStored = _r613CaseSync.serverTime || "";
+  var req = { action: "getCaseMaster" };
+  if (sinceStored) {
+    var t = new Date(sinceStored).getTime();
+    if (isFinite(t)) req.updated_since = new Date(t - 5 * 60 * 1000).toISOString();
+    else req.updated_since = sinceStored;
+  }
+  return apiCall(req).then(function (res) {
+    /* cases 配列の無い応答は「空のマスター」ではなく異常として扱い、
+       CASES を消さない (モック・旧デプロイ等の想定外応答への防御)。 */
+    if (!res || !Array.isArray(res.cases)) {
+      _r613CaseSync.status = "error";
+      _r613CaseSync.error = "getCaseMaster: 応答に cases 配列がありません";
+      return false;
+    }
+    var items = res.cases;
+    var serverTime = String((res && res.server_time) || "");
+    /* 適用方法は「送ったもの」で決める: updated_since を送ったなら差分適用。
+       応答の snapshot フラグはサーバーが必ず返すが、欠けた場合に
+       差分をスナップショット扱いして置き換えてしまう事故を避ける。 */
+    if (req.updated_since) r613ApplyCaseDelta_(items);
+    else r613ApplyCaseSnapshot_(items);
+    if (serverTime) _r613CaseSync.serverTime = serverTime;
+    _r613CaseSync.status = "ok";
+    _r613CaseSync.at = new Date().toISOString();
+    _r613CaseSync.error = "";
+    r613PersistCases_();
+    r613MaybeReroute_();
+    return true;
+  }).catch(function (e) {
+    _r613CaseSync.status = "error";
+    _r613CaseSync.error = String(e && e.message || e);
+    /* 失敗: 復元済みのサーバー案件があればそれが正 (ゲートは開いたまま)。
+       無ければゲートが開いて従来表示 (サンプル) へフォールバックする。 */
+    return false;
+  });
+}
+/* 同一セッション内の再取得 (差分)。__APP_LOGIC__ 経由でも呼べる。 */
+function refreshCaseMasterR613_() {
+  _r613FetchStarted = false;
+  return fetchCaseMasterR613_();
+}
+
+/* --- ゲートの執行: 案件を消費する表示面を、着地まで読み込み中にする ---
+   おすすめ (recommend) を止めると、別案件・新着マッチ提案・フォーム用の
+   案件選定など CASES 依存の計算が一括でサンプル混入しなくなる。
+   応募者側と違い件数の表示面は無いので、止めるのは計算とモーダル・画面。 */
+var _recommendR613 = recommend;
+recommend = function (a, limit, mode) {
+  if (r613CasesLoading_()) return [];
+  return _recommendR613(a, limit, mode);
+};
+var _recommendHtmlR613 = recommendHtml;
+recommendHtml = function (a, expanded) {
+  if (r613CasesLoading_()) return '<p class="small">案件データを読み込み中…</p>';
+  return _recommendHtmlR613(a, expanded);
+};
+var _proposalsAllR613 = proposalsAll;
+proposalsAll = function () {
+  if (r613CasesLoading_()) return [];
+  return _proposalsAllR613();
+};
+var _proposalsHtmlR613 = proposalsHtml;
+proposalsHtml = function () {
+  if (r613CasesLoading_()) return '<div class="card"><h3>新着マッチ提案</h3><p class="small">案件データを読み込み中…</p></div>';
+  return _proposalsHtmlR613();
+};
+var _openCaseSearchR613 = openCaseSearch;
+openCaseSearch = function () {
+  if (r613CasesLoading_()) {
+    showModal('<h3>案件を探す</h3><p class="small">案件データを読み込み中…</p><button onclick="closeModal()">閉じる</button>');
+    return;
+  }
+  return _openCaseSearchR613();
+};
+var _openAltCasesR613 = openAltCases;
+openAltCases = function (id) {
+  if (r613CasesLoading_()) {
+    showModal('<h3>別案件</h3><p class="small">案件データを読み込み中…</p><button onclick="closeModal()">閉じる</button>');
+    return;
+  }
+  return _openAltCasesR613(id);
+};
+var _reverseViewR613 = reverseView;
+reverseView = function (list) {
+  if (r613CasesLoading_()) return '<div class="card"><h3>案件から近くの求職者を探す</h3><p class="small">案件データを読み込み中…</p></div>';
+  return _reverseViewR613(list);
+};
+/* ホームの提案ナビ行 (R69 の後処理が proposalsAll の件数で 未読N件 を出す)
+   は、ゲート中は件数を出さず読み込み中にする (6.12 の件数思想に合わせる)。 */
+var _viewHomeR613 = viewHome;
+viewHome = function () {
+  _viewHomeR613();
+  try {
+    if (!r613CasesLoading_()) return;
+    var app = document.getElementById("app"); if (!app || !app.querySelector) return;
+    var row = app.querySelector('[data-r69-proposals-nav="1"]');
+    if (row) {
+      var spans = row.querySelectorAll("span");
+      for (var i = 0; i < spans.length; i++) {
+        if (/未読\s*\d+件/.test(spans[i].textContent || "")) spans[i].textContent = "読み込み中…";
+      }
+    }
+  } catch (e) {}
+};
+
+/* --- 起動経路 ---
+   1) 前回分の復元 (同期)。2) サーバーモード有効化に案件取得を相乗りさせる。
+   3) 有効化が別経路 (キャッシュ済み参照等) で済んでいた場合に備え、
+      R611 と同じ ping 観測でも開始できるようにする (開始は1回だけ)。 */
+r613RestorePersistedCases_();
+var _activateServerModeR613 = activateServerModeR6_;
+activateServerModeR6_ = function () {
+  var p = _activateServerModeR613();
+  try { fetchCaseMasterR613_() } catch (e) {}
+  return p;
+};
+try { if (window._r6ServerMode) fetchCaseMasterR613_() } catch (e) {}
+try {
+  if (r613ServerExpected_() && typeof apiCall === "function") {
+    apiCall({ action: "ping" }).then(function (res) {
+      var hello = !!(res && (res.pong === true || res.activeUserEmail || res.schema));
+      if (hello) fetchCaseMasterR613_();
+    }, function () {});
+  }
+} catch (e) {}
+
+if (window.__APP_LOGIC__) {
+  Object.assign(window.__APP_LOGIC__, {
+    serverCaseToLocal: serverCaseToLocal,
+    r613CasesLoading: r613CasesLoading_,
+    fetchCaseMasterR613: fetchCaseMasterR613_,
+    refreshCaseMasterR613: refreshCaseMasterR613_,
+    getR613CaseSync: function () { return _r613CaseSync },
+    getCases: function () { return CASES },
+    /* ゲートを __APP_LOGIC__ 経由の呼び出しにも効かせる (R69 ラッパーが
+       5266行で __APP_LOGIC__.proposalsAll を差し替えたのと同じ流儀)。 */
+    proposalsAll: proposalsAll,
+    recommend: recommend
+  });
+}
+</script>
 </body></html>

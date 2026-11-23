@@ -179,6 +179,30 @@ input[type=checkbox]{width:28px;height:28px;min-height:28px}
 .card .flex button,.card .flex .btn{min-height:48px}
 @media (max-width:640px){header a{min-height:48px;padding:10px 14px;font-size:14px}#summaryBar{font-size:13px}}
 
+</style><style id="r614css">
+/* ===== R614 UI簡素化（旧UI寄せ）: 大きなタップ標的・1カード結合・県タイル3列 ===== */
+header nav a{min-height:48px;display:inline-flex;align-items:center;font-size:14px;padding:10px 12px}
+#app .tabs button, #app .tabs a.btn{min-height:48px;font-size:15px;padding:10px 14px}
+#app details>summary{min-height:48px;display:flex;align-items:center;font-size:15px;font-weight:700;cursor:pointer;padding:6px 2px}
+#app .r614filterTop{margin-bottom:0;border-bottom:none;border-bottom-left-radius:0;border-bottom-right-radius:0}
+#app .r614filterBottom{margin-top:0;border-top:none;border-top-left-radius:0;border-top-right-radius:0}
+#app .r614filterTop select{min-height:48px;font-size:15px}
+#app .r614filterBottom input{min-height:48px}
+#app .r614filterBottom>div.flex>input{min-height:52px;font-size:16px}
+#app .prefBar.bigPrefs.r614prefs{grid-template-columns:repeat(3,1fr)}
+#app .prefBar.bigPrefs.r614prefs>*{grid-column:auto;min-height:56px}
+#app .r614prefSum{display:none}
+#app .r614card .r614actions{flex-wrap:wrap}
+#app .r614card .r614actions>button, #app .r614card .r614actions>a.btn{flex:1 1 30%;min-height:48px;font-size:15px}
+#app .r614card .r614main{flex-wrap:wrap;align-items:stretch}
+#app .r614card .r614main>a.btn, #app .r614card .r614main>button.btn.primary{flex:1 1 100%;min-height:52px;font-size:16px;display:flex;align-items:center;justify-content:center}
+#app .r614card .r614main>label{min-height:48px;display:inline-flex;align-items:center}
+#app>div.flex button{min-height:48px}
+#bulkBar button{min-height:48px}
+#app .tagbar button{min-height:44px}
+.r614hide{display:none}
+#app details.r614mailAdv{margin:6px 0}
+
 </style></head><body>
 <div class="stickyTop"><header><b>応募者SMS・Gmail配信</b><span id="userChip" style="font-size:12px;white-space:nowrap;opacity:.95"></span>
 <nav><a href="#/">入口</a><a href="#/list">応募者一覧</a><a href="#/mail">Gmail配信</a><a href="#/import">CSV取り込み</a><a href="#/responses">回答一覧 <span id="respNavBadge"></span></a><a href="#/settings">設定</a></nav></header>
@@ -233,7 +257,7 @@ function opToRequests(op){
     case "operator_save": {let o=null;try{o=(p.email?operators.find(x=>x.email===p.email):null)||operators[p.i]}catch(e){}if(!o)return null;if(p.email&&o.email!==p.email)return null;if(!o.email)return null; /* R3 検証 #15: メール未登録の行はサーバーへ送らない (空メールが自分の行への上書きに化ける経路を断つ) */ return [{action:"updateOperator",email:o.email,display_name:(o.display||o.name||""),signature:(o.signature||""),reply_to:(o.reply_to||"")}]}
     case "template_save": {const keys=["sms_first","sms_first_compact","sms_follow","reply_detail","reply_tour","reply_other","mail_subject","mail_body"];let t={};try{t=templates||{}}catch(e){}return keys.filter(function(k){return t[k]!=null&&t[k]!==""}).map(function(k){return {action:"updateTemplate",kind:k,body:t[k]}})}
     case "import_commit": { if(!Array.isArray(p.rows))return null; if(!p.rows.length)return []; const _chunks=[]; for(let _i=0;_i<p.rows.length;_i+=500)_chunks.push({action:"importCommit",rows:p.rows.slice(_i,_i+500),file_name:(p.file_name||""),kind:"applicants"}); return _chunks; } /* R3: サーバーの1回5000行上限に合わせて分割する (単一ファイルが上限超でもバッチ全体が落ちない) */
-    case "mail_delivery": {if(!p.subject)return null;const req={action:"mailCreateDelivery",subject:p.subject,body_template:p.body_template,mode:p.mode,recommend_count:p.recommend_count,top_n:p.top_n,filter:p.filter,include_active:p.include_active,include_response_in_progress:p.include_response_in_progress,scheduled_at:p.scheduled_at};if(p.test)req.test=p.test;if(op&&op.opId)req.client_request_id=op.opId;return [req]}
+    case "mail_delivery": {if(!p.subject)return null;const req={action:"mailCreateDelivery",subject:p.subject,body_template:p.body_template,mode:p.mode,recommend_count:p.recommend_count,top_n:p.top_n,filter:p.filter,include_active:p.include_active,include_response_in_progress:p.include_response_in_progress,scheduled_at:p.scheduled_at,include_form:p.include_form};if(p.test)req.test=p.test;if(op&&op.opId)req.client_request_id=op.opId;return [req]}
     case "case_import": {if(!Array.isArray(p.cases))return null;const out=[];for(let i=0;i<p.cases.length;i+=1000)out.push({action:"pushCasesFromAiPage",cases:p.cases.slice(i,i+1000)});return out}
     case "response_submit": {if(!p.response)return null;const r=p.response;const intentCode=function(v){if(v==="詳細希望")return "detail";if(v==="見学希望")return "tour";if(v==="別案件希望")return "other_case";if(typeof v==="string"&&/^[a-z][a-z0-9_]*$/.test(v))return v;return "detail"};const req={action:"submitResponse",form_token:(p.form_token||""),phone:(p.phone||r.phone||""),intent:intentCode(r.intent),experience:(r.experience||""),interview_desired_date:(r.interview||""),desired_start_date:(r.start||""),desired_tour_date:(r.tour||""),selected_case_ids:(r.selected_case_ids||[]),experience_years:(r.experience_years??""),qualifications:(r.qualification||r.qualifications||""),phone_consult_datetime:(r.phone_consult||""),phone_dates:(r.phone_dates||[]),phone_bands:(r.phone_bands||[]),phone_anytime:!!r.phone_anytime,experience_band:(r.experience_band||""),experience_detail:(r.experience_detail||""),desired_rate_band:(r.desired_rate_band||""),free_text:(r.free||"")};if(p.submit_id)req.submit_id=p.submit_id;return [req]}
     case "sms_template_save": case "campaign_save": case "special_body_lib_save": return [];
@@ -898,7 +922,7 @@ const localCount=(window._mailTargets||[]).length;const opC=operators.find(o=>o.
 const showConfirm=function(serverRes){const info=buildMailConfirmInfo(serverRes,localCount,senderLabel,subjectC,MF.mode,scheduledC);window._mailConfirmInfo=info;showModal(`<h3>送信前の確認</h3><p class="kv">対象人数: ${info.count}名（${esc(info.countSource)}）\n送信者: ${esc(info.sender)}\n件名: ${esc(info.subject)}\n配信モード: ${esc(info.modeLabel)}${info.scheduledAt?`\n予約日時: ${esc(info.scheduledAt)}`:""}</p><div class="flex"><button class="primary" onclick="confirmSendMail()">この内容で送信する</button><button onclick="cancelMailConfirm()">戻る</button></div>`);return info};
 if(!CONFIG.API_URL){showConfirm(null);return Promise.resolve(null)}
 return fetchMailPreview().then(function(res){showConfirm(res);return res}).catch(function(e){showConfirm(null);return null})}
-function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${t.length}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
+function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(typeof res.target_count==="number"){d.count=res.target_count;d.server_target_count=res.target_count;if(typeof res.matched_count==="number")d.server_matched_count=res.matched_count;if(res.excluded!=null)d.server_excluded=res.excluded}if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${(typeof res.target_count==="number"?res.target_count:t.length)}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
 /* ===== R3 方式変更: 画面からのバッチ送信 (施設メール配信と同じ方式) =====
    配信作成後、この画面が sendNextBatch を繰り返し呼んで自分のキューを送り切る。
    実行はアクセスユーザーとして走るため、その人の Gmail から送られ送信済みに残る。
@@ -6035,4 +6059,394 @@ if (window.__APP_LOGIC__) {
   });
 }
 </script>
-</body></html>
+<script>
+/* ================= R614: UI簡素化（旧UI寄せ） + SMS主経路モーダル + Gmail市区町村のサーバー連動 =================
+   追加ブロックのみで実装する。6.11〜6.13の仕組み（読み込みゲート / テスト送信ドック /
+   案件マスター連携 / 提案メモ化 / outbox）は変更しない。 */
+
+/* ---- 1. 文面切替カード → 折りたたみ1行（現在選択とフォーム付与の有無を summary に表示） ---- */
+var _smsModeBar614 = smsModeBar;
+smsModeBar = function(){
+  var inner = "";
+  try { inner = String(_smsModeBar614() || ""); } catch(e) { return ""; }
+  inner = inner.replace(/^<div class="card">/, "").replace(/<\/div>$/, "").replace(/<b>保存済み案件文面への切替<\/b>/, "");
+  var cur = null;
+  try { cur = smsModes.find(function(m){ return m.id === smsModeId; }) || smsModes[0]; } catch(e) {}
+  var curTitle = cur ? cur.title : "";
+  var formNote = (typeof state !== "undefined" && state.attachFormSms === false) ? "フォーム付けない" : "フォーム付ける";
+  var open = (typeof state !== "undefined" && state._tplOpen) ? " open" : "";
+  return '<details class="card r614tpl"' + open + ' ontoggle="state._tplOpen=this.open"><summary>文面切替： ' + esc(curTitle) + '（' + formNote + '）</summary>' + inner + '</details>';
+};
+
+/* ---- 2. 絞り込み2カード → 1カードに見える結合 ---- */
+var _filterBar614 = filterBar;
+filterBar = function(list){
+  var h = "";
+  try { h = String(_filterBar614(list) || ""); } catch(e) { return ""; }
+  try {
+    var n = 0;
+    h = h.replace(/<div class="card">/g, function(m){
+      n++;
+      if (n === 1) return '<div class="card r614filterTop">';
+      if (n === 2) return '<div class="card r614filterBottom">';
+      return m;
+    });
+    h = h.replace('<button onclick="clearMuniPref()">地域を解除</button>', '<button style="flex:1" onclick="clearMuniPref()">地域を解除</button>');
+  } catch(e) {}
+  return h;
+};
+
+/* ---- 3. 県タイル: マーカー付与（CSSで3列グリッド化）。府県サマリ行はタイル内件数と重複するため畳む ---- */
+var _prefButtons614 = prefButtons;
+prefButtons = function(){
+  var h = "";
+  try { h = String(_prefButtons614() || ""); } catch(e) { return ""; }
+  h = h.replace('class="prefBar bigPrefs"', 'class="prefBar bigPrefs r614prefs"');
+  h = h.replace('<p class="small">', '<p class="small r614prefSum">');
+  return h;
+};
+
+/* ---- 4. 応募者カード: 重複行の削減 + SMS主経路化 ---- */
+var _cardHtml614 = cardHtml;
+cardHtml = function(a){
+  var h = "";
+  try { h = String(_cardHtml614(a) || ""); } catch(e) { return ""; }
+  try {
+    /* 4a. 進捗の「応募：会社｜日付」行を落とし「最も進んだ状況：」に一本化する
+       （progressHtml 自体は変更しないため、詳細モーダルの要点表示は従来どおり） */
+    h = h.replace(/応募：[^<]*<br>/, "");
+    /* 4b. 単独行で出るSMSバッジを、進捗行の末尾へ寄せて行数を減らす */
+    var bm = h.match(/<div style="margin-top:6px">(<span class="badge[^"]*">[^<]*<\/span>)<\/div>/);
+    if (bm) {
+      h = h.replace(bm[0], "");
+      h = h.replace(/(最も進んだ状況：[^<]*)(<\/p>)/, "$1 " + bm[1] + "$2");
+    }
+    /* 4c. 初回SMSの注意書きは一覧から除去する（本文確認はSMS作成モーダル側で行う） */
+    h = h.replace('<p class="small">リンクを開いただけでは送信済みになりません。本文は「SMS作成を開く」から端末の作成画面で確認できます。</p>', "");
+    /* 4d. 候補者プロフィールの小行は一覧から除去する（内容は詳細モーダルで確認できる） */
+    h = h.replace(/<span class="small">プロフィール[\s\S]*?<\/span>/, "");
+    /* 4e. SMS作成リンク → 主経路モーダルを開くボタンへ置換する。
+       電話番号が無い応募者には押せない表示にし、「sms:&body=」だけのリンクを作らない */
+    var phone = String((a && a.phone) || "").replace(/[^0-9]/g, "");
+    h = h.replace(/<a class="btn primary" href="sms:[^"]*">SMS作成を開く（端末の作成画面）<\/a>/, function(){
+      if (phone) return '<button class="btn primary" onclick="openSmsCompose614(\'' + a.id + '\')">SMS作成を開く</button>';
+      return '<button class="btn" disabled>SMS作成（電話番号なし）</button>';
+    });
+    /* 4f. CSS用マーカー */
+    h = h.replace(/<article class="card"/, '<article class="card r614card"');
+    h = h.replace(/<div class="flex">(<button onclick="openDetail\()/, '<div class="flex r614actions">$1');
+    var _mi = h.lastIndexOf('<div class="flex" style="margin-top:8px">');
+    if (_mi >= 0 && h.indexOf("SMS作成を開く", _mi) >= 0) {
+      h = h.slice(0, _mi) + '<div class="flex r614main" style="margin-top:8px">' + h.slice(_mi + '<div class="flex" style="margin-top:8px">'.length);
+    }
+  } catch(e) {}
+  return h;
+};
+
+/* ---- 5. SMS作成モーダル（主経路） ----
+   一覧の直接リンクに代わる主経路。フォーム付与がONのときは、発行済みURLが
+   本文プレビューに入ったことを目で確認できてから「SMSを開く」を有効化する。
+   タップ時の裏側発行＋ポーリング（smsTapIssue_）だけに依存しない。 */
+function r614FirstBody_(a){
+  var tpl = null;
+  try {
+    tpl = smsModes.find(function(m){ return m.id === smsModeId; })
+       || smsModes.find(function(m){ return m.id === "registration_compact"; })
+       || smsModes[0];
+  } catch(e) {}
+  var body = "";
+  try { body = personalize(tpl.body, a).replace("{不足ヒヤリング}", missingHearing(a)); } catch(e) {}
+  return { tpl: tpl, body: body };
+}
+function r614BodyWithUrl_(body, url){
+  if (!url || String(body).indexOf(url) >= 0) return body;
+  return String(body) + "\n\n回答フォームからもご回答いただけます。\n" + url;
+}
+function openSmsCompose614(id){
+  var a = null;
+  try { a = applicants.find(function(x){ return x.id === id; }); } catch(e) {}
+  if (!a) return;
+  var phone = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (!phone) {
+    try { showToast("電話番号が未登録のため、SMSを作成できません", "warn"); } catch(e) {}
+    return;
+  }
+  if (window._r614SmsPoll) { clearInterval(window._r614SmsPoll); window._r614SmsPoll = null; }
+  var st = r614FirstBody_(a);
+  var attach = (typeof state === "undefined" || state.attachFormSms !== false);
+  var url = "";
+  try { url = attach ? formUrlFor(a) : ""; } catch(e) {}
+  var body = r614BodyWithUrl_(st.body, url);
+  var size = { len: String(body).length, units: 1 };
+  try { size = smsSize(body); } catch(e) {}
+  var ready = !attach || !!url;
+  var html = '<h3>SMS作成： ' + esc(smsRecipientName(a.name)) + '様</h3>'
+    + '<p class="small">宛先: ' + esc(a.phone) + ' ／ 文面: ' + esc(st.tpl ? st.tpl.title : "") + ' ／ ' + size.len + '字（' + size.units + '通）</p>'
+    + ((st.tpl && st.tpl.id !== "registration_compact") ? '<p class="small">いまの文面は圧縮版ではありません。<button onclick="r614UseCompact614(\'' + a.id + '\')">圧縮版に切り替える</button></p>' : "")
+    + '<label>本文プレビュー</label>'
+    + '<pre id="r614SmsBody" style="white-space:pre-wrap;border:1px solid var(--border);border-radius:8px;padding:10px;max-height:40vh;overflow:auto">' + esc(body) + '</pre>'
+    + '<p class="small" id="r614SmsStatus">' + (attach ? (url ? "フォームURLは本文に入っています。" : "フォームURLを発行しています…") : "フォームを付けない設定です（文面切替で変更できます）。") + '</p>'
+    + '<div class="flex"><a class="btn primary" id="r614SmsOpen" href="' + (ready ? smsLink(a.phone, body) : "#") + '"' + (ready ? "" : ' aria-disabled="true" style="opacity:.45;pointer-events:none"') + ' onclick="r614SmsOpened614()">SMSを開く</a><button onclick="closeModal()">閉じる</button></div>'
+    + '<p class="small">送信したら、一覧の「送信済み」をONにして記録してください。</p>';
+  try { showModal(html); } catch(e) { return; }
+  if (attach && !url) {
+    try { issueFormInvite(a, "sms", null); } catch(e) {}
+    var n = 0;
+    window._r614SmsPoll = setInterval(function(){
+      n++;
+      var u = "";
+      try { u = formUrlFor(a); } catch(e) {}
+      if (u || n > 60) {
+        clearInterval(window._r614SmsPoll); window._r614SmsPoll = null;
+        var pre = document.getElementById("r614SmsBody");
+        var btn = document.getElementById("r614SmsOpen");
+        var stEl = document.getElementById("r614SmsStatus");
+        if (!pre || !btn) return;
+        if (u) {
+          var b2 = r614BodyWithUrl_(st.body, u);
+          pre.textContent = b2;
+          btn.setAttribute("href", smsLink(a.phone, b2));
+          btn.removeAttribute("aria-disabled");
+          btn.style.opacity = "";
+          btn.style.pointerEvents = "";
+          if (stEl) stEl.textContent = "フォームURLは本文に入っています。";
+        } else if (stEl) {
+          stEl.innerHTML = 'フォームURLの発行に時間がかかっています。<button onclick="openSmsCompose614(\'' + a.id + '\')">再試行</button>';
+        }
+      }
+    }, 250);
+  }
+}
+function r614UseCompact614(id){ smsModeId = "registration_compact"; openSmsCompose614(id); }
+function r614SmsOpened614(){ try { closeModal(); } catch(e) {} }
+
+/* ---- 6. Gmail絞り込み: サーバーモードでは市区町村集合を muni_by_pref 由来にする ----
+   バックエンドの getApplicantSummary が areas[area].muni_by_pref
+   （府県 → {市区町村: 人数}）を返すようになった前提。無い応答では従来の
+   ローカル集合へフォールバックする。デモモードは従来どおり。 */
+var _mailMunis614 = mailMunisForPrefs;
+mailMunisForPrefs = function(prefs, pool){
+  try {
+    if (window._r6ServerMode && window._r6ApplicantSummary && window._r6ApplicantSummary.areas) {
+      var ar = window._r6ApplicantSummary.areas[state.area];
+      var mbp = ar && ar.muni_by_pref;
+      if (mbp && typeof mbp === "object") {
+        var ps = (prefs && prefs.length) ? prefs : (MF.pref ? [MF.pref] : []);
+        var set = {};
+        Object.keys(mbp).forEach(function(p){
+          if (ps.length && ps.indexOf(p) < 0) return;
+          var mm = mbp[p] || {};
+          Object.keys(mm).forEach(function(m){ if (m) set[m] = 1; });
+        });
+        return Object.keys(set).sort();
+      }
+    }
+  } catch(e) {}
+  return _mailMunis614(prefs, pool);
+};
+try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.mailMunisForPrefs = mailMunisForPrefs; } catch(e) {}
+
+/* サマリ未取得のままメール画面に入った場合は、取得してから再描画する（1回だけ） */
+var _viewMail614 = viewMail;
+viewMail = function(){
+  _viewMail614();
+  r614MailDensity_();
+  try {
+    if (window._r6ServerMode && !window._r614MuniFetchTried) {
+      var ar = window._r6ApplicantSummary && window._r6ApplicantSummary.areas && window._r6ApplicantSummary.areas[state.area];
+      if (!(ar && ar.muni_by_pref)) {
+        window._r614MuniFetchTried = true;
+        fetchApplicantSummaryR6_().then(function(){
+          try { if ((location.hash || "").indexOf("mail") >= 0) route(); } catch(e) {}
+        });
+      }
+    }
+  } catch(e) {}
+};
+
+/* ---- 7. Gmail画面の密度改善: 詳細な絞り込みを折りたたみへ寄せる ----
+   常時表示に残すのは基本だけ（地域・職種グリッド / 上から何人 / 対象を確認 /
+   条件サマリー）。会社・年齢・資格・CSVステータス・各種「含める」チェックは
+   details へ移すが、DOMからは消さないので全フィルタが開けば従来どおり使える。
+   開閉状態は state._mailAdvOpen に保持し、再描画（route）でも開いたままにする。 */
+function r614MailDensity_(){
+  try {
+    var app = document.getElementById("app");
+    if (!app || !app.querySelectorAll) return;
+    var cards = app.querySelectorAll(".card");
+    for (var i = 0; i < cards.length; i++) {
+      var h3 = cards[i].querySelector("h3");
+      if (!h3) continue;
+      if (h3.textContent.indexOf("連動絞り込み") >= 0) {
+        /* 連動絞り込みカード: 長い説明文だけを畳む（見出し・チップは残す） */
+        var ps = cards[i].querySelectorAll("p.small");
+        if (ps.length) ps[0].classList.add("r614hide");
+      } else if (h3.textContent.indexOf("絞り込み") === 0) {
+        r614CollapseMailFilters_(cards[i]);
+      }
+    }
+  } catch(e) {}
+}
+function r614CollapseMailFilters_(card){
+  if (!card || card.querySelector("details.r614mailAdv")) return;
+  var kids = [].slice.call(card.children);
+  var move = [];
+  kids.forEach(function(el, idx){
+    if (el.tagName === "H3") return;
+    if (el.classList && el.classList.contains("card")) return; /* 条件サマリー */
+    if (el.tagName === "BUTTON" && el.textContent.indexOf("対象を確認") >= 0) return;
+    if (el.tagName === "LABEL" && el.textContent.indexOf("上から何人") >= 0) return;
+    if (el.tagName === "INPUT" && idx > 0 && kids[idx - 1].tagName === "LABEL" && kids[idx - 1].textContent.indexOf("上から何人") >= 0) return;
+    if (el.classList && el.classList.contains("grid") && el.textContent.indexOf("都道府県") >= 0) return; /* 地域・職種は基本として残す */
+    if (el.tagName !== "LABEL" && el.tagName !== "INPUT" && (!el.querySelector || !el.querySelector("input,button,select,textarea"))) return;
+    move.push(el);
+  });
+  if (!move.length) return;
+  var det = document.createElement("details");
+  det.className = "r614mailAdv";
+  det.setAttribute("ontoggle", "state._mailAdvOpen=this.open");
+  var sum = document.createElement("summary");
+  sum.textContent = "詳細な絞り込み（会社・年齢・資格・ステータス）";
+  det.appendChild(sum);
+  move.forEach(function(el){ det.appendChild(el); });
+  if (typeof state !== "undefined" && state._mailAdvOpen) det.open = true;
+  var h3 = card.querySelector("h3");
+  if (h3 && h3.nextSibling) card.insertBefore(det, h3.nextSibling);
+  else card.appendChild(det);
+}
+
+/* ---- 8. Gmail監査 F2/F3/F4 (GMAIL_AUDIT_REPORT のフロント修正分) ---- */
+/* F4: 送信確認モーダルの送信者表示を、ログイン中の本人に固定する
+   （実際の送信者は常に本人。MF.sender の選択と食い違う表示を正す） */
+var _confirmInfo614 = buildMailConfirmInfo;
+buildMailConfirmInfo = function(serverRes, localCount, sender, subject, mode, scheduledAt){
+  try {
+    var em = String((window._pingResult && window._pingResult.activeUserEmail) || "").trim().toLowerCase();
+    if (em) {
+      var me = operators.find(function(o){ return String((o && o.email) || "").trim().toLowerCase() === em; });
+      if (me) sender = (me.name || "") + "（" + (me.email || "") + "）";
+    }
+  } catch(e) {}
+  return _confirmInfo614(serverRes, localCount, sender, subject, mode, scheduledAt);
+};
+
+/* F2: 作成結果（サーバー確定の対象件数）を進捗表示に採用する。
+   履歴レコード側の count は doSendMail 本体の外科的修正でサーバー値を採用済み。 */
+var _doSendMail614 = doSendMail;
+doSendMail = function(){
+  var p = _doSendMail614();
+  try {
+    if (p && typeof p.then === "function") {
+      p.then(function(opRes){
+        try {
+          var res = opRes && opRes.result;
+          if (res && typeof res.target_count === "number") {
+            window._r614LastServerTarget = { target: res.target_count, matched: res.matched_count, excluded: res.excluded };
+            r614PaintServerTarget_();
+          }
+        } catch(e) {}
+        return opRes;
+      });
+    }
+  } catch(e) {}
+  return p;
+};
+function r614PaintServerTarget_(){
+  try {
+    var t = window._r614LastServerTarget; if (!t) return;
+    var dock = r614EnsureSendDock_(); if (!dock) return;
+    var el = document.getElementById("r614SendTarget");
+    if (!el) { el = document.createElement("p"); el.id = "r614SendTarget"; el.className = "small"; dock.appendChild(el); }
+    var ex = "";
+    if (t.excluded != null) {
+      ex = (typeof t.excluded === "object")
+        ? Object.keys(t.excluded).map(function(k){ return k + " " + t.excluded[k]; }).join(" / ")
+        : String(t.excluded);
+    }
+    el.textContent = "作成結果（サーバー確定）: 対象 " + t.target + "名"
+      + (typeof t.matched === "number" ? " ／ 条件一致 " + t.matched + "名" : "")
+      + (ex ? " ／ 除外: " + ex : "");
+  } catch(e) {}
+}
+
+/* F3: 本番送信もテスト送信と同じ積算方式で結果を表示する。
+   sendNextBatch の応答を apiCall ラッパーで受け、送信/除外/失敗を積算し、
+   #app の外の常設ドック (#r614SendDock) に出す（再描画で消えない）。
+   テスト送信の実行中は R69 の監視が担当するため、こちらは動かない。 */
+function r614EnsureSendDock_(){
+  try {
+    var dock = document.getElementById("r614SendDock");
+    if (dock) return dock;
+    var app = document.getElementById("app");
+    if (!app || !app.parentNode) return null;
+    dock = document.createElement("div");
+    dock.id = "r614SendDock";
+    dock.className = "card";
+    dock.style.margin = "10px";
+    dock.innerHTML = '<b>本番送信の結果</b><p class="small" id="r614SendOutcome">まだ送信していません</p>';
+    app.parentNode.insertBefore(dock, app.nextSibling);
+    return dock;
+  } catch(e) { return null; }
+}
+function r614SendTap_(res){
+  var w = window._r614SendWatch; if (!w) return;
+  try {
+    if (res && typeof res === "object") {
+      if (res.skipped && res.skipped !== "locked") { r614SendFinish_("今は送信できません（理由: " + String(res.skipped) + "）。残りはサーバーに残っています"); return; }
+      w.sent += Number(res.sent || 0);
+      w.failed += Number(res.failed || 0);
+      w.excl += Number(res.skipped_excluded || 0);
+      r614PaintSendProgress_();
+      if (res.remaining === 0) r614SendFinish_(null);
+    }
+  } catch(e) {}
+}
+function r614PaintSendProgress_(){
+  try {
+    var w = window._r614SendWatch;
+    var el = document.getElementById("r614SendOutcome");
+    if (!w || !el) return;
+    el.textContent = "送信中… 送信 " + w.sent + "件 ／ 除外 " + w.excl + "件 ／ 失敗 " + w.failed + "件";
+  } catch(e) {}
+}
+function r614SendFinish_(note){
+  var w = window._r614SendWatch; window._r614SendWatch = null; if (!w) return;
+  try {
+    var dock = r614EnsureSendDock_(); if (!dock) return;
+    var el = document.getElementById("r614SendOutcome"); if (!el) return;
+    if (note) el.textContent = "送信結果: " + note;
+    else el.textContent = "送信結果: 送信 " + w.sent + "件 ／ 送信対象から除外 " + w.excl + "件"
+      + (w.excl ? "（本日すでに送信済みなど。理由はサーバーの配信記録に残っています）" : "")
+      + " ／ 失敗 " + w.failed + "件";
+  } catch(e) {}
+}
+var _apiCall614 = apiCall;
+apiCall = function(req){
+  var p = _apiCall614(req);
+  try {
+    if (req && req.action === "sendNextBatch" && window._r614SendWatch && p && typeof p.then === "function") {
+      p = p.then(function(res){ r614SendTap_(res); return res; });
+    }
+  } catch(e) {}
+  return p;
+};
+try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.apiCall = apiCall; } catch(e) {}
+var _runSendBatches614 = runSendBatches;
+runSendBatches = function(d){
+  try {
+    if (!window._r69TestWatch && !window._r614SendWatch) {
+      window._r614SendWatch = { sent: 0, failed: 0, excl: 0, at: Date.now() };
+      r614EnsureSendDock_();
+      r614PaintSendProgress_();
+      var guard614 = function(){
+        if (!window._r614SendWatch) return;
+        if (window._sendRun && window._sendRun.active) { setTimeout(guard614, 60000); return; }
+        r614SendFinish_("送信が止まりました。残りはサーバーに残っている場合は、Gmail画面の「送信を再開する」から続きを送れます");
+      };
+      setTimeout(guard614, 180000);
+    }
+  } catch(e) {}
+  return _runSendBatches614(d);
+};
+
+</script></body></html>

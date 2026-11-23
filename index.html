@@ -5271,4 +5271,78 @@ if(window.__APP_LOGIC__){
    もう一度描く (入口の再構成とフォームの先行取得の消費はここで効く) */
 try{route()}catch(e){}
 </script>
+<script>
+/* ===== ラウンド6.10: テスト送信の結果欄を #app の外へ (再描画で消えない場所へ) =====
+   切り分け結果 (6.9 実地): クリックで結果欄は描かれるが、その置き場所が
+   #app の内側 (末尾カードの中) のため、route() の再描画が1回走るだけで
+   確認ボタンごと消える。実地では回答同期の完了や画面の再描画が頻繁に
+   走るため、「押しても何も起きない」ように見えていた。
+   対処: 結果欄の実体 #testMailResult は従来どおり使い、描画のたびに
+   body 直下のドック (#testMailDock, #app の直後) へ移す。#app の
+   innerHTML 差し替えでは消えなくなる。あわせて、クリックを capture
+   段階で検知し、所定時間内に何も描かれなければ受付表示を出す
+   (痕跡が必ず画面に残るための保険。本流が正常なら発火しない)。 */
+function r610Dock_(){
+  var dock=document.getElementById("testMailDock");
+  if(!dock){
+    dock=document.createElement("div");
+    dock.id="testMailDock";
+    var app=document.getElementById("app");
+    if(app&&app.parentNode)app.parentNode.insertBefore(dock,app.nextSibling);
+    else if(document.body)document.body.appendChild(dock);
+    var label=document.createElement("p");
+    label.className="small";
+    label.style.cssText="margin:8px 0 0";
+    label.textContent="テスト送信の結果（この欄は画面を切り替えても残ります）";
+    dock.appendChild(label);
+  }
+  return dock;
+}
+function r610DockMove_(){
+  var el=document.getElementById("testMailResult");
+  if(!el)return;
+  var dock=r610Dock_();
+  if(el.parentNode!==dock)dock.appendChild(el);
+}
+var _paintTestMailResultR610=paintTestMailResultR68_;
+paintTestMailResultR68_=function(html){
+  _paintTestMailResultR610(html);
+  try{r610DockMove_()}catch(e){}
+};
+/* route() の後でもドックが #app の直後に残るよう軽く寄せ直す
+   (ドック自体は body 直下なので通常は不要な保険) */
+var _routeR610=route;
+route=function(){
+  var r=_routeR610();
+  try{
+    var el=document.getElementById("testMailResult");
+    var dock=document.getElementById("testMailDock");
+    if(el&&dock&&dock.parentNode===document.body){
+      var app=document.getElementById("app");
+      if(app&&app.nextSibling!==dock)app.parentNode.insertBefore(dock,app.nextSibling);
+    }
+  }catch(e){}
+  return r;
+};
+/* クリックの痕跡保証: 本流 (R69 ラッパー) はクリックと同期して
+   「状態を確認しています…」を描くため、900ms 時点で結果欄が
+   無い/空なら本流が描けていない。その場合だけ受付表示を出す。 */
+try{
+  document.addEventListener("click",function(e){
+    var t=e&&e.target;
+    var b=t&&t.closest?t.closest("button"):null;
+    if(!b||!b.getAttribute||b.getAttribute("onclick")!=="testMail()")return;
+    var at=Date.now();
+    window._r610TestClickAt=at;
+    setTimeout(function(){
+      if(window._r610TestClickAt!==at)return;
+      var el=document.getElementById("testMailResult");
+      var txt=el?(el.textContent||"").trim():"";
+      if(!el||!txt){
+        try{paintTestMailResultR68_('<p><span class="badge warn">テスト送信ボタンを受け付けましたが、結果を表示できませんでした。画面を再読み込みしてもう一度お試しください</span></p>')}catch(_){}
+      }
+    },900);
+  },true);
+}catch(e){}
+</script>
 </body></html>

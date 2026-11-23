@@ -532,7 +532,7 @@ function setArea(a){state.area=a;LS.set("area",a);route()}
 /* ===== フィルタ ===== */
 let F={q:"",muni:"",job:"",sent:"",csv:"",preset:"",from:"",to:"",companies:[],startFrom:"",startTo:"",pref:"",fsOnly:false,showTest:false};
 function filtered(){const _ck=_dataVersion+"|"+applicants.length+"|"+state.area+"|"+state.mode+"|"+(state.followTab||"")+"|"+JSON.stringify(F);if(_aggRef!==applicants){_aggRef=applicants;_filtCache=null}if(_filtCache&&_filtCache.key===_ck)return _filtCache.result;const _r=filteredCompute();_filtCache={key:_ck,result:_r};return _r}
-function filteredCompute(){let list=applicants.filter(a=>a.area===state.area&&(F.showTest||!isTestApplicant(a)));if(F.pref)list=list.filter(a=>a.prefecture===F.pref);if(F.fsOnly)list=list.filter(a=>hasFsHistory(a));if(F.q){const q=F.q.toLowerCase();list=list.filter(a=>(a.name+a.furigana+a.phone+a.municipality+a.prefecture).toLowerCase().includes(q))}if(F.muni)list=list.filter(a=>a.municipality===F.muni);if(F.job)list=list.filter(a=>a.job_type===F.job);if(F.sent==="sent")list=list.filter(a=>a.sms_sent);if(F.sent==="unsent")list=list.filter(a=>!a.sms_sent);if(F.csv)list=list.filter(a=>a.csv_status===F.csv);if(F.companies.length)list=list.filter(a=>F.companies.includes(normalizeCompany(a.source_company)));if(F.from)list=list.filter(a=>appliedDay(a)>=F.from);if(F.to)list=list.filter(a=>appliedDay(a)<=F.to);if(F.startFrom)list=list.filter(a=>(a.desired_start_date||"9999")>=F.startFrom);if(F.startTo)list=list.filter(a=>(a.desired_start_date||"")<=F.startTo);const today=new Date().toISOString().slice(0,10);if(F.preset==="today")list=list.filter(a=>appliedDay(a)===today);if(F.preset==="7d")list=list.filter(a=>appliedDay(a)>=new Date(Date.now()-7*864e5).toISOString().slice(0,10));if(state.mode==="follow"&&state.followTab&&state.followTab!=="all"){list=list.filter(a=>followCategory(a)===state.followTab)}
+function filteredCompute(){let list=applicants.filter(a=>a.area===state.area&&(F.showTest||!isTestApplicant(a)));if(F.pref)list=list.filter(a=>a.prefecture===F.pref);if(F.fsOnly)list=list.filter(a=>hasFsHistory(a));if(F.q){const q=F.q.toLowerCase();list=list.filter(a=>(a.name+a.furigana+a.phone+a.municipality+a.prefecture+a.id).toLowerCase().includes(q))}if(F.muni)list=list.filter(a=>a.municipality===F.muni);if(F.job)list=list.filter(a=>a.job_type===F.job);if(F.sent==="sent")list=list.filter(a=>a.sms_sent);if(F.sent==="unsent")list=list.filter(a=>!a.sms_sent);if(F.csv)list=list.filter(a=>a.csv_status===F.csv);if(F.companies.length)list=list.filter(a=>F.companies.includes(normalizeCompany(a.source_company)));if(F.from)list=list.filter(a=>appliedDay(a)>=F.from);if(F.to)list=list.filter(a=>appliedDay(a)<=F.to);if(F.startFrom)list=list.filter(a=>(a.desired_start_date||"9999")>=F.startFrom);if(F.startTo)list=list.filter(a=>(a.desired_start_date||"")<=F.startTo);const today=new Date().toISOString().slice(0,10);if(F.preset==="today")list=list.filter(a=>appliedDay(a)===today);if(F.preset==="7d")list=list.filter(a=>appliedDay(a)>=new Date(Date.now()-7*864e5).toISOString().slice(0,10));if(state.mode==="follow"&&state.followTab&&state.followTab!=="all"){list=list.filter(a=>followCategory(a)===state.followTab)}
  return list.sort((x,y)=>appliedAtStr(y).localeCompare(appliedAtStr(x)))} // 応募日新しい順
 /* LIVE §8 追客タブ区分: today=直近7日の未対応／期限到来の折り返し・反響／14日以内の入職希望 */
 function followCategory(a){const today=todayStr();if(state.responses.some(r=>r.applicant_id===a.id))return "replied";const start=a.desired_start_date;const startDays=start&&/^\d{4}-\d{2}-\d{2}$/.test(start)?Math.round((new Date(start)-new Date(today))/864e5):null;const appliedDays=Math.round((new Date(today)-new Date(appliedDay(a)))/864e5);const taskDue=a.work_task&&!a.work_task.completed&&a.work_task.due_date&&a.work_task.due_date<=today;if((appliedDays<=7&&!a.sms_sent)||(a.next_contact_date&&a.next_contact_date<=today)||taskDue||(startDays!=null&&startDays>=0&&startDays<=14))return "today";if(startDays!=null&&startDays>14)return "future";if(!a.sms_sent)return "unsent";const lastRef=a.last_sms_at||a.last_contact_at;const days=lastRef?Math.round((new Date(today)-new Date(String(lastRef).slice(0,10)))/864e5):0;const cnt=a.sms_count!=null?a.sms_count:(a.events||[]).filter(e=>e.kind==="sms_sent").length;const need=cnt>=3?7:2;return days>=need?"noreact":"today"}
@@ -5344,5 +5344,157 @@ try{
     },900);
   },true);
 }catch(e){}
+</script>
+<script>
+/* ===== ラウンド6.11: 初回同期前のサンプル件数表示 + サーバー検索の ID/電話 =====
+   欠陥A (実地ブリーフ0): アプリを開いた直後、サーバー同期が終わるまで
+   ヘッダーと本文にサンプルプールの数字 (関西全体DB 21名/SMS対象 21名/
+   送信済み 3名、府県別 21名内訳) が実データのように表示され続けた。
+   原因は2段重ね: (1) サーバーモード有効化 (ping 応答) までは areaSummary /
+   areaPrefCounts がローカル集計 (サンプル) に落ちる。R6 の「読み込み中」
+   形は有効化後にしか出ない。(2) 同期完了時に renderSummary だけが再描画
+   され、入口本文は古い表示のまま残る (回答未対応の入口 7 vs ヘッダー 3 の
+   食い違いも同根: 同期前の端末内件数を両方が別々に出し、同期後は
+   ヘッダーだけが先に実数へ変わる)。
+   対策: サーバー接続が前提の環境では、初回同期 (応募者サマリー取得 /
+   回答同期) が完了するまで件数を「読み込み中…」にし、サンプル数字を
+   絶対に出さない。疎通失敗が確定したら従来どおりローカル表示に落とす。
+   有効化の完了時に入口にいれば1回だけ描き直し、本文も実数に揃える。
+   欠陥B (実地ブリーフ0): ID 検索 (A000001) と電話検索 (08091251382) は
+   サーバーが 1件ヒットするのに画面が 0件。サーバー結果は
+   serverApplicantToLocal で phone:"" に落とされ、ローカル再絞り込み
+   (filteredCompute) の述語に id が無いため、電話・ID のどちらも
+   ローカル側で落ちていた (氏名は name が残るため表示された。6.8 の
+   回答名解決と同じ「サーバー結果を不完全なローカル情報で再判定する」系)。
+   対策: サーバーモードの一覧描画中は F.q のローカル再絞り込みをしない
+   (サーバーが keyword/phone で照合済み)。あわせてローカル述語にも id を
+   含め、ローカルモードでも ID 検索が効くようにする (基底側の1行修正)。 */
+
+/* --- 欠陥A: 初回同期ゲート --- */
+var _r611BootAt=Date.now();
+var _r611ServerDown=false;
+function r611ServerExpected_(){
+  try{
+    if(window._r69ApplicantRoute)return false; /* フォーム側は担当者初期化の対象外 */
+    return !!(typeof CONFIG!=="undefined"&&CONFIG.API_URL);
+  }catch(e){return false}
+}
+function r611CountsLoading_(){
+  try{
+    if(!r611ServerExpected_())return false;
+    if(window._r6ApplicantSummary)return false;   /* サマリー取得済み */
+    if(window._r6ServerMode)return false;          /* 有効化後は R6 が読み込み中を返す */
+    if(_r611ServerDown)return false;               /* 疎通失敗が確定 → ローカル表示 */
+    if(Date.now()-_r611BootAt>60000)return false;  /* 安全弁: 固まらせない */
+    return true;
+  }catch(e){return false}
+}
+function r611ResponsesLoading_(){
+  try{
+    if(!r611ServerExpected_())return false;
+    if(_r611ServerDown)return false;
+    if(Date.now()-_r611BootAt>60000)return false;
+    if(window._r6ServerMode){
+      /* サーバーモードでは R6 の回答同期 (サーバー行のみ) が正。
+         その完了 (成功・失敗どちらでも _respSync が立つ) までは出さない。
+         有効化前は、入口表示に便乗して走る base 同期が端末内データと
+         マージした数字も「同期済み」には数えない。 */
+      return !window._respSync;
+    }
+    return true;
+  }catch(e){return false}
+}
+/* 疎通の成否を1回だけ観測する。ping の応答が「サーバーの挨拶」
+   (pong / activeUserEmail / schema のいずれか) でなければ、その環境では
+   サーバー同期は来ないとみなし、ゲートを外してローカル表示に落とす。
+   有効化の判定条件は R6 の checkServerSchema ラッパーと同一。 */
+try{
+  if(r611ServerExpected_()&&typeof apiCall==="function"){
+    apiCall({action:"ping"}).then(function(res){
+      var hello=!!(res&&(res.pong===true||res.activeUserEmail||res.schema));
+      if(!hello)_r611ServerDown=true;
+    },function(){_r611ServerDown=true});
+  }
+}catch(e){_r611ServerDown=true}
+
+var _areaSummaryR611=areaSummary;
+areaSummary=function(area){
+  if(r611CountsLoading_())return {total:null,sent:null,smsTarget:null,loading:true};
+  return _areaSummaryR611(area);
+};
+var _areaPrefCountsR611=areaPrefCounts;
+areaPrefCounts=function(area){
+  if(r611CountsLoading_())return {total:null,byPref:{},loading:true};
+  return _areaPrefCountsR611(area);
+};
+
+/* ヘッダーの回答未対応: 同期前は端末内の数字を出さずプレースホルダにする */
+var _renderSummaryR611=renderSummary;
+renderSummary=function(){
+  _renderSummaryR611();
+  try{
+    if(!r611ResponsesLoading_())return;
+    var bar=document.getElementById("summaryBar"); if(!bar)return;
+    var html=bar.innerHTML||"";
+    var replaced=html.replace(/回答未対応\s*\d+件/,"回答未対応 読み込み中…");
+    if(replaced!==html)bar.innerHTML=replaced;
+  }catch(e){}
+};
+/* 入口の回答一覧バッジも同じ扱いにする */
+var _viewHomeR611=viewHome;
+viewHome=function(){
+  _viewHomeR611();
+  try{
+    if(!r611ResponsesLoading_())return;
+    var app=document.getElementById("app"); if(!app||!app.querySelector)return;
+    var a=app.querySelector('a[href="#/responses"]'); if(!a||!a.querySelector)return;
+    var badge=a.querySelector(".badge");
+    if(badge&&/未対応\s*\d+/.test(badge.textContent||""))badge.textContent="未対応 読み込み中…";
+  }catch(e){}
+};
+/* 初回有効化の完了時、入口にいれば1回だけ描き直して本文を実数に揃える
+   (ヘッダーだけ先に更新され、本文が古いまま残る食い違いの解消) */
+var _activateServerModeR611=activateServerModeR6_;
+var _r611ActivatedOnce=false;
+activateServerModeR6_=function(){
+  var p=_activateServerModeR611();
+  try{
+    if(p&&typeof p.then==="function")p.then(function(){
+      if(_r611ActivatedOnce)return; _r611ActivatedOnce=true;
+      try{
+        var h=String(location.hash||"");
+        if(h===""||h==="#/"||h.indexOf("#/proposals")===0){
+          if(typeof route==="function")route();
+        }
+      }catch(e){}
+    });
+  }catch(e){}
+  return p;
+};
+
+/* --- 欠陥B: サーバー結果への F.q 再絞り込みをやめる ---
+   サーバーモードの一覧描画中 (applicants が R6 のページキャッシュそのもの)
+   は、F.q はサーバー側で照合済みなのでローカルで再判定しない。
+   それ以外の絞り込み (府県・市区町村・職種・送信状態・日付・追客タブ) は
+   従来どおりローカルでも適用する。F.q は描画 (検索欄・タグ) のために
+   呼び出し中だけ空にし、戻りでは必ず復元する。 */
+var _filteredComputeR611=filteredCompute;
+filteredCompute=function(){
+  var onServerPage=false;
+  try{
+    onServerPage=!!(window._r6ServerMode&&window._r6ListCache&&applicants===window._r6ListCache.items);
+  }catch(e){}
+  if(onServerPage&&typeof F!=="undefined"&&F.q){
+    var savedQ=F.q; F.q="";
+    try{return _filteredComputeR611()}
+    finally{F.q=savedQ}
+  }
+  return _filteredComputeR611();
+};
+
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  r611CountsLoading:r611CountsLoading_,r611ResponsesLoading:r611ResponsesLoading_,
+  r611ServerExpected:r611ServerExpected_
+})}
 </script>
 </body></html>

@@ -6605,4 +6605,172 @@ function openSmsDirect615(id, btn){
   }).catch(function(){ fail("電話番号を確認できませんでした"); });
 }
 try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; window.__APP_LOGIC__.r615NavigateSms_ = r615NavigateSms_; } } catch(e) {}
+
+/* ================= R6151: SMSが実機で開けない件 + 「連絡停止」誤判定の是正 =================
+   (1) 連絡停止の誤判定: フロントの isOptoutForSms は segmentOf 経由で
+   csv_status の終了系 (statusStage().terminal: 応募除外/対象外/不通/
+   登録辞退/他社決定/接触NG/退職済み/終了待ち/NG系) と app_status の
+   NG/譲渡まで「連絡停止」に化けさせ、カードから SMS ボタンを消していた。
+   取り込みCSVのステータス列では終了系が 4,133/6,523 行あり、大半の
+   カードが止まって見えた。サーバー側 smsBlockedReason_ は mail_optout
+   フラグと配信停止リストのメール一致しか見ない (opt-out のみ)。
+   フロントもそれに合わせ、SMS を止めるのは本人の配信停止
+   (mail_optout === true) のときだけにする。ステータスは
+   progressBadgeHtml のバッジとして情報表示されるだけで、送信可否には
+   一切使わない。
+   (2) SMS が開けない件: 6.15 の主経路は location.href への代入で遷移
+   していたが、Apps Script の iframe 内・iOS Chrome では sms: スキーム
+   への代入遷移が効かない (フォーム無しでも開けない実機所見で確定)。
+   FIX_R615_REPORT §7 のフォールバック案どおり、準備 (番号取得とフォーム
+   発行を並行) が完了した時点でボタンを本物の sms: アンカーに差し替え、
+   プログラムからのクリックで遷移を試みる。遷移が成立しなくても、
+   アンカー自体が「SMS作成を開く」リンクとしてタップ可能な状態で残る。
+   安全条件は維持: 番号が空では href を立てない / フォームONで発行URLが
+   無い間は href を立てない / 文面ガードでブロックされた本文は href に
+   しない (理由をボタンの近くに出す)。 */
+
+/* ---- 1. 連絡停止の判定は opt-out のみへ ---- */
+isOptoutForSms = function(a){ return !!a && a.mail_optout === true; };
+optoutSmsBadge = function(a){ return '<span class="badge bad">配信停止済みのためSMSは送れません</span>'; };
+
+/* ---- 2. 掘り起こしのセグメントバナーの文言是正 ----
+   セグメント「連絡停止」を選んだときに出る「連絡停止の人には送信できません」は
+   カード側の実態 (配信停止以外は各カードから作成できる) と矛盾するため差し替える。
+   セグメント分類そのもの (segmentOf) は変更しない。 */
+try {
+  var _digHtml6151 = digHtml;
+  digHtml = function(pool){
+    var h = "";
+    try { h = String(_digHtml6151(pool) || ""); } catch(e) { return ""; }
+    h = h.split("連絡停止の人には送信できません").join("ステータスは情報表示のみです（配信停止の人以外は、各カードからSMS作成できます）");
+    return h;
+  };
+} catch(e) {}
+
+/* ---- 3. SMS主経路: 準備完了で本物のアンカーに差し替える ---- */
+function r6151ShowSmsAnchor_(btn, href){
+  var anchor = null;
+  try {
+    if (btn && btn.parentNode && btn.ownerDocument) {
+      anchor = btn.parentNode.querySelector("a.r6151sms");
+      if (!anchor) {
+        anchor = btn.ownerDocument.createElement("a");
+        anchor.className = "btn primary r6151sms";
+        anchor.textContent = "SMS作成を開く";
+        btn.parentNode.insertBefore(anchor, btn.nextSibling);
+      }
+      anchor.setAttribute("href", href);
+      anchor.style.display = "";
+      btn.style.display = "none";
+    }
+  } catch(e) { anchor = null; }
+  return anchor;
+}
+function r6151RemoveSmsAnchor_(btn){
+  try {
+    if (btn && btn.parentNode) {
+      var anchor = btn.parentNode.querySelector("a.r6151sms");
+      if (anchor) anchor.remove();
+      btn.style.display = "";
+    }
+  } catch(e) {}
+}
+function openSmsDirect615(id, btn){
+  var a = null;
+  try { a = applicants.find(function(x){ return x.id === id; }); } catch(e) {}
+  if (!a) return;
+  if (btn && btn.getAttribute("data-r615busy") === "1") return;
+  var done = false;
+  var fail = function(msg){
+    if (done) return; done = true;
+    r6151RemoveSmsAnchor_(btn);
+    r615SetBusy_(btn, false);
+    r615CardError_(btn, msg);
+  };
+  var finish = function(phone){
+    if (done) return;
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var url = "";
+    try { url = formUrlFor(a); } catch(e) {}
+    var body = "";
+    try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    done = true;
+    r615SetBusy_(btn, false);
+    try { window._r6151LastSmsHref = href; } catch(e) {}
+    var anchor = r6151ShowSmsAnchor_(btn, href);
+    if (anchor) {
+      try { anchor.click(); } catch(e) {}
+    } else {
+      /* ボタン要素が無い (プログラムからの呼び出し) 場合は従来の遷移に落とす */
+      try { r615NavigateSms_(href); } catch(e) {}
+    }
+  };
+  r615SetBusy_(btn, true, "発行中…");
+  var attach = true;
+  try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+  /* 番号の準備とフォーム発行は並行に進める (直列待ちをやめて待ち時間を縮める) */
+  var phoneState = "wait"; /* wait | ok | ng */
+  var phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phoneVal) phoneState = "ok";
+  var urlState = attach ? "wait" : "ok"; /* wait | ok | ng */
+  var check = function(){
+    if (done) return;
+    if (phoneState === "ng") { fail("電話番号なし"); return; }
+    if (urlState === "ng") { fail("フォームURLの発行に時間がかかっています。もう一度タップしてください"); return; }
+    if (phoneState === "ok" && urlState === "ok") finish(phoneVal);
+  };
+  /* フォーム発行 (番号取得と並行に開始する) */
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else {
+      var issueErr = false;
+      try { issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return; }
+      var maxPoll = 60;
+      try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+      var n = 0;
+      var timer = setInterval(function(){
+        if (done) { clearInterval(timer); return; }
+        n++;
+        var u = "";
+        try { u = formUrlFor(a); } catch(e) {}
+        if (u) { clearInterval(timer); urlState = "ok"; check(); }
+        else if (n > maxPoll) { clearInterval(timer); urlState = "ng"; check(); }
+      }, 250);
+    }
+  }
+  /* 番号取得 (発行と並行) */
+  if (phoneState === "wait") {
+    var canFetch = false;
+    try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+    if (!canFetch) { phoneState = "ng"; check(); }
+    else {
+      if (btn) { try { btn.textContent = "番号を確認中…"; } catch(e) {} }
+      apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+        var det = (res && res.applicant) || null;
+        if (det) {
+          if (det.phone != null) a.phone = String(det.phone || "");
+          if (det.email != null) a.email = String(det.email || "");
+        }
+        phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+        phoneState = phoneVal ? "ok" : "ng";
+        if (btn && phoneState === "ok") { try { btn.textContent = "発行中…"; } catch(e) {} }
+        check();
+      }).catch(function(){ fail("電話番号を確認できませんでした"); });
+    }
+  }
+  check();
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
 </script></body></html>

@@ -6773,4 +6773,68 @@ function openSmsDirect615(id, btn){
   check();
 }
 try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+/* ================= R6152: SMS準備ラグ0（準備をタップの後から前へ寄せる） =================
+   実機所見 (6.15.1 公開後): 一覧カードのSMSタップ後の準備 (番号取得 +
+   フォーム発行) が完了せず、ボタンがリンク状態にすらならない。
+   ユーザー指示: 「SMS送信準備からのラグをできるだけ0に」。
+   方針: 準備をタップの後から前へ寄せる。
+   (1) 一覧データに phone/email が含まれて届く場合は捨てずに保持する。
+       現行の裏側 (actionSearchApplicants_) は DESIGN_V2 §10 で phone/email
+       を返さないため、その間は従来どおり phone:"" で届き、(2) は効かず
+       6.15.1 の方式 (タップ→取得/発行→アンカー化) に劣化する。裏側が
+       phone を返し始めれば、同じフロントのまま自動でラグ0側に寄る。
+   (2) phone が手元にあるカードでは、フォームOFFのとき描画時点で
+       sms: アンカー (宛先+本文入り) を完成状態で置く。タップ = 本物の
+       リンクのタップそのものになり、準備ラグは0になる。本文と href の
+       作り方は主経路 (openSmsDirect615 の finish) と同一
+       (r614FirstBody_ → smsLink) にそろえる。
+       フォームONのときは描画時点ではURLが無いので従来のボタンのままにし、
+       タップ後の処理は発行だけが残る (番号取得は (1) で手元にあるため
+       待たない。6.15.1 の openSmsDirect615 がそのまま担う)。
+   (3) phone が手元に無いカードは 6.15.1 の方式を維持する。
+   安全条件は維持: 番号が無いカードでは href を立てない / フォームONで
+   URLが無いまま飛ばない / 文面ガードでブロックされる本文
+   (smsLink が "#sms-blocked" を返す) では完成アンカーを置かず、
+   従来ボタンのままにしてタップ時に理由を表示させる。 */
+
+/* ---- 1. 一覧データの phone/email を捨てずに保持する ---- */
+var _serverApplicantToLocal6152 = serverApplicantToLocal;
+serverApplicantToLocal = function(it){
+  var a = _serverApplicantToLocal6152(it);
+  if (a && it && typeof it === "object") {
+    if (it.phone != null && String(it.phone) !== "") a.phone = String(it.phone);
+    if (it.email != null && String(it.email) !== "") a.email = String(it.email);
+  }
+  return a;
+};
+try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.serverApplicantToLocal = serverApplicantToLocal; } catch(e) {}
+
+/* ---- 2. 番号あり + フォームOFF → 描画時点で完成した sms: アンカーを置く ---- */
+var _cardHtml6152 = cardHtml;
+cardHtml = function(a){
+  var h = "";
+  try { h = String(_cardHtml6152(a) || ""); } catch(e) { return ""; }
+  try {
+    if (a && a.id && typeof state !== "undefined" && state.mode === "first" && state.attachFormSms === false) {
+      var phone = String(a.phone || "").replace(/[^0-9]/g, "");
+      if (phone) {
+        var btnHtml = '<button class="btn primary" onclick="openSmsDirect615(\'' + a.id + '\',this)">SMS作成を開く</button>';
+        if (h.indexOf(btnHtml) >= 0) {
+          var st = { tpl: null, body: "" };
+          try { st = r614FirstBody_(a); } catch(e) {}
+          var href = "";
+          try { href = smsLink(phone, st.body); } catch(e) {}
+          /* ガードでブロックされる本文 ("#sms-blocked") では完成アンカーを
+             置かない。ボタンのままにして、タップ時に理由を表示させる */
+          if (href && href.charAt(0) !== "#") {
+            h = h.replace(btnHtml, '<a class="btn primary r6152sms" href="' + href + '">SMS作成を開く</a>');
+          }
+        }
+      }
+    }
+  } catch(e) {}
+  return h;
+};
+
 </script></body></html>

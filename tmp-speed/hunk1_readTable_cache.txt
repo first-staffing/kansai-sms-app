@@ -1,0 +1,179 @@
+# ハンク1: 読み取りキャッシュ層の新設 + readTable_ の1行差し替え
+# 対象: Code.gs(本番)。行番号は参照ファイル Code.gs.muni-patched(8,216行) 基準。
+# 適用前に必ず本番エディタの現行テキストで置換前ブロックが一致することを確認すること
+# (本番には muni ハンク以降の変更が入っている。readTable_ 周辺は lag0 ハンクの対象外だが要確認)。
+#
+# 構成:
+# 1-A. 新規ブロックを「// ===== 汎用テーブル IO (列はヘッダー名で解決する) =====」の
+# 見出し行の直前に挿入する。
+# 1-B. readTable_ の冒頭2行を1行に差し替える。それ以外の readTable_ 本体は無変更。
+#
+# アンカー一意性 (参照ファイルで検証済み):
+# - 見出し行「// ===== 汎用テーブル IO (列はヘッダー名で解決する) =====」: 1件
+# - 「var values = sh.getDataRange().getValues();」: 1件 (readTable_ 内のみ)
+
+================================================================
+1-A. 挿入する新規ブロック (見出し行の直前へ)
+================================================================
+
+// ===== テーブル読み取りキャッシュ (一覧・検索の高速化) =====
+// readTable_ の全件読みを CacheService + 実行内メモで肩代わりする。
+// 対象は TABLE_CACHE_TARGETS_ のテーブルだけ (第1弾は applicants のみ)。
+// 書き込み側は IO ヘルパー (appendRow_ / appendRows_ / updateRowByPk_) と
+// 直接書き込み箇所から invalidateTableCache_ を呼び、世代を進めて無効化する。
+// キャッシュは「無ければシートから読む」に常時フォールバックする。
+// 値の保存形は getValues() の2次元配列そのもの (JSON)。Date セルは型が
+// JSON で落ちるため、制御文字 + 'D' のタグ文字列に変換して往復させる。
+var TABLE_CACHE_TARGETS_ = { applicants: true};
+var TABLE_CACHE_CHUNK_ = 25000; // 文字数。1値100KB上限に日本語3バイト換算でも収まる単位 (APP_HTML_CHUNK_ と同じ根拠)
+var TABLE_CACHE_TTL_ = 1200; // 秒。チャンク/meta の TTL (手作業のセル編集が残る古さの上限)
+var TABLE_CACHE_DATE_TAG_ = String.fromCharCode(1) + 'D';
+var tableCacheMemo_ = {}; // 実行内メモ: tableName -> タグ付きJSON文字列
+
+function tableCacheGenKey_(tableName) { return 'tblc_' + tableName + '_gen';}
+function tableCachePrefix_(tableName, gen) { return 'tblc_' + tableName + '_g' + gen + '_';}
+
+function tableCacheGen_(cache, tableName) {
+var n = parseInt(cache.get(tableCacheGenKey_(tableName)), 10);
+return (isNaN(n) || n < 0)? 0: n;
+}
+
+function tableCacheEncode_(values) {
+return values.map(function (row) {
+return row.map(function (v) {
+if (v instanceof Date) return TABLE_CACHE_DATE_TAG_ + v.toISOString();
+return v;
+});
+});
+}
+
+function tableCacheDecode_(values) {
+return values.map(function (row) {
+return row.map(function (v) {
+if (typeof v === 'string' && v.charCodeAt(0) === 1 && v.charAt(1) === 'D') {
+var d = new Date(v.slice(2));
+if (!isNaN(d.getTime())) return d;
+}
+return v;
+});
+});
+}
+
+/**
+* readTable_ 用の値マトリクス (getValues() と同じ形) を返す。
+* 対象外テーブルは従来どおりシート直読み。
+* 対象テーブルは (1) 実行内メモ (2) CacheService (3) シート の順で解決する。
+* ヒット条件: 世代が一致し、シートの最終行番号が保存時と同一であること
+* (行の追加・削除は最終行番号で、セル更新は世代で、それぞれ検出する)。
+* シートから読んだ場合は、読み取り前後で世代が変わっていない場合だけ保存する
+* (読み取り中に書き込みが走った世代のデータは保存しない)。
+*/
+function tableValues_(tableName) {
+if (!TABLE_CACHE_TARGETS_[tableName]) {
+return sheet_(tableName).getDataRange().getValues();
+}
+if (tableCacheMemo_[tableName]) {
+return tableCacheDecode_(JSON.parse(tableCacheMemo_[tableName]));
+}
+var cache = null;
+try { cache = CacheService.getScriptCache();} catch (e) { cache = null;}
+if (cache) {
+try {
+var gen = tableCacheGen_(cache, tableName);
+var prefix = tableCachePrefix_(tableName, gen);
+var metaRaw = cache.get(prefix + 'meta');
+if (metaRaw) {
+var meta = JSON.parse(metaRaw);
+if (meta && meta.n > 0 && sheet_(tableName).getLastRow() === meta.lastRow) {
+var keys = [];
+for (var i = 0; i < meta.n; i++) keys.push(prefix + i);
+var stored = cache.getAll(keys) || {};
+var parts = [], okHit = true;
+for (var j = 0; j < meta.n; j++) {
+var p = stored[prefix + j];
+if (p === null || p === undefined) { okHit = false; break;}
+parts.push(String(p));
+}
+if (okHit) {
+var hitJson = parts.join('');
+tableCacheMemo_[tableName] = hitJson;
+return tableCacheDecode_(JSON.parse(hitJson));
+}
+}
+}
+} catch (e2) { /* キャッシュ不調時はシート直読みに倒す */}
+}
+var sh = sheet_(tableName);
+var genBefore = null;
+if (cache) { try { genBefore = tableCacheGen_(cache, tableName);} catch (e3) { genBefore = null;}}
+var values = sh.getDataRange().getValues();
+var lastRow = 0;
+try { lastRow = sh.getLastRow();} catch (e4) { lastRow = 0;}
+var jsonText = JSON.stringify(tableCacheEncode_(values));
+tableCacheMemo_[tableName] = jsonText;
+if (cache && genBefore!== null && lastRow > 0) {
+try {
+if (tableCacheGen_(cache, tableName) === genBefore) {
+var prefix2 = tableCachePrefix_(tableName, genBefore);
+var chunks = [], i2 = 0;
+while (i2 < jsonText.length) {
+var end = Math.min(i2 + TABLE_CACHE_CHUNK_, jsonText.length);
+if (end < jsonText.length) {
+var code = jsonText.charCodeAt(end - 1);
+if (code >= 0xD800 && code <= 0xDBFF) end -= 1; // サロゲートペアを割らない
+}
+chunks.push(jsonText.slice(i2, end));
+i2 = end;
+}
+var put = {};
+put[prefix2 + 'meta'] = JSON.stringify({ n: chunks.length, lastRow: lastRow});
+for (var k = 0; k < chunks.length; k++) put[prefix2 + k] = chunks[k];
+cache.putAll(put, TABLE_CACHE_TTL_);
+}
+} catch (e5) { /* 保存失敗は無視 (次回またシートから読む) */}
+}
+return values;
+}
+
+/**
+* 書き込み後の無効化: 実行内メモを消し、現世代のチャンクを削除し、世代を進める。
+* 失敗しても TTL (TABLE_CACHE_TTL_) で古さは上限を持つため、例外は握りつぶす。
+*/
+function invalidateTableCache_(tableName) {
+if (!TABLE_CACHE_TARGETS_[tableName]) return;
+delete tableCacheMemo_[tableName];
+try {
+var cache = CacheService.getScriptCache();
+if (!cache) return;
+var gen = tableCacheGen_(cache, tableName);
+var prefix = tableCachePrefix_(tableName, gen);
+var keys = [prefix + 'meta'];
+var metaRaw = cache.get(prefix + 'meta');
+if (metaRaw) {
+var meta = JSON.parse(metaRaw);
+if (meta && meta.n > 0) for (var i = 0; i < meta.n; i++) keys.push(prefix + i);
+}
+cache.removeAll(keys);
+cache.put(tableCacheGenKey_(tableName), String(gen + 1), 21600);
+} catch (e) { /* 無効化に失敗しても書き込み自体は止めない */}
+}
+
+================================================================
+1-B. readTable_ の差し替え (参照ファイル 458行付近)
+================================================================
+
+// ===== 汎用テーブル IO (列はヘッダー名で解決する) =====
+/** シートを { headers:[...], rows:[{列名:値, _row: シート行番号}]} で読む */
+function readTable_(tableName) {
+var sh = sheet_(tableName);
+var values = sh.getDataRange().getValues();
+
+
+// ===== 汎用テーブル IO (列はヘッダー名で解決する) =====
+/** シートを { headers:[...], rows:[{列名:値, _row: シート行番号}]} で読む */
+function readTable_(tableName) {
+var values = tableValues_(tableName);
+
+# 注: readTable_ の残りの本体 (headers 解決・行オブジェクト化・空行スキップ) は無変更。
+# 対象外テーブルでは tableValues_ が従来と同一の getDataRange().getValues() を返すため、
+# applicants 以外の全テーブルの挙動は変わらない。

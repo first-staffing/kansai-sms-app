@@ -1,0 +1,61 @@
+# ハンク2: 書き込みヘルパーへの無効化フック (appendRow_ / appendRows_ / updateRowByPk_)
+# 対象: Code.gs(本番)。行番号は参照ファイル Code.gs.muni-patched 基準。
+# 前提: ハンク1 (invalidateTableCache_ の新設) が適用済みであること。
+# 考え方: applicants への書き込みはほぼ全てこの3ヘルパーを通る。呼び出し側の
+# アクションを個別に直すのではなく、IO層で一括して無効化することで漏れを無くす。
+# 対象外テーブルでは invalidateTableCache_ は即 return するため副作用はない。
+#
+# アンカー一意性 (参照ファイルで検証済み):
+# - 「sh.appendRow(row);」: 1件
+# - 「return { written: objs.length, errors: []};」: 1件
+# - 「return { written: written, errors: errors};」: 1件
+# - updateRowByPk_ 内の3行ブロック (setValue行 +}); + return t.rows[i];): 1件
+# (「return t.rows[i];」単独は7件あるため、必ず3行ブロックで置換すること)
+
+================================================================
+2-A. appendRow_ (参照ファイル 478行付近)
+================================================================
+
+sh.appendRow(row);
+return sh.getLastRow();
+
+
+sh.appendRow(row);
+invalidateTableCache_(tableName);
+return sh.getLastRow();
+
+================================================================
+2-B. appendRows_ 一括成功パス (参照ファイル 491行付近)
+================================================================
+
+rng.setValues(matrix);
+return { written: objs.length, errors: []};
+
+
+rng.setValues(matrix);
+invalidateTableCache_(tableName);
+return { written: objs.length, errors: []};
+
+# 注: フォールバックパス (行ごとに appendRow_ を呼ぶ側) は appendRow_ の
+# フックで既に無効化されるため、2-C の追加は不要。ただし将来 appendRow_ を
+# 経由しない実装に変わった場合に備え、フォールバック側の return 前にも
+# 同じ1行を入れてよい (二重に呼んでも無害)。
+
+================================================================
+2-C. updateRowByPk_ (参照ファイル 517行付近)
+================================================================
+
+if (col >= 0) sh.getRange(t.rows[i]._row, col + 1).setValue(patch[k] == null? '': patch[k]);
+});
+return t.rows[i];
+
+
+if (col >= 0) sh.getRange(t.rows[i]._row, col + 1).setValue(patch[k] == null? '': patch[k]);
+});
+invalidateTableCache_(tableName);
+return t.rows[i];
+
+# 注: setValue は列ごとに複数回呼ばれうるが、無効化は全列の書き込みが終わった
+# return 直前の1回だけでよい (この時点までに例外が出れば無効化されず、
+# TTL と世代の次回書き込みで回収される。部分書き込み + 例外のケースは
+# 既存コードでも中途半端な状態になりうる既存リスクで、本ハンクで悪化はしない)。

@@ -1,0 +1,67 @@
+# ハンク3: ヘルパーを通らない直接書き込み箇所への無効化 (3か所)
+# 対象: Code.gs(本番)。行番号は参照ファイル Code.gs.muni-patched 基準。
+# 前提: ハンク1・ハンク2 が適用済みであること。
+# 背景: applicants への書き込みで IO ヘルパー (appendRow_ / appendRows_ /
+# updateRowByPk_) を通らないのは下記3か所だけ (コード全体を grep 済み)。
+# いずれも setValues で直接シートに書くため、明示的に無効化を足す。
+#
+# アンカー一意性 (参照ファイルで検証済み):
+# - 3-A の4行ブロック (flushNew_ / コメント / flushPatches_ / flushEvents_): 1件
+# (「flushPatches_();」単独は2件 — もう1件は importCasesCommitCore_ 側で対象外)
+# - 3-B 「setValuesCalls = writeColumnRuns_(sh, phoneCol, pairs);」: 1件
+# - 3-C 「setValuesCalls += writeColumnRuns_(sh, areaCol, areaPairs);」: 1件
+
+================================================================
+3-A. importCommitCore_ の flushPatches_ 直後 (参照ファイル 2711〜2715行付近)
+CSV取り込みの既存行更新は flushPatches_ が行オブジェクトを直接 setValues
+するため、ヘルパーのフックでは拾えない。書き切った直後に1回無効化する。
+(新規行の flushNew_ は appendRows_ 経由でフック済み。)
+================================================================
+
+flushNew_();
+// R6: 既存行の更新とイベントも書き切ってから件数を確定させる。
+flushPatches_();
+flushEvents_();
+
+
+flushNew_();
+// R6: 既存行の更新とイベントも書き切ってから件数を確定させる。
+flushPatches_();
+invalidateTableCache_('applicants');
+flushEvents_();
+
+================================================================
+3-B. actionRepairPhones_ の実書き込み直後 (参照ファイル 3413行付近)
+電話番号修復 (dry_run=false かつ対象あり) のときだけ走るブロック内。
+================================================================
+
+setValuesCalls = writeColumnRuns_(sh, phoneCol, pairs);
+
+
+setValuesCalls = writeColumnRuns_(sh, phoneCol, pairs);
+invalidateTableCache_('applicants');
+
+================================================================
+3-C. actionRepairAreas_ の実書き込み直後 (参照ファイル 3482〜3483行付近)
+住所・エリア修復 (dry_run=false かつ対象あり) のときだけ走るブロック内。
+================================================================
+
+setValuesCalls += writeColumnRuns_(sh, prefCol, prefPairs);
+setValuesCalls += writeColumnRuns_(sh, areaCol, areaPairs);
+
+
+setValuesCalls += writeColumnRuns_(sh, prefCol, prefPairs);
+setValuesCalls += writeColumnRuns_(sh, areaCol, areaPairs);
+invalidateTableCache_('applicants');
+
+================================================================
+対象外として確認済みの直接書き込み (無効化不要)
+================================================================
+- writeQueueColumn_ / finishImportChunk_ の deleteRows: import_queue 専用
+(キャッシュ対象外テーブル)。
+- importCasesCommitCore_ の flushPatches_ (3052行): cases / case_sources 専用
+(第1弾ではキャッシュ対象外。cases を対象に広げる場合は sync-cases.gs 側の
+書き込みと合わせて別途ハンクが必要 — 計画書 §5 参照)。
+- updateRecipientStatus_ (5889行): delivery_recipients へ直接 setValue。
+第1弾では対象外だが、第2弾で delivery_recipients を対象に広げる際は
+ここにも invalidateTableCache_('delivery_recipients') が必要 (計画書 §5)。

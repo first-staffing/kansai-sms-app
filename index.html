@@ -170,7 +170,16 @@ body.applicantView .stickyTop,body.applicantView #summaryBar{display:none}
 .prefBar.bigPrefs button:first-child{grid-column:1/-1}
 .prefBar.bigPrefs button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:800}
 .bigNavBtn{display:flex;width:100%;min-height:60px;font-size:17px;font-weight:800;background:var(--accent);color:#fff;border:1px solid var(--accent);border-radius:12px;align-items:center;justify-content:center;text-decoration:none;margin:10px 0;box-sizing:border-box}
-</style><script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script></head><body>
+/* R69_CSS: タップ要素の最小サイズ統一 (監査B)。小さなピル (実効24〜30px) を
+   無くし、主要なタップ要素を 48px にそろえる。フォーム側 (.fChip 等) は対象外 */
+header a{min-height:48px;padding:10px 14px;font-size:14px}
+.tabs button{min-height:48px;font-size:14px}
+.tag{font-size:13px}
+input[type=checkbox]{width:28px;height:28px;min-height:28px}
+.card .flex button,.card .flex .btn{min-height:48px}
+@media (max-width:640px){header a{min-height:48px;padding:10px 14px;font-size:14px}#summaryBar{font-size:13px}}
+
+</style></head><body>
 <div class="stickyTop"><header><b>応募者SMS・Gmail配信</b><span id="userChip" style="font-size:12px;white-space:nowrap;opacity:.95"></span>
 <nav><a href="#/">入口</a><a href="#/list">応募者一覧</a><a href="#/mail">Gmail配信</a><a href="#/import">CSV取り込み</a><a href="#/responses">回答一覧 <span id="respNavBadge"></span></a><a href="#/settings">設定</a></nav></header>
 <div id="toast" role="status"></div></div><div id="summaryBar">読み込み中…</div><main id="app"><div class="skel"></div><p class="small">読み込み中…</p><div class="skel"></div></main>
@@ -329,6 +338,33 @@ function csvStatusCounts(area){return aggMemo("csvStatus:"+area,()=>{const m={};
 function areaSummary(area){return aggMemo("areaSummary:"+area,()=>{let total=0,sent=0,smsTarget=0;nonTestApplicants().forEach(a=>{if(a.area!==area)return;total++;if(a.sms_sent)sent++;if(a.phone&&/^0?[789]0/.test(String(a.phone).replace(/[^0-9]/g,"")))smsTarget++});return {total,sent,smsTarget}})}
 function areaPrefCounts(area){return aggMemo("prefCounts:"+area,()=>{const byPref={};let total=0;nonTestApplicants().forEach(a=>{if(a.area!==area)return;total++;byPref[a.prefecture]=(byPref[a.prefecture]||0)+1});return {total,byPref}})}
 function areaMunis(area){return aggMemo("munis:"+area,()=>[...new Set(nonTestApplicants().filter(a=>a.area===area).map(a=>a.municipality))])}
+</script>
+<script>
+/* R6.9 bootstrap: フォーム/配信停止ルートでは、中継の文脈取得を担当者アプリの
+   全ブロック読み込みより先に発射する。結果は window._relayEarlyCtx に置き、
+   fetchRelayContext (R69 ラッパー) が再利用する。失敗時は null を返し、
+   従来どおりフォーム側のエラー表示になる (デモ文脈には倒れない)。
+   あわせて window._r69ApplicantRoute を立て、担当者初期化 (ping /
+   テンプレート同期) をこのルートでは止める。 */
+(function(){
+  try{
+    var h=String(location.hash||"");
+    if(h.indexOf("#/form")!==0&&h.indexOf("#/optout")!==0)return;
+    window._r69ApplicantRoute=true;
+    var m=h.match(/[?&]token=([^&\s]+)/); if(!m)return;
+    var tk=decodeURIComponent(m[1]);
+    var base=""; try{base=String(CONFIG.RELAY_URL||"").replace(/\/+$/,"")}catch(e){}
+    if(!base)return;
+    var p=fetch(base+"/form-context?token="+encodeURIComponent(tk)).then(function(res){
+      if(!res||!res.ok){window._relayCtxError={status:res?res.status:0,at:new Date().toISOString()};return null}
+      return res.json();
+    }).then(function(j){
+      if(!j||j.ok===false||!j.context){window._relayCtxError={status:200,at:new Date().toISOString()};return null}
+      return j.context;
+    }).catch(function(e){window._relayCtxError={error:String(e&&e.message||e),at:new Date().toISOString()};return null});
+    window._relayEarlyCtx={token:tk,promise:p};
+  }catch(e){}
+})();
 </script>
 <script>
 /* ===== ダミー応募者 約24名（実在しない人物のみ・電話090-0000-xxxx・メールexample.jp） ===== */
@@ -742,7 +778,7 @@ function viewImport(){$("#app").innerHTML=`<div class="card"><h2>CSV取り込み
 <button class="primary" onclick="previewImport()">取り込み内容を確認</button><div id="impResult"></div></div>
 <div class="card"><h3>取り込み履歴</h3>${state.imports.length?state.imports.map(h=>`<p class="small">・${esc(h.at)} ${esc(h.file)} — 新規${h.new}／最新応募${h.latest}／更新${h.updated}／スキップ${h.skip}／除外${h.excluded}${h.unclassified?"／未分類"+h.unclassified:""}${h.hash?"／ハッシュ "+esc(h.hash):""}</p>`).join(""):'<p class="small">まだ履歴がありません。サンプルCSVを試せます: 下のボタンでダミー3行を生成します。</p>'}<div id="coCand"></div><button onclick="demoImport()">サンプルCSVで試す（ダミー3行）</button></div>`;
  const dz=$("#dropZone");dz.addEventListener("dragover",e=>e.preventDefault());dz.addEventListener("drop",async e=>{e.preventDefault();const items=e.dataTransfer.items;let files=[];if(items&&items[0]&&items[0].webkitGetAsEntry){for(const it of items){const en=it.webkitGetAsEntry&&it.webkitGetAsEntry();if(en&&en.isFile)files.push(it.getAsFile())}}else files=[...e.dataTransfer.files];/* R3 (Z5-a): ドロップしたファイルをそのまま取り込み対象にしてプレビューまで進める (従来は破棄していた) */const inp=$("#impFiles");if(inp&&files.length){try{const dt=new DataTransfer();files.forEach(f=>{if(f)dt.items.add(f)});inp.files=dt.files}catch(err){}}if(files.length){previewImport()}else{alert("取り込めるファイルがありませんでした")}})}
-async function previewImport(){const inp=$("#impFiles");const files=[...(inp?inp.files:[])];if(!files.length){alert("ファイルを選んでください（またはサンプルCSVボタン）");return}window._importDemo=false;let all=[];const perFile=[];for(const f of files){if(isExcelFile(f.name)){if(typeof XLSX==="undefined"||!XLSX||typeof XLSX.read!=="function"||!XLSX.utils||typeof XLSX.utils.sheet_to_json!=="function"){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}let erows=null;try{const data=await f.arrayBuffer();const wb=XLSX.read(data,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];erows=excelRowsToRows(XLSX.utils.sheet_to_json(ws,{header:1,defval:""}))}catch(e){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}if(!erows.length){perFile.push({file:f.name,rows:0,note:"シートにデータがありません"});continue}const ehash=importRowsHash(erows);const eHeadOk=erows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>erows[0].map(x=>String(x).trim()).includes(s)));window._importSources=window._importSources||[];const eMapped=eHeadOk?mapRows(erows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(erows,f.name.replace(/\.[^.]+$/,""));all.push(...eMapped);window._importSources.push({file:f.name,rows2d:erows,mode:eHeadOk?"synonym":"generic",mapping:eHeadOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:eMapped});perFile.push({file:f.name,rows:eMapped.length,hash:ehash,same:state.imports.some(x=>x.hash===ehash),generic:!eHeadOk});continue}let text="";try{text=await decodeFile(f)}catch(e){perFile.push({file:f.name,rows:0,note:"読み込みに失敗しました（文字コードを確認してください）"});continue}let h=0;for(let i=0;i<text.length;i++)h=(h*31+text.charCodeAt(i))>>>0;const rows=parseCsvText(text);/* R3 (Z5-d): 空・空白だけのファイルはそのファイルだけを隔離し、他のファイルの取り込みを巻き込まない */if(!rows.length){perFile.push({file:f.name,rows:0,note:"空のファイルです（データ行がありません）"});continue}const headOk=rows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>rows[0].map(x=>String(x).trim()).includes(s)));let mapped=null;try{mapped=headOk?mapRows(rows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(rows,f.name.replace(/\.[^.]+$/,""))}catch(e){perFile.push({file:f.name,rows:0,note:"列の判定に失敗しました"});continue}all.push(...mapped);(window._importSources=window._importSources||[]).push({file:f.name,rows2d:rows,mode:headOk?"synonym":"generic",mapping:headOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:mapped});perFile.push({file:f.name,rows:mapped.length,hash:"H"+h.toString(16),same:state.imports.some(x=>x.hash==="H"+h.toString(16)),generic:!headOk})}window._importSources=(window._importSources||[]);window._importPerFile=perFile;window._importHash=perFile.map(x=>x.hash||"").join(",");
+async function previewImport(){const inp=$("#impFiles");const files=[...(inp?inp.files:[])];if(!files.length){alert("ファイルを選んでください（またはサンプルCSVボタン）");return}window._importDemo=false;window._importSources=[];let all=[];const perFile=[];for(const f of files){if(isExcelFile(f.name)){if(typeof XLSX==="undefined"||!XLSX||typeof XLSX.read!=="function"||!XLSX.utils||typeof XLSX.utils.sheet_to_json!=="function"){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}let erows=null;try{const data=await f.arrayBuffer();const wb=XLSX.read(data,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];erows=excelRowsToRows(XLSX.utils.sheet_to_json(ws,{header:1,defval:""}))}catch(e){const note="Excel の読み込みに失敗しました。ネットワークを確認するか、CSV形式で保存し直してください";perFile.push({file:f.name,rows:0,note});alert(f.name+": "+note);continue}if(!erows.length){perFile.push({file:f.name,rows:0,note:"シートにデータがありません"});continue}const ehash=importRowsHash(erows);const eHeadOk=erows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>erows[0].map(x=>String(x).trim()).includes(s)));window._importSources=window._importSources||[];const eMapped=eHeadOk?mapRows(erows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(erows,f.name.replace(/\.[^.]+$/,""));all.push(...eMapped);window._importSources.push({file:f.name,rows2d:erows,mode:eHeadOk?"synonym":"generic",mapping:eHeadOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:eMapped});perFile.push({file:f.name,rows:eMapped.length,hash:ehash,same:state.imports.some(x=>x.hash===ehash),generic:!eHeadOk});continue}let text="";try{text=await decodeFile(f)}catch(e){perFile.push({file:f.name,rows:0,note:"読み込みに失敗しました（文字コードを確認してください）"});continue}let h=0;for(let i=0;i<text.length;i++)h=(h*31+text.charCodeAt(i))>>>0;const rows=parseCsvText(text);/* R3 (Z5-d): 空・空白だけのファイルはそのファイルだけを隔離し、他のファイルの取り込みを巻き込まない */if(!rows.length){perFile.push({file:f.name,rows:0,note:"空のファイルです（データ行がありません）"});continue}const headOk=rows.length&&Object.keys(SYNONYMS).some(k=>SYNONYMS[k].some(s=>rows[0].map(x=>String(x).trim()).includes(s)));let mapped=null;try{mapped=headOk?mapRows(rows,f.name.replace(/\.[^.]+$/,"")):genericMapRows(rows,f.name.replace(/\.[^.]+$/,""))}catch(e){perFile.push({file:f.name,rows:0,note:"列の判定に失敗しました"});continue}all.push(...mapped);(window._importSources=window._importSources||[]).push({file:f.name,rows2d:rows,mode:headOk?"synonym":"generic",mapping:headOk?null:JSON.parse(JSON.stringify(window._importMapping||{idx:{},ambiguous:[],headers:[]})),mapped:mapped});perFile.push({file:f.name,rows:mapped.length,hash:"H"+h.toString(16),same:state.imports.some(x=>x.hash==="H"+h.toString(16)),generic:!headOk})}window._importSources=(window._importSources||[]);window._importPerFile=perFile;window._importHash=perFile.map(x=>x.hash||"").join(",");
  if(window._r6ServerMode&&CONFIG.API_URL&&typeof apiCall==="function"){
     try{
       var _srvResults=[];
@@ -773,7 +809,7 @@ function renderImportPreviewServer(serverResults,fileNames){
     totals.new+=Number(r.added||0);totals.latest+=latest;totals.updated+=(Number(r.updated||0)-latest);totals.skip+=Number(r.skipped||0);totals.excluded+=exclN;totals.unclassified+=Number(r.unclassified||0);
     return '<p class="small">・'+esc(r.file_name||"")+'： 新規 '+(r.added||0)+' ／ 最新応募 '+latest+' ／ 更新 '+((r.updated||0)-latest)+' ／ スキップ '+(r.skipped||0)+' ／ 除外 '+exclN+' ／ 未分類 '+(r.unclassified||0)+'</p>';
   }).join("");
-  importPreview={judged:null,serverCounts:{added:totals.new,updated:totals.latest+totals.updated,skipped:totals.skip,latest_application:totals.latest,new:totals.new,latest:totals.latest,skip:totals.skip,excluded:totals.excluded,unclassified:totals.unclassified},perFile:serverResults,fname:fileNames,rows:(window._importSources||[]).reduce(function(a,s){return a.concat(s.mapped||[])},[])};
+  importPreview={judged:null,serverCounts:{added:totals.new,updated:totals.latest+totals.updated,attr_updated:totals.updated,skipped:totals.skip,latest_application:totals.latest,new:totals.new,latest:totals.latest,skip:totals.skip,excluded:totals.excluded,unclassified:totals.unclassified},perFile:serverResults,fname:fileNames,rows:(window._importSources||[]).reduce(function(a,s){return a.concat(s.mapped||[])},[])};
   var el=document.getElementById("impResult");if(!el)return;
   el.innerHTML='<p class="small">手順: 1 ファイルを選ぶ → 2 取り込み内容を確認 → 3 内訳（差分）を確認 → 4 確定で反映</p><h3>確認画面（サーバー照合・まだ反映していません）</h3><button class="primary" style="min-height:48px" onclick="commitImport()">確定で反映</button><p>新規追加 '+totals.new+' ／ 最新応募として登録 '+totals.latest+' ／ 更新 '+totals.updated+' ／ スキップ '+totals.skip+' ／ 除外 '+totals.excluded+' ／ 未分類 '+totals.unclassified+'</p>'+perFileHtml+'<button class="primary" onclick="commitImport()">確定で反映</button>';
 }
@@ -1654,7 +1690,7 @@ function discardOutbox(opId){
   var op=outbox.find(function(o){return o.opId===opId});
   if(!op){outbox=outbox.filter(function(o){return o.opId!==opId});LS.set("outbox",outbox);route();return}
   var smsTypes=["sms_sent","bulk_sms_sent","special_sms_sent"];
-  if(typeof confirm==="function"&&!confirm("この操作（"+op.type+"）を破棄しますか？破棄するとサーバーに届かないため、送信証跡が残りません（サーバーに届かない・送信証跡が残らない操作になります）。それでも破棄しますか？"))return;
+  if(typeof confirm==="function"&&!(typeof r69ConfirmBypass_==="function"&&r69ConfirmBypass_())&&!confirm("この操作（"+op.type+"）を破棄しますか？破棄するとサーバーに届かないため、送信証跡が残りません（サーバーに届かない・送信証跡が残らない操作になります）。それでも破棄しますか？"))return;
   var discCount=1;
   try{
     if(op.type==="bulk_sms_sent"){var items=(op.payload&&op.payload.items)||[];discCount=items.length||(((op.payload&&op.payload.ids)||[]).length)||1}
@@ -2488,7 +2524,7 @@ function paintSchemaWarning(){var m=schemaWarningModel(window._pingResult);if(!m
 function checkServerSchema(){if(!CONFIG.API_URL||typeof apiCall!=="function")return Promise.resolve(null);return apiCall({action:"ping"}).then(function(res){window._pingResult=res;try{paintSchemaWarning()}catch(e){}try{updateUserChip()}catch(e){}return res}).catch(function(){return null})}
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{queueWarningModel:queueWarningModel,queueWarningText:queueWarningText,respSyncLabel:respSyncLabel,updateUserChip:updateUserChip,schemaWarningModel:schemaWarningModel,schemaWarningText:schemaWarningText,checkServerSchema:checkServerSchema,pingUserName_:pingUserName_,gasRunAvailable:gasRunAvailable,postJson_:postJson_,gasApplicantRouteRedirect_:gasApplicantRouteRedirect_,getLsAvailable:function(){return LS_AVAILABLE}})}
 try{updateUserChip()}catch(e){}
-try{checkServerSchema()}catch(e){}
+try{if(!window._r69ApplicantRoute)checkServerSchema()}catch(e){}
 </script>
 
 <script>
@@ -2950,7 +2986,7 @@ opToRequests=function(op){
 };
 
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{guardSmsBody:guardSmsBody,leftoverTags:leftoverTags,missingHearingNames:missingHearingNames,warnOnSaveTags_:warnOnSaveTags_,syncTemplatesFromServer:syncTemplatesFromServer,applyServerTemplates_:applyServerTemplates_,applyServerOperators_:applyServerOperators_,SMS_FIRST_COMPACT_DEFAULT:SMS_FIRST_COMPACT_DEFAULT,fetchMailPreviewBody_:fetchMailPreviewBody_,mailPreviewHtml:mailPreviewHtml,buildMailBody:buildMailBody,mailFooter:mailFooter,opToRequests:opToRequests,getTemplateVersions:function(){return window._templateVersions},getTemplateIds:function(){return window._templateIds},getTplSync:function(){return window._tplSync||null}})}
-try{syncTemplatesFromServer()}catch(e){}
+try{if(!window._r69ApplicantRoute)syncTemplatesFromServer()}catch(e){}
 
 /* ================= R4 lane D2 wrappers (UI-high + import front) ================= */
 /* --- opToRequests: import_commit idempotency keys + target_area (06-06) --- */
@@ -3003,7 +3039,7 @@ function paintTestMailAvailability(){
     var dis="",why="";
     if(window._sendRun&&window._sendRun.active){dis="1";why="送信中です"}
     else if(waiting>0){dis="1";why="未送信の本番配信が "+waiting+"件残っているため、テスト送信はできません。先に送信を再開して送り切ってください"}
-    btns.forEach(function(btn){btn.disabled=!!dis});
+    btns.forEach(function(btn){btn.disabled=false});
     var slot=document.getElementById("testBlockReason");
     if(!slot&&btns[0].parentNode){slot=document.createElement("p");slot.id="testBlockReason";slot.className="small";btns[0].parentNode.appendChild(slot)}
     if(slot)slot.innerHTML=why?'<span class="badge warn">'+esc(why)+"</span>":"";
@@ -3015,7 +3051,7 @@ testMail=function(){
     if(window._sendRun&&window._sendRun.active){showToast("送信中です","warn");return null}
     var waiting=0; try{waiting=queueWarningModel(window._queueStats).waiting||0}catch(e){}
     if(waiting>0){showToast("未送信の本番配信が "+waiting+"件残っているため、テスト送信はできません","warn");paintTestMailAvailability();return null}
-    if(typeof confirm==="function"&&!confirm("固定のテスト宛先へ1件だけ送ります。よろしいですか？"))return null;
+    if(typeof confirm==="function"&&!(typeof r69ConfirmBypass_==="function"&&r69ConfirmBypass_())&&!confirm("固定のテスト宛先へ1件だけ送ります。よろしいですか？"))return null;
     window._sendRun=window._sendRun||{}; window._sendRun.kind="test";
   }catch(e){}
   return _testMailD2();
@@ -3535,7 +3571,7 @@ commitImport=function(){
   var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
   var unclassified=0;
   var _serverPreview=!snap.judged&&!!snap.serverCounts;
-  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:_sc.updated||0,skip:_sc.skip||0,excluded:_sc.excluded||0};unclassified=_sc.unclassified||0}
+  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:(_sc.attr_updated!=null?_sc.attr_updated:Math.max(0,(_sc.updated||0)-(_sc.latest||0))),skip:_sc.skip||0,excluded:0};unclassified=_sc.unclassified||0}
   else{snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length}
   state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending"});
   saveAll();
@@ -3613,7 +3649,7 @@ checkServerSchema=function(){
   return p;
 };
 try{
-  if(typeof apiCall==="function"&&CONFIG.API_URL){
+  if(typeof apiCall==="function"&&CONFIG.API_URL&&!window._r69ApplicantRoute){
     apiCall({action:"ping"}).then(function(res){
       if(res&&(res.pong===true||res.activeUserEmail||res.schema))activateServerModeR6_();
     }).catch(function(){});
@@ -3732,16 +3768,32 @@ function translateImportError65(msg){
 function importHistoryFromServer65(previewCounts,agg){
   if(!agg||!agg.server)return null;
   var s=agg.server;
-  var latest=Math.max(0,(Number(s.updated||0))-(Number(s.attr_updated||0)));
-  var out={new:Number(s.added||0),latest:latest,updated:Number(s.attr_updated||0),
-    skip:Number(s.skipped||0),excluded:0,failed:Number(s.failed||0)};
+  /* R6.9 (欠陥3b): 内訳の割り方を経路で変えない。
+     サーバー実績に attr_updated がある経路 (直接送信) では実績で割り、
+     無い経路 (キュー方式: import_batches に attr_updated 列が無く、
+     getImportStatus も返さない) では、プレビュー時のサーバー照合が持つ
+     内訳 (preview_counts) を保ち、合計だけをサーバー実績に合わせる。
+     旧実装は attr_updated の欠落を 0 とみなし、latest が updated 全件に
+     化けていた (最新応募1/更新1404 が 最新応募1405/更新0 に変わった)。 */
+  var totalUpd=Number(s.updated||0);
+  var latest,updAttr;
+  if(s.attr_updated!=null){updAttr=Number(s.attr_updated||0);latest=Math.max(0,totalUpd-updAttr)}
+  else if(previewCounts){latest=Math.min(Number(previewCounts.latest||0),totalUpd);updAttr=totalUpd-latest}
+  else{latest=0;updAttr=totalUpd}
+  /* スキップと除外: サーバー実績の skipped は両方の合計。内訳は
+     preview_counts 側の除外件数を保ち、残りをスキップとする
+     (旧実装は除外を常に 0 に潰していた)。 */
+  var excl=previewCounts?Number(previewCounts.excluded||0):0;
+  var skip=Math.max(0,Number(s.skipped||0)-excl);
+  var out={new:Number(s.added||0),latest:latest,updated:updAttr,
+    skip:skip,excluded:excl,failed:Number(s.failed||0)};
   var diffs=[];
   if(previewCounts){
     if(out.new!==Number(previewCounts.new||0))diffs.push("新規 "+Number(previewCounts.new||0)+"→"+out.new);
     var pUpd=Number(previewCounts.latest||0)+Number(previewCounts.updated||0);
-    if(pUpd!==Number(s.updated||0))diffs.push("更新 "+pUpd+"→"+Number(s.updated||0));
+    if(pUpd!==totalUpd)diffs.push("更新 "+pUpd+"→"+totalUpd);
     var pSkip=Number(previewCounts.skip||0)+Number(previewCounts.excluded||0);
-    if(pSkip!==out.skip)diffs.push("除外 "+pSkip+"→"+out.skip);
+    if(pSkip!==Number(s.skipped||0))diffs.push("スキップ・除外 "+pSkip+"→"+Number(s.skipped||0));
   }
   if(diffs.length){
     var reasons=Object.keys(s.skipped_reasons||{}).filter(function(k){return Number(s.skipped_reasons[k]||0)>0})
@@ -3954,7 +4006,7 @@ commitImport=function(){
   var counts={new:0,latest:0,updated:0,skip:0,excluded:0};
   var unclassified=0;
   var _serverPreview=!snap.judged&&!!snap.serverCounts;
-  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:_sc.updated||0,skip:_sc.skip||0,excluded:_sc.excluded||0};unclassified=_sc.unclassified||0}
+  if(_serverPreview){var _sc=snap.serverCounts;counts={new:_sc.new||0,latest:_sc.latest||0,updated:(_sc.attr_updated!=null?_sc.attr_updated:Math.max(0,(_sc.updated||0)-(_sc.latest||0))),skip:_sc.skip||0,excluded:0};unclassified=_sc.unclassified||0}
   else{snap.judged.forEach(function(x){if(counts[x.j.category]!=null)counts[x.j.category]++});unclassified=snap.judged.filter(function(x){return x.r.csv_status&&!CSV_STATUSES.includes(x.r.csv_status)}).length}
   state.imports.unshift({at:todayStr(),file:snap.fname,new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded,hash:window._importHash||"",unclassified:unclassified,sync:"sending",preview_counts:{new:counts.new,latest:counts.latest,updated:counts.updated,skip:counts.skip,excluded:counts.excluded}});
   saveAll();
@@ -4069,15 +4121,15 @@ function pollImportQueueUntilDone65_(opIds,chunkCount){
       var finished=mine.filter(function(b){return b.status==="complete"||b.status==="partial"||b.status==="failed"}).length;
       var q=st.queue||{pending_rows:1,processing_rows:0};
       if(finished>=chunkCount&&!q.pending_rows&&!q.processing_rows){
-        var agg={server:{added:0,updated:0,attr_updated:0,skipped:0,failed:0},sync:mine.some(function(b){return b.status!=="complete"})?"partial":"ok"};
-        mine.forEach(function(b){agg.server.added+=b.added||0;agg.server.updated+=b.updated||0;agg.server.skipped+=b.skipped||0;agg.server.failed+=b.failed||0});
+        var agg={server:{added:0,updated:0,skipped:0,failed:0},sync:mine.some(function(b){return b.status!=="complete"})?"partial":"ok"};
+        mine.forEach(function(b){agg.server.added+=b.added||0;agg.server.updated+=b.updated||0;agg.server.skipped+=b.skipped||0;agg.server.failed+=b.failed||0;if(typeof b.attr_updated==="number")agg.server.attr_updated=(agg.server.attr_updated||0)+b.attr_updated});
         if(state.imports&&state.imports[0]&&state.imports[0].queue_ops&&state.imports[0].queue_ops.join()===opIds.join()){
           var hu=importHistoryFromServer65(state.imports[0].preview_counts,agg);
           if(hu){
             state.imports[0].new=hu.new;state.imports[0].latest=hu.latest;state.imports[0].updated=hu.updated;
             state.imports[0].skip=hu.skip;state.imports[0].excluded=hu.excluded;state.imports[0].failed=hu.failed;
             state.imports[0].server=agg.server;
-            state.imports[0].diff_note=(hu.diff_note?hu.diff_note+" ":"")+"（サーバー処理のため、最新応募と属性更新はサーバー実績では合算表示です）";
+            state.imports[0].diff_note=(hu.diff_note?hu.diff_note+" ":"")+"（最新応募と属性更新の内訳はプレビュー時のサーバー照合に基づきます。合計はサーバー実績です）";
           }
           state.imports[0].sync=agg.sync;
           saveAll();
@@ -4841,9 +4893,13 @@ submitForm=function(){
    instead of only as a transient toast. */
 function paintTestMailResultR68_(html){
   try{
-    var mp=document.getElementById("mailProg"); if(!mp)return;
     var el=document.getElementById("testMailResult");
-    if(!el){ el=document.createElement("div"); el.id="testMailResult"; if(mp.parentNode)mp.parentNode.insertBefore(el,mp.nextSibling); }
+    if(!el){ el=document.createElement("div"); el.id="testMailResult";
+      var mp=document.getElementById("mailProg");
+      if(mp&&mp.parentNode)mp.parentNode.insertBefore(el,mp.nextSibling);
+      else{ var tbtn=null; try{tbtn=[].slice.call(document.querySelectorAll("button")).filter(function(b){return b.getAttribute&&b.getAttribute("onclick")==="testMail()"})[0]}catch(e){}
+        if(tbtn&&tbtn.parentNode)tbtn.parentNode.insertBefore(el,tbtn.nextSibling);
+        else{ var appEl=document.getElementById("app"); if(appEl)appEl.insertBefore(el,appEl.firstChild); else return; } } }
     el.innerHTML=html;
   }catch(e){}
 }
@@ -4883,5 +4939,336 @@ testMail=function(){
   }
   return proceed();
 };
+</script>
+<script>
+/* ===== ラウンド6.9: テスト送信の結果表示 / outbox破棄 / 入口再構成 /
+   サマリーバー簡素化 / フォーム高速化 / 提案キャッシュ =====
+   実地で確認された欠陥への対処を、最終ラッパーとしてここに集約する。
+   既存ブロックの関数は名前解決で呼ばれるため、ここの再代入が最後に勝つ。 */
+
+/* --- ネイティブ confirm のバイパス (アプリ内確認を選んだ直後だけ有効) ---
+   D2 の testMail ゲートと discardOutbox の confirm 行は、r69ConfirmBypass_()
+   が true の間だけネイティブダイアログを飛ばす。typeof ガード必須:
+   ゲート側は try/catch 内にあり、未定義参照だと握り潰されて素通りする。 */
+function r69ConfirmBypass_(){
+  var u=window._r69ConfirmUntil||0;
+  if(u&&Date.now()<=u){window._r69ConfirmUntil=0;return true}
+  return false;
+}
+function r69ArmConfirm_(){window._r69ConfirmUntil=Date.now()+30000}
+
+/* --- 欠陥1: テスト送信は「成功/停止理由/エラー」のいずれかが必ず画面に残る ---
+   6.8 までの不具合: (a) 送信待ちがあるとボタン自体が disabled になり、
+   理由表示ごとクリックできなかった。(b) 結果表示欄が #mailProg の有無に
+   依存し、設定画面では何も出なかった (描画関数は R69 で堅牢化済み)。
+   (c) 作成できても同日ガード等のバッチ結果が画面に残らなかった。
+   ここではクリック時に状態を取り直し、停止理由は結果表示欄に常駐表示、
+   実行確認はアプリ内ボタンで行う (ネイティブダイアログに依存しない)。 */
+function paintTestMailR69_(kind,n){
+  var html="";
+  if(kind==="active"){
+    html='<p><span class="badge warn">送信処理が実行中のため、テスト送信は開始できませんでした。送信が終わってからお試しください</span></p>';
+  }else if(kind==="waiting"){
+    html='<p><span class="badge warn">送信待ちが '+n+' 件残っているため、テスト送信は開始できませんでした</span></p>'
+      +'<p class="small">未送信の本番配信や、前に作ったテスト送信が含まれます。先に送信を再開して送り切ってください。</p>'
+      +'<div class="flex"><button onclick="resumeSendBatches()">送信を再開する</button></div>';
+  }else if(kind==="confirm"){
+    html='<p><b>テスト送信の確認</b></p>'
+      +'<p class="small">固定のテスト宛先へ、テスト配信を1件作成して送信します。よければ「テスト送信を実行」を押してください。</p>'
+      +'<div class="flex"><button class="primary" id="r69TestExecBtn" onclick="r69TestExec_()">テスト送信を実行</button>'
+      +'<button id="r69TestCancelBtn" onclick="r69TestCancel_()">やめる</button></div>';
+  }
+  try{paintTestMailResultR68_(html)}catch(e){}
+}
+var _testMailR69=testMail;
+testMail=function(){
+  try{paintTestMailResultR68_('<p class="small">テスト送信の状態を確認しています…</p>')}catch(e){}
+  var start=function(){
+    if(window._sendRun&&window._sendRun.active){paintTestMailR69_("active",0);return null}
+    var waiting=0; try{waiting=queueWarningModel(window._queueStats).waiting||0}catch(e){}
+    if(waiting>0){paintTestMailR69_("waiting",waiting);return null}
+    paintTestMailR69_("confirm",0);
+    return null;
+  };
+  if(CONFIG.API_URL&&typeof apiCall==="function"){
+    return apiCall({action:"getSendQueueStats"}).then(function(stats){
+      window._queueStats=stats;
+    }).catch(function(){}).then(start);
+  }
+  return start();
+};
+function r69TestExec_(){
+  r69ArmConfirm_();
+  window._r69TestWatch={sent:0,failed:0,excl:0,at:Date.now()};
+  setTimeout(function(){if(window._r69TestWatch)window._r69TestWatch=null},180000);
+  return _testMailR69();
+}
+function r69TestCancel_(){
+  try{paintTestMailResultR68_('<p><span class="badge warn">テスト送信はキャンセルされました</span></p>')}catch(e){}
+}
+/* バッチ送信の結果 (送信/除外/失敗) を結果表示欄へ写す。
+   runSendBatches は _sendRun を作り直すため、監視フラグは独立に持つ。
+   除外の理由文そのものはサーバー側の配信記録にしか無い (フロントに
+   取得経路が無い) ため、件数と理由の所在だけを正直に表示する。 */
+var _apiCallR69=apiCall;
+apiCall=function(req){
+  var p=_apiCallR69(req);
+  try{
+    if(req&&req.action==="sendNextBatch"&&window._r69TestWatch&&p&&typeof p.then==="function"){
+      p=p.then(function(res){r69TestWatchTap_(res);return res});
+    }
+  }catch(e){}
+  return p;
+};
+function r69TestWatchTap_(res){
+  var w=window._r69TestWatch; if(!w)return;
+  try{
+    if(res&&typeof res==="object"){
+      if(res.skipped){r69TestFinish_("今は送信できません（理由: "+String(res.skipped)+"）。残りはサーバーに残っています");return}
+      w.sent+=Number(res.sent||0); w.failed+=Number(res.failed||0); w.excl+=Number(res.skipped_excluded||0);
+      if(res.remaining===0)r69TestFinish_(null);
+    }
+  }catch(e){}
+}
+function r69TestFinish_(note){
+  var w=window._r69TestWatch; window._r69TestWatch=null; if(!w)return;
+  var html;
+  if(note)html='<p class="small" id="testMailOutcome">送信結果: '+esc(note)+'</p>';
+  else html='<p class="small" id="testMailOutcome">送信結果: 送信 '+w.sent+'件 ／ 送信対象から除外 '+w.excl+'件'
+    +(w.excl?'（本日すでに送信済みなど。理由はサーバーの配信記録に残っています）':'')
+    +' ／ 失敗 '+w.failed+'件</p>';
+  try{
+    var el=document.getElementById("testMailResult");
+    if(el){var d=document.createElement("div");d.innerHTML=html;if(d.firstChild)el.appendChild(d.firstChild)}
+    else paintTestMailResultR68_(html);
+  }catch(e){}
+}
+
+/* --- 欠陥2: outbox の破棄をアプリ内2段階確認にする ---
+   従来はネイティブ confirm が承認できない環境では黙って戻り、1件も
+   消えなかった。1回目のクリックで武装し、ボタンの表示を変え、
+   2回目のクリックでバイパス付きで元の破棄処理を呼ぶ。
+   破棄の経路では API.commit / 再送を一切呼ばない (元の処理のまま)。 */
+var _discardOutboxR69=discardOutbox;
+discardOutbox=function(opId){
+  var now=Date.now();
+  var armed=window._r69ArmedDiscard;
+  if(armed&&armed.opId===opId&&(now-armed.at)<30000){
+    window._r69ArmedDiscard=null;
+    r69ArmConfirm_();
+    return _discardOutboxR69(opId);
+  }
+  window._r69ArmedDiscard={opId:opId,at:now};
+  try{showToast("破棄するには、もう一度「本当に破棄する」を押してください","warn")}catch(e){}
+  try{route()}catch(e){}
+};
+
+/* --- 項目4-2: サマリーバーを旧式1行に (同期系の文言は異常時のみ) --- */
+var _renderSummaryR69=renderSummary;
+renderSummary=function(){
+  _renderSummaryR69();
+  try{
+    var bar=document.getElementById("summaryBar"); if(!bar)return;
+    var schema=bar.querySelector("#schemaWarning");
+    var open=0;
+    try{open=respSummaryCalc().open_count||0}catch(e){open=state.responses.filter(function(r){return !r.handled}).length}
+    var as=null; try{as=areaSummary(state.area)}catch(e){}
+    var c={failed:0,pending:0}; try{c=outboxCounts()}catch(e){}
+    var abnormal=c.failed>0||c.pending>0||!!window._persistFallback
+      ||(window._syncState&&window._syncState.status==="failed")
+      ||(window._respSync&&window._respSync.ok===false)||!!schema;
+    var areaLabel=(state.area==="kansai"?"関西":"関東");
+    var countsHtml="";
+    if(as){
+      countsHtml=as.loading
+        ? areaLabel+"全体DB 読み込み中…／SMS対象 読み込み中…／送信済み 読み込み中…"
+        : areaLabel+"全体DB "+as.total+"名／SMS対象 "+as.smsTarget+"名／送信済み "+as.sent+"名";
+    }
+    var html='<a href="#/responses">回答未対応 '+open+'件</a>'
+      +(countsHtml?"<span>"+countsHtml+"</span>":"");
+    if(abnormal){
+      html+=syncBadgeHtml()+'<span class="syncState">'+syncStateHtml()
+        +(window._persistFallback?"・軽量保存モード（状態のみ保存中）":"")+"</span>";
+    }
+    bar.innerHTML=html;
+    if(schema)bar.appendChild(schema);
+  }catch(e){}
+};
+
+/* --- 項目4-3: 入口を旧アプリ式に再構成 ---
+   入口 = 見出し → 県チップ → 件数行 → 大きな導線 (従来の基本構成は維持)。
+   朝の棚卸しと滞留は回答一覧の先頭へ、提案は独立画面 #/proposals へ移し、
+   入口には未読バッジ付きの導線1行だけを残す。「今日やること」は廃止。
+   反映失敗バーと未送信操作カードが両方ある時だけ「要対応」1枚に寄せる。 */
+function buildMorningCardHtmlR69_(){
+  var s=respSummaryCalc();
+  var synced=!!(window._respSync&&window._respSync.ok);
+  var sm=synced?window._respSync.summary:null;
+  if(sm&&typeof sm==="object"){var inner=(sm.summary&&typeof sm.summary==="object")?sm.summary:sm;
+    if(typeof inner.notify_failed_count==="number")s.notify_failed_count=inner.notify_failed_count;
+    if(typeof inner.phone_unparsed_count==="number")s.phone_unparsed_count=inner.phone_unparsed_count;
+    if(typeof inner.sender_unknown_open_count==="number")s.sender_unknown_open_count=inner.sender_unknown_open_count;
+    if(inner.sender_unknown_oldest!=null)s.sender_unknown_oldest=inner.sender_unknown_oldest}
+  if(!s.open_count){
+    if(!synced)return "";
+    var hhmm="";var mm=String(window._respSync.at||"").match(/[T ](\d{2}):(\d{2})/);if(mm)hhmm=mm[1]+":"+mm[2];
+    return '<div class="card" id="respMorningCard"><p>未対応の回答はありません（サーバー確認済み'+(hhmm?" "+hhmm:"")+'）</p></div>';
+  }
+  var ageDays=s.oldest_open?Math.max(0,Math.floor((new Date(todayStr())-new Date(String(s.oldest_open.at).slice(0,10)))/864e5)):0;
+  return '<div class="card" id="respMorningCard" style="border:2px solid var(--warn)"><h3>未対応の回答（朝の棚卸し）</h3>'
+    +"<p>未対応 "+s.unhandled+"件 ／ 対応中 "+s.in_progress+"件（未対応＋対応中 = "+s.open_count+"件）"
+    +(s.oldest_open?" ／ 最古の未対応: "+esc(String(s.oldest_open.at).slice(0,10))+"（"+ageDays+"日放置）":"")+"</p>"
+    +"<p>"
+    +(s.phone_today_count?'<span class="badge bad">電話希望・本日対応 '+s.phone_today_count+"件</span> ":(s.phone_approaching?'<span class="badge warn">電話希望が接近しています'+(s.nearest_phone_hint?"（最接近 "+esc(s.nearest_phone_hint)+"）":"")+"</span> ":""))
+    +(s.sender_unknown_open_count?'<span class="badge bad">送信元不明 '+s.sender_unknown_open_count+"件（引き取り待ち）</span> ":"")
+    +(s.notify_failed_count?'<span class="badge bad">通知未達 '+s.notify_failed_count+"件（再送できます）</span> ":"")
+    +(s.phone_unparsed_count?'<span class="badge warn">電話希望・日時未特定 '+s.phone_unparsed_count+"件</span> ":"")
+    +(s.calendar_unregistered_count?'<span class="badge bad">カレンダー未登録 '+s.calendar_unregistered_count+"件</span>":"")
+    +"</p>"
+    +(synced?"":'<p class="small">未同期のため端末内の件数です</p>')
+    +'<div class="flex"><a class="btn primary" href="#/responses">回答一覧（未対応タブ）を開く</a></div></div>';
+}
+var _viewHomeR69=viewHome;
+viewHome=function(){
+  _viewHomeR69();
+  try{
+    var app=document.getElementById("app"); if(!app)return;
+    /* 提案の独立画面: ハッシュ変更では基底 route が呼ばれるため、
+       入口描画の最後で振り替える (名前呼び出しでも同じ結果になる) */
+    if(String(location.hash||"").indexOf("#/proposals")===0){
+      app.innerHTML=proposalsHtml();
+      return;
+    }
+    /* 朝の棚卸し: HTML を控えてから入口から外す (回答一覧で使う) */
+    var mc=app.querySelector("#respMorningCard");
+    if(mc){window._respMorningHtml=mc.outerHTML;mc.remove()}
+    /* 今日やること廃止 */
+    app.querySelectorAll("[data-d2-today]").forEach(function(el){el.remove()});
+    /* 滞留と提案のカードを入口から外し、提案は導線1行にする */
+    var propCard=null;
+    [].slice.call(app.querySelectorAll(".card")).forEach(function(cd){
+      var h3=cd.querySelector("h3"); if(!h3)return;
+      var t=h3.textContent||"";
+      if(t.indexOf("いま止まっているもの")===0)cd.remove();
+      else if(t.indexOf("新着マッチ提案")===0)propCard=cd;
+    });
+    if(propCard){
+      var n=0; try{n=proposalsAll().filter(function(p){return p.status==="suggested"}).length}catch(e){}
+      var row=document.createElement("div");
+      row.className="card"; row.setAttribute("data-r69-proposals-nav","1");
+      row.innerHTML='<div class="flex"><a class="btn" href="#/proposals">新着マッチ提案</a>'
+        +(n?'<span class="badge warn">未読 '+n+'件</span>':'<span class="small">未読 0件</span>')+"</div>";
+      if(propCard.parentNode)propCard.parentNode.replaceChild(row,propCard);
+    }
+    /* 要対応の統合: 反映失敗バーと未送信操作カードが両方ある時だけ1枚に */
+    var failBar=app.querySelector(".opFailBar");
+    var obCard=null;
+    [].slice.call(app.querySelectorAll(".card")).forEach(function(cd){
+      var h3=cd.querySelector("h3");
+      if(h3&&(h3.textContent||"").indexOf("未送信のまま残っている操作")===0)obCard=cd;
+    });
+    if(failBar&&obCard&&failBar.parentNode){
+      var wrap=document.createElement("div");
+      wrap.className="card"; wrap.id="r69AttentionCard"; wrap.style.border="2px solid var(--warn)";
+      wrap.innerHTML="<h3>要対応</h3>";
+      failBar.parentNode.insertBefore(wrap,failBar);
+      wrap.appendChild(failBar); wrap.appendChild(obCard);
+    }
+    /* 破棄の武装中は対象ボタンの表示を変える */
+    var armed=window._r69ArmedDiscard;
+    if(armed&&(Date.now()-armed.at)<30000){
+      var btn=[].slice.call(app.querySelectorAll("button")).filter(function(b){
+        return b.getAttribute&&b.getAttribute("onclick")==="discardOutbox('"+armed.opId+"')";
+      })[0];
+      if(btn){btn.textContent="本当に破棄する";btn.classList.add("primary")}
+    }
+  }catch(e){}
+};
+var _viewResponsesR69=viewResponses;
+viewResponses=function(){
+  _viewResponsesR69();
+  try{
+    var app=document.getElementById("app"); if(!app)return;
+    if(app.querySelector("#respMorningCard"))return;
+    var built=""; try{built=buildMorningCardHtmlR69_()}catch(e){}
+    var html=built||window._respMorningHtml||"";
+    var stuck=""; try{stuck=stuckHtml()}catch(e){}
+    if(html||stuck)app.insertAdjacentHTML("afterbegin",(html||"")+stuck);
+  }catch(e){}
+};
+
+/* --- 項目4-5: proposalsAll のキャッシュ ---
+   指紋 = データ版 + 新着案件ID + 件数 + 提案状態 (localStorage の生文字列)。
+   既存の集計メモ (aggMemo) と同じ規律で、データが変われば再計算する。 */
+var _proposalsAllR69=proposalsAll;
+var _propCacheR69={key:"",data:null};
+proposalsAll=function(){
+  try{
+    var freshIds=CASES.filter(isFreshCase).map(function(c){return c.id}).join(",");
+    var ls=""; try{ls=localStorage.getItem("proposals_r4")||""}catch(e){}
+    var src=freshIds+"|"+applicants.length+"|"+CASES.length+"|"+ls;
+    var h=0; for(var i=0;i<src.length;i++){h=((h*31)+src.charCodeAt(i))>>>0}
+    var key=(typeof _dataVersion!=="undefined"?_dataVersion:0)+"@"+h.toString(16)+"@"+src.length;
+    if(_propCacheR69.key===key&&_propCacheR69.data)return _propCacheR69.data;
+    var out=_proposalsAllR69();
+    _propCacheR69={key:key,data:out};
+    return out;
+  }catch(e){return _proposalsAllR69()}
+};
+
+/* --- 項目4-4: フォーム高速化 (軽い方) ---
+   (a) xlsx は取り込み画面で初めて必要な時に読み込む (head の同期読み込み廃止)。
+   (b) 文脈取得は冒頭の bootstrap が先行発射し、ここで同じ約束を再利用する。
+   (c) 担当者初期化 (ping / テンプレート同期) は bootstrap のフラグで止める
+       (呼び出し側の2行を条件付きにした)。 */
+function ensureXlsxR69_(){
+  if(typeof XLSX!=="undefined"&&XLSX&&typeof XLSX.read==="function")return Promise.resolve(true);
+  if(window._xlsxPromiseR69)return window._xlsxPromiseR69;
+  window._xlsxPromiseR69=new Promise(function(res){
+    try{
+      var s=document.createElement("script");
+      s.src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+      s.onload=function(){res(typeof XLSX!=="undefined")};
+      s.onerror=function(){res(false)};
+      document.head.appendChild(s);
+    }catch(e){res(false)}
+  });
+  return window._xlsxPromiseR69;
+}
+var _previewImportR69=previewImport;
+previewImport=async function(){
+  try{
+    var inp=document.querySelector("#impFiles");
+    var files=inp?[].slice.call(inp.files||[]):[];
+    if(files.some(function(f){return /\.(xlsx|xls)$/i.test(f.name||"")})&&typeof XLSX==="undefined"){
+      await ensureXlsxR69_();
+    }
+  }catch(e){}
+  return _previewImportR69();
+};
+var _fetchRelayContextR69=fetchRelayContext;
+fetchRelayContext=function(token){
+  try{
+    var tk=token||relayToken();
+    var st=window._relayEarlyCtx;
+    if(st&&st.token===tk&&st.promise){
+      var p=st.promise; window._relayEarlyCtx=null; return p;
+    }
+  }catch(e){}
+  return _fetchRelayContextR69(token);
+};
+
+/* __APP_LOGIC__ へ公開済みの関数は、ラッパー適用後の実体で再公開する
+   (公開参照 === 最終バインディング、という同一性契約を保つため) */
+if(window.__APP_LOGIC__){
+  if("apiCall" in window.__APP_LOGIC__)window.__APP_LOGIC__.apiCall=apiCall;
+  if("discardOutbox" in window.__APP_LOGIC__)window.__APP_LOGIC__.discardOutbox=discardOutbox;
+  if("proposalsAll" in window.__APP_LOGIC__)window.__APP_LOGIC__.proposalsAll=proposalsAll;
+  if("fetchRelayContext" in window.__APP_LOGIC__)window.__APP_LOGIC__.fetchRelayContext=fetchRelayContext;
+}
+
+/* 起動時の最終描画: 既存ブロックと同じ流儀で、このレイヤーを通して
+   もう一度描く (入口の再構成とフォームの先行取得の消費はここで効く) */
+try{route()}catch(e){}
 </script>
 </body></html>

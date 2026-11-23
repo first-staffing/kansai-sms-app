@@ -6837,4 +6837,508 @@ cardHtml = function(a){
   return h;
 };
 
+
+/* ================= R6153: サーバーモードでサンプルを出さない + 発行の失敗を即返す + 読み込み順序 =================
+   実機所見 (2026-11-23 20:22, ユーザーの iPhone, キャッシュ削除後の再読み込み):
+   ヘッダーは「同期済み・最終同期 20:22」「関西全体DB 6156名」とサーバー値なのに、
+   一覧本体は「関西全体のDB 読み込み中...」のままで、京都府を選ぶと
+   「京都府: DB 3名 / SMS送信対象 3名」と出て、表示される3件は全部サンプル
+   応募者だった (実データの京都は456名)。そのサンプルカードのSMSをタップすると
+   「発行中...」のまま固まり、「フォームURLの発行に時間がかかっています」に
+   なった。存在しない応募者の発行が、長い待ちの末に時間切れ表示になっていた。
+
+   原因:
+   (1) 6.11/6.12 のゲートは「件数」だけが対象で、一覧本体はゲート対象外だった。
+       サーバーモード有効化 (ping 応答) までは viewList はローカルプール
+       (= 同梱サンプル) をそのまま描き、対話可能なカードとして出してしまう。
+       あわせて prefButtons の府県別行 (「X府: DB N名 / SMS送信対象 M名」) は
+       ゲートと無関係に常時ローカルプールから計算されていた。
+   (2) 発行 (issueFormToken) の結果は、本来は直接応答で返ってくる。
+       enqueue → API.commit は即時に POST し、その Promise は成否どちらでも
+       op (失敗時は op.error にサーバーの理由) を持って解決する。ところが
+       SMS 主経路 (openSmsDirect615) はこの Promise を一切見ず、発行URLが
+       formUrlFor に現れるかだけを 250ms x 60回 (15秒) ポーリングしていた。
+       そのため「応募者が見つかりません」のような確定した失敗でも、
+       上限まで待って時間切れ文言になるだけだった。失敗した発行はローカルの
+       配信レコード (URLなし) として残り、再タップしても issueFormInvite の
+       重複防止 (form_key) で再発行が積まれない問題もあった。
+   (3) 起動時の読み込み順序: ping → 有効化で サマリー取得 + 回答同期 が走り、
+       同じ有効化に相乗りして案件マスター取得 (約3MB) も始まっていた。
+       一覧の最初のページは一覧表示時に初めて取得が始まるため、重い案件
+       取得と競合し、一覧の初回表示が遅れていた (その間にサンプルを触って
+       しまうのが今回の失敗の前提)。
+
+   対策:
+   A. 一覧本体のゲート: サーバー接続が前提の環境で、サーバーの初回一覧が
+      届くまでは、一覧 (first/recommend/follow) にサンプル等のカードを
+      一切描かない。有効化前は applicants を空にして描画し、描画後に
+      件数行・0件表示を読み込み中プレースホルダへ整える。有効化後は
+      R6 のページキャッシュがそのまま使われ (元々サンプルは出ない)、
+      同じ整形だけを行う。着地・有効化を監視し、一覧表示中なら1回だけ
+      描き直す。疎通失敗が確定したら従来どおりローカル表示に落とす
+      (6.11 の安全弁も踏襲)。デモモード (サーバー前提でない環境) は不変。
+   B. 府県別行はサーバー集計から出す: prefButtons の府県別行を、サーバー
+      サマリーの pref_counts (DB数) で差し替える。届くまでは読み込み中。
+      府県別の SMS送信対象はサーバー集計に存在しない (エリア単位のみ) ため、
+      サーバーモードでは DB 数だけを「(サーバー集計)」付きで出す。
+   C. 発行は直接応答で受ける: enqueue を観測し、issueFormToken の commit
+      Promise の解決 (成否) を応募者ごとに記録する。openSmsDirect615 は
+      その結果を主信号として待ち、確定した失敗なら上限まで待たず即座に
+      短いエラーで終える。失敗したローカル配信レコードは除去し、再タップで
+      再発行が積まれるようにする。ポーリングは、直接応答が来ない環境
+      (モック等) 向けの予備として残す。
+   D. 読み込み順序: 有効化の完了時に一覧の最初のページを先読みして
+      ページキャッシュへ入れ、一覧表示を待たせない。案件マスター取得
+      (fetchCaseMasterR613_) は、初回一覧が着地するまで開始を後ろに倒す
+      (案件マスターを必要とするビューへ遷移したら即開始・上限5秒)。 */
+
+/* ---- A-0. 判定: サーバーの初回一覧がまだ届いていないか ---- */
+function r6153ServerExpected_(){
+  try { return typeof r611ServerExpected_ === "function" && r611ServerExpected_(); } catch(e) { return false; }
+}
+function r6153ServerDown_(){
+  try { return !!window._r611ServerDown; } catch(e) { return false; }
+}
+function r6153ListPending_(){
+  try {
+    if (!r6153ServerExpected_()) return false;      /* デモ/ローカル環境は対象外 */
+    if (r6153ServerDown_()) return false;            /* 疎通失敗確定 → ローカル表示 (6.11と同じ) */
+    var c = window._r6ListCache;
+    if (c && c.error) return false;                  /* 失敗時は R6 のエラー表示 + 再試行に任せる */
+    if (c && c.total != null) return false;          /* 初回一覧が着地済み */
+    if (!window._r6ServerMode && typeof window._r611BootAt === "number" && Date.now() - window._r611BootAt > 60000) return false; /* 安全弁 (有効化前のみ・6.11と同思想) */
+    return true;
+  } catch(e) { return false; }
+}
+
+/* ---- A-1. 着地の監視: 有効化されたら取得を開始させ、着地したら描き直す ---- */
+var _r6153WatchTimer = null;
+var _r6153WatchKicked = false;
+function r6153WatchListArrival_(){
+  if (_r6153WatchTimer) return;
+  var t0 = Date.now();
+  _r6153WatchTimer = setInterval(function(){
+    var onList = false;
+    try { onList = (location.hash || "").indexOf("#/list") === 0; } catch(e) {}
+    var pending = true;
+    try { pending = r6153ListPending_(); } catch(e) { pending = false; }
+    if (window._r6ServerMode && !_r6153WatchKicked) {
+      _r6153WatchKicked = true;
+      if (onList) { try { route(); } catch(e) {} }
+    }
+    if (!pending) {
+      clearInterval(_r6153WatchTimer); _r6153WatchTimer = null;
+      if (onList) { try { route(); } catch(e) {} }
+      return;
+    }
+    if (Date.now() - t0 > 65000) { clearInterval(_r6153WatchTimer); _r6153WatchTimer = null; }
+  }, 400);
+}
+
+/* ---- A-2. 描画後の整形: サンプル由来の残存物を落とし、読み込み中表示にする ---- */
+function r6153ScrubListDom_(){
+  try {
+    var app = document.getElementById("app");
+    if (!app || !app.querySelectorAll) return;
+    var i, els;
+    /* 念のため: カードが残っていたら取り除く */
+    els = app.querySelectorAll('article[data-anchor^="app:"]');
+    for (i = 0; i < els.length; i++) els[i].remove();
+    /* 追客モードのプール/端末内回答由来パネルは着地まで出さない */
+    els = app.querySelectorAll(".card");
+    for (i = 0; i < els.length; i++) {
+      var t = els[i].textContent || "";
+      if (t.indexOf("今日の応募対応") >= 0 || t.indexOf("電話希望・今日対応") >= 0 || t.indexOf("電話希望・日時未特定") >= 0) els[i].remove();
+    }
+    /* セグメントチップ行 (プール由来の件数を含む) も着地まで出さない */
+    els = app.querySelectorAll("button");
+    for (i = 0; i < els.length; i++) {
+      if ((els[i].textContent || "").indexOf("現在の条件をビューとして保存") >= 0 && els[i].parentNode) { els[i].parentNode.remove(); break; }
+    }
+    /* 絞り込みカードの操作は着地まで無効化する (市区町村の選択肢はプール由来のため) */
+    els = app.querySelectorAll(".card");
+    for (i = 0; i < els.length; i++) {
+      if ((els[i].textContent || "").indexOf("市区町村で求職者を絞る") >= 0) {
+        var ctrls = els[i].querySelectorAll("select, input, button");
+        for (var j = 0; j < ctrls.length; j++) ctrls[j].disabled = true;
+      }
+    }
+    /* 件数行を読み込み中にする */
+    var lt = document.getElementById("listTotal");
+    if (lt && lt.parentNode) lt.parentNode.innerHTML = '<span id="listTotal">読み込み中…</span>';
+    /* 0件表示を読み込み中プレースホルダへ */
+    els = app.querySelectorAll(".card");
+    var hasPlaceholder = false;
+    for (i = 0; i < els.length; i++) {
+      var tx = els[i].textContent || "";
+      if (tx.indexOf("0件です") >= 0) { els[i].innerHTML = '<p class="small">サーバーから読み込み中…</p>'; hasPlaceholder = true; }
+      else if (tx.indexOf("サーバーから読み込み中") >= 0) hasPlaceholder = true;
+    }
+    if (!hasPlaceholder) {
+      var anchor = document.getElementById("listTotal");
+      if (anchor && anchor.parentNode) anchor.parentNode.insertAdjacentHTML("afterend", '<div class="skel" aria-busy="true"></div><p class="small">読み込み中…</p>');
+    }
+  } catch(e) {}
+}
+
+/* ---- A-3. 一覧本体のゲート (viewList の最外ラップ) ---- */
+var _viewList6153 = viewList;
+viewList = function(){
+  var gated = false;
+  try {
+    gated = r6153ListPending_() && (state.mode === "first" || state.mode === "recommend" || state.mode === "follow");
+  } catch(e) { gated = false; }
+  if (!gated) { _viewList6153(); return; }
+  if (window._r6ServerMode) {
+    /* 有効化後: R6 ラッパーが取得を開始し、applicants はページキャッシュへ
+       差し替わる (サンプルは元々出ない)。整形だけを行う */
+    _viewList6153();
+  } else {
+    /* 有効化前: ローカルプール (= サンプル) を描かせない */
+    var saved = applicants;
+    applicants = [];
+    try { _viewList6153(); } finally { applicants = saved; }
+  }
+  r6153ScrubListDom_();
+  r6153WatchListArrival_();
+};
+
+/* ---- B. 府県別行はサーバー集計から出す ---- */
+function r6153PrefLine_(){
+  var pref = "";
+  try { pref = F.pref || ""; } catch(e) {}
+  var sm = null;
+  try { sm = window._r6ApplicantSummary; } catch(e) {}
+  var areaData = null;
+  try {
+    if (sm && sm.areas && sm.areas[state.area]) areaData = sm.areas[state.area];
+    else if (sm && sm.area === state.area && sm.pref_counts) areaData = sm;
+  } catch(e) {}
+  if (areaData && areaData.pref_counts) {
+    var n = areaData.pref_counts[pref] || 0;
+    return '<p class="small" style="margin:4px 0">' + esc(pref) + ": DB " + n + "名（サーバー集計）</p>";
+  }
+  return '<p class="small" style="margin:4px 0">' + esc(pref) + ": DB 読み込み中… ／ SMS送信対象 読み込み中…</p>";
+}
+var _prefButtons6153 = prefButtons;
+prefButtons = function(){
+  var h = "";
+  try { h = String(_prefButtons6153() || ""); } catch(e) { return ""; }
+  try {
+    if (r6153ServerExpected_() && !r6153ServerDown_() && typeof F !== "undefined" && F.pref) {
+      h = h.replace(/<p class="small" style="margin:4px 0">[^<]*<\/p>/, r6153PrefLine_());
+    }
+  } catch(e) {}
+  return h;
+};
+
+/* ---- C. 発行は直接応答で受ける ---- */
+window._r6153IssueOutcome = window._r6153IssueOutcome || {};
+window._r6153IssueWaiters = window._r6153IssueWaiters || {};
+function r6153IssueFailMessage_(error){
+  var e = String(error || "");
+  if (e.indexOf("見つかりません") >= 0) return "応募者が見つかりませんでした";
+  return "フォーム発行に失敗しました";
+}
+function r6153RecordIssueOutcome_(op){
+  try {
+    if (!op || op.type !== "issueFormToken") return;
+    var aid = op.payload && op.payload.applicant_id;
+    if (!aid) return;
+    var rec = null;
+    if (op.status === "done") {
+      var res = op.result || {};
+      rec = { state: "ok", url: String(res.form_url || ""), error: "", at: Date.now(), opId: op.opId };
+    } else if (op.status === "failed") {
+      rec = { state: "failed", url: "", error: String(op.error || ""), at: Date.now(), opId: op.opId };
+    } else return;
+    window._r6153IssueOutcome[aid] = rec;
+    var ws = window._r6153IssueWaiters[aid];
+    if (ws) {
+      delete window._r6153IssueWaiters[aid];
+      ws.forEach(function(fn){ try { fn(rec); } catch(e) {} });
+    }
+  } catch(e) {}
+}
+var _enqueue6153 = enqueue;
+enqueue = function(type, payload){
+  var p = _enqueue6153(type, payload);
+  try {
+    if (type === "issueFormToken" && p && typeof p.then === "function") {
+      p.then(function(op){ r6153RecordIssueOutcome_(op); });
+    }
+  } catch(e) {}
+  return p;
+};
+function r6153WaitIssue_(aid, issueStart, cb){
+  var rec = null;
+  try { rec = window._r6153IssueOutcome[aid]; } catch(e) {}
+  if (rec && rec.at >= issueStart - 1000) { cb(rec); return null; }
+  var ws = window._r6153IssueWaiters[aid] || (window._r6153IssueWaiters[aid] = []);
+  ws.push(cb);
+  return cb;
+}
+function r6153UnwaitIssue_(aid, cb){
+  try {
+    var ws = window._r6153IssueWaiters[aid];
+    if (ws) {
+      var i = ws.indexOf(cb);
+      if (i >= 0) ws.splice(i, 1);
+      if (!ws.length) delete window._r6153IssueWaiters[aid];
+    }
+  } catch(e) {}
+}
+/* 確定した失敗のときだけ、URLのないローカル発行レコードを除去する
+   (残すと issueFormInvite の重複防止で再タップしても再発行されないため) */
+function r6153PurgeIssueRecord_(recId){
+  try {
+    if (!recId || typeof state === "undefined" || !Array.isArray(state.deliveries)) return;
+    for (var i = 0; i < state.deliveries.length; i++) {
+      var rec = state.deliveries[i];
+      if (rec && rec.id === recId) {
+        if (rec.form_invite && !rec.form_url) {
+          state.deliveries.splice(i, 1);
+          try { saveAll(); } catch(e) {}
+        }
+        return;
+      }
+    }
+  } catch(e) {}
+}
+
+/* ---- C-2. SMS主経路: 発行の成否は直接応答で判断する (6.15.1 の方式 + 失敗の即返し) ---- */
+function openSmsDirect615(id, btn){
+  var a = null;
+  try { a = applicants.find(function(x){ return x.id === id; }); } catch(e) {}
+  if (!a) return;
+  if (btn && btn.getAttribute("data-r615busy") === "1") return;
+  var done = false;
+  var issueRecId = null;
+  var issueWaiter = null;
+  var stopWait = function(){
+    if (issueWaiter) { r6153UnwaitIssue_(id, issueWaiter); issueWaiter = null; }
+  };
+  var fail = function(msg){
+    if (done) return; done = true;
+    stopWait();
+    r6151RemoveSmsAnchor_(btn);
+    r615SetBusy_(btn, false);
+    r615CardError_(btn, msg);
+  };
+  var finish = function(phone, urlOverride){
+    if (done) return;
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var url = "";
+    try { url = urlOverride || formUrlFor(a); } catch(e) {}
+    var body = "";
+    try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    done = true;
+    stopWait();
+    r615SetBusy_(btn, false);
+    try { window._r6151LastSmsHref = href; } catch(e) {}
+    var anchor = r6151ShowSmsAnchor_(btn, href);
+    if (anchor) {
+      try { anchor.click(); } catch(e) {}
+    } else {
+      try { r615NavigateSms_(href); } catch(e) {}
+    }
+  };
+  r615SetBusy_(btn, true, "発行中…");
+  var attach = true;
+  try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+  var phoneState = "wait"; /* wait | ok | ng */
+  var phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phoneVal) phoneState = "ok";
+  var urlState = attach ? "wait" : "ok"; /* wait | ok | ng */
+  var issuedUrl = "";
+  var issueFailMsg = "";
+  var check = function(){
+    if (done) return;
+    if (phoneState === "ng") { fail("電話番号なし"); return; }
+    if (urlState === "ng") {
+      if (issueFailMsg) r6153PurgeIssueRecord_(issueRecId);
+      fail(issueFailMsg || "フォームURLの発行に時間がかかっています。もう一度タップしてください");
+      return;
+    }
+    if (phoneState === "ok" && urlState === "ok") finish(phoneVal, issuedUrl);
+  };
+  /* フォーム発行 (番号取得と並行に開始する) */
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else {
+      var issueStart = Date.now();
+      try { delete window._r6153IssueOutcome[a.id]; } catch(e) {}
+      var dRec = null, issueErr = false;
+      try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return; }
+      issueRecId = (dRec && dRec.id) || null;
+      var u1 = "";
+      try { u1 = formUrlFor(a); } catch(e) {}
+      if (u1) { urlState = "ok"; }
+      else {
+        /* 直接応答 (commit の Promise) を主信号にする */
+        issueWaiter = r6153WaitIssue_(a.id, issueStart, function(rec){
+          if (done) return;
+          if (rec.state === "failed") {
+            issueFailMsg = r6153IssueFailMessage_(rec.error);
+            urlState = "ng";
+            check();
+          } else if (rec.state === "ok" && rec.url) {
+            issuedUrl = rec.url;
+            urlState = "ok";
+            check();
+          }
+          /* ok でも URL が無い場合はポーリング側の判定に委ねる */
+        });
+        /* 予備のポーリング (直接応答が来ない環境向け) */
+        var maxPoll = 60;
+        try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+        var n = 0;
+        var timer = setInterval(function(){
+          if (done) { clearInterval(timer); return; }
+          n++;
+          var u = "";
+          try { u = formUrlFor(a); } catch(e) {}
+          if (u) { clearInterval(timer); urlState = "ok"; check(); return; }
+          var rec2 = null;
+          try { rec2 = window._r6153IssueOutcome[a.id]; } catch(e) {}
+          if (rec2 && rec2.at >= issueStart - 1000) {
+            if (rec2.state === "failed") {
+              clearInterval(timer);
+              issueFailMsg = r6153IssueFailMessage_(rec2.error);
+              urlState = "ng";
+              check();
+              return;
+            }
+            if (rec2.state === "ok" && rec2.url) {
+              clearInterval(timer);
+              issuedUrl = rec2.url;
+              urlState = "ok";
+              check();
+              return;
+            }
+          }
+          if (n > maxPoll) { clearInterval(timer); urlState = "ng"; check(); }
+        }, 250);
+      }
+    }
+  }
+  /* 番号取得 (発行と並行) */
+  if (phoneState === "wait") {
+    var canFetch = false;
+    try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+    if (!canFetch) { phoneState = "ng"; check(); }
+    else {
+      if (btn) { try { btn.textContent = "番号を確認中…"; } catch(e) {} }
+      apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+        var det = (res && res.applicant) || null;
+        if (det) {
+          if (det.phone != null) a.phone = String(det.phone || "");
+          if (det.email != null) a.email = String(det.email || "");
+        }
+        phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+        phoneState = phoneVal ? "ok" : "ng";
+        if (btn && phoneState === "ok") { try { btn.textContent = "発行中…"; } catch(e) {} }
+        check();
+      }).catch(function(){ fail("電話番号を確認できませんでした"); });
+    }
+  }
+  check();
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+/* ---- D. 読み込み順序: 一覧の最初のページを先読みし、案件取得は一覧の後に回す ---- */
+function r6153PrefetchList_(){
+  try {
+    if (!window._r6ServerMode) return;
+    var c = window._r6ListCache;
+    if (!c || c.key !== "" || c.total != null || c.loading) return;
+    if (typeof fetchApplicantPageR6_ !== "function" || typeof _r6ListKey !== "function") return;
+    var key = _r6ListKey();
+    c.key = key; c.loading = true;
+    var want = 20;
+    try { want = Math.max(20, (typeof state !== "undefined" && state.visible) || 20); } catch(e) {}
+    fetchApplicantPageR6_(want).then(function(res){
+      c.items = res.items; c.total = res.total; c.loading = false; c.error = "";
+      if ((location.hash || "").indexOf("#/list") === 0) { try { route(); } catch(e) {} }
+    }).catch(function(){
+      c.key = ""; c.items = []; c.total = null; c.loading = false; c.error = "";
+    });
+  } catch(e) {}
+}
+var _activateServerMode6153 = activateServerModeR6_;
+activateServerModeR6_ = function(){
+  var p = _activateServerMode6153();
+  try {
+    if (p && typeof p.then === "function") {
+      var run6153 = function(){ r6153PrefetchList_(); };
+      p.then(run6153, run6153);
+    }
+  } catch(e) {}
+  return p;
+};
+/* 案件マスター取得は、初回一覧が着地するまで開始を後ろに倒す。
+   ただし案件マスター自体を必要とするビュー (逆引き/特需/掘り起こし) へ
+   遷移したら即座に開始する (それらの表示を一覧の着地待ちにしない)。
+   上限5秒の安全弁つき */
+var _fetchCaseMaster6153 = fetchCaseMasterR613_;
+var _r6153CaseDeferred = null;
+function r6153CaseViewActive_(){
+  try {
+    return typeof state !== "undefined" && (state.mode === "reverse" || state.mode === "special" || state.mode === "dig");
+  } catch(e) { return false; }
+}
+function r6153ReleaseCaseFetch_(){
+  var d = _r6153CaseDeferred;
+  if (!d) return;
+  _r6153CaseDeferred = null;
+  if (d.timer) { try { clearInterval(d.timer); } catch(e) {} }
+  var r = null;
+  try { r = _fetchCaseMaster6153(); } catch(e) { r = null; }
+  Promise.resolve(r).then(function(v){ d.resolve(v); }, function(){ d.resolve(false); });
+}
+fetchCaseMasterR613_ = function(){
+  if (!r6153ListPending_()) return _fetchCaseMaster6153.apply(null, arguments);
+  if (_r6153CaseDeferred) return _r6153CaseDeferred.promise;
+  var resolveFn = null;
+  var promise = new Promise(function(res){ resolveFn = res; });
+  var d = { promise: promise, resolve: resolveFn, timer: null };
+  _r6153CaseDeferred = d;
+  var t0 = Date.now();
+  d.timer = setInterval(function(){
+    if (!r6153ListPending_() || r6153CaseViewActive_() || Date.now() - t0 > 5000) r6153ReleaseCaseFetch_();
+  }, 400);
+  return promise;
+};
+var _route6153 = route;
+route = function(){
+  try { if (_r6153CaseDeferred && r6153CaseViewActive_()) r6153ReleaseCaseFetch_(); } catch(e) {}
+  return _route6153.apply(null, arguments);
+};
+try {
+  if (window.__APP_LOGIC__) {
+    window.__APP_LOGIC__.fetchCaseMasterR613 = fetchCaseMasterR613_;
+    window.__APP_LOGIC__.r6153ListPending = r6153ListPending_;
+    window.__APP_LOGIC__.r6153IssueFailMessage = r6153IssueFailMessage_;
+    window.__APP_LOGIC__.r6153RecordIssueOutcome = r6153RecordIssueOutcome_;
+    window.__APP_LOGIC__.getR6153IssueOutcome = function(){ return window._r6153IssueOutcome; };
+  }
+} catch(e) {}
+
+/* 設置時点ですでに一覧が開かれていてゲート対象なら、即時にゲートを効かせる */
+try {
+  if ((location.hash || "").indexOf("#/list") === 0 && r6153ListPending_()) route();
+} catch(e) {}
+
 </script></body></html>

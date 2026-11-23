@@ -203,7 +203,58 @@ header nav a{min-height:48px;display:inline-flex;align-items:center;font-size:14
 .r614hide{display:none}
 #app details.r614mailAdv{margin:6px 0}
 
-</style></head><body>
+</style><style>
+/* ===== R616: 旧アプリ水準への簡素化（カード / さらに表示固定 / Gmail簡素化 / 案件後読み） ===== */
+/* --- 1. 一覧カード: 旧アプリの形（大きい名前・大きいボタン） --- */
+.r616card .cardHead b{font-size:20px !important}
+.r616card .r616meta{font-size:15px;margin:8px 0 2px;color:var(--text)}
+.r616card .r616applied{font-size:14px;margin:0 0 4px;color:var(--sub)}
+.r616card .r614main,.r616card .r616main{flex-wrap:wrap;gap:10px}
+.r616card .r614main>.btn.primary,.r616card .r616main>.btn.primary{flex:1 1 42%;min-height:52px;font-size:16px}
+.r616card .r614main>.btn:disabled,.r616card .r616main>.btn:disabled{flex:1 1 42%;min-height:52px;font-size:15px}
+.r616card .r616recBtn{flex:1 1 42%;min-height:52px;font-size:15px}
+.r616card .r614main>label,.r616card .r616main>label{flex:1 1 100%;display:flex !important;gap:10px;align-items:center;font-size:15px;min-height:44px}
+.r616card input[type="checkbox"]{width:26px;height:26px;flex:none}
+.r616card .r614actions,.r616card .r616actions{gap:10px}
+.r616card .r614actions>button,.r616card .r614actions>.btn,.r616card .r616actions>button,.r616card .r616actions>.btn{flex:1;min-height:52px;font-size:15px}
+/* --- 2. 固定バー（一覧の「さらに表示」/ Gmailの送信バー） --- */
+.r616bar{position:fixed;left:0;right:0;bottom:0;z-index:60;background:var(--surface);border-top:1px solid var(--border);box-shadow:0 -4px 14px #00000022;padding:10px calc(10px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));display:flex;gap:10px;align-items:center}
+.r616bar .primary{min-height:52px;font-size:16px;flex:1}
+.r616bar button{min-height:52px;font-size:15px}
+.r616bar .r616barCount{font-weight:700;font-size:15px;white-space:nowrap}
+/* --- 3. Gmail上部パネル（ステータス大きいチェック / 会社 / サーバー件数） --- */
+.r616mailTop .r616sender{font-size:15px;margin:4px 0 10px}
+.r616checks{display:flex;flex-direction:column;gap:8px;margin:6px 0 12px}
+.r616check{display:flex;gap:12px;align-items:center;min-height:52px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:16px;background:var(--surface);cursor:pointer}
+.r616check input{width:28px;height:28px;flex:none}
+.r616check:has(input:checked){border-color:var(--accent);background:var(--chip);font-weight:700}
+.r616cos{gap:8px}
+.r616co{min-height:48px;font-size:15px;padding:8px 14px}
+.r616co[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:800}
+.r616count{font-size:17px;font-weight:700;margin-top:12px}
+.r616count .small{font-weight:400}
+/* --- 4. 確認一覧（対象者1人ずつ・おすすめ案件・外す） --- */
+.r616trow{border-top:1px solid var(--border);padding:10px 0}
+.r616trow p{margin:4px 0}
+.r616caseChip{display:inline-block;margin:2px 6px 2px 0}
+.r616caseChip button{min-height:36px;padding:4px 10px;font-size:13px}
+.r616trow> p > button{min-height:44px;padding:8px 18px;font-size:14px}
+</style>
+
+/* R616 案件ピッカーの絞り込み軸 (都道府県・市区町村チップ) */
+.r616csAxes{margin-top:10px}
+.r616csAxes .flex{flex-wrap:wrap;gap:6px}
+.r616csMunis{max-height:180px;overflow-y:auto}
+.r616caseNow{flex:1;padding:10px 12px;border:1px solid var(--line,#d8dee6);border-radius:10px}
+/* R616 市区町村ピッカー */
+.r616muniChips{display:flex;flex-wrap:wrap;gap:6px;max-height:300px;overflow-y:auto;margin-top:8px}
+.r616muniChips button{min-height:40px;padding:8px 12px}
+
+/* R616 一覧上部の導線 (入口廃止に伴い、逆引きと提案は一覧から辿る) */
+.r616listTop{display:flex;gap:8px;margin:0 0 10px}
+.r616listTop button,.r616listTopBtn{flex:1;display:block;min-height:48px;padding:12px;font-size:15px;font-weight:700;text-align:center;border-radius:10px;border:1px solid var(--line,#d8dee6);background:var(--card,#fff);color:inherit;text-decoration:none}
+
+</head><body>
 <div class="stickyTop"><header><b>応募者SMS・Gmail配信</b><span id="userChip" style="font-size:12px;white-space:nowrap;opacity:.95"></span>
 <nav><a href="#/">入口</a><a href="#/list">応募者一覧</a><a href="#/mail">Gmail配信</a><a href="#/import">CSV取り込み</a><a href="#/responses">回答一覧 <span id="respNavBadge"></span></a><a href="#/settings">設定</a></nav></header>
 <div id="toast" role="status"></div></div><div id="summaryBar">読み込み中…</div><main id="app"><div class="skel"></div><p class="small">読み込み中…</p><div class="skel"></div></main>
@@ -793,9 +844,9 @@ function mapRows(rows,fallbackCompany){const head=rows[0].map(h=>String(h).repla
 const pats={name:/氏名|名前|求職者|応募者|お名前/,furigana:/フリガナ|ふりがな|よみがな|カナ/,applied_at:/応募|エントリー|登録日時/,birth_date:/生年月日|誕生日/,age:/年齢/,phone:/電話|携帯|tel/i,email:/メール|e-mail|email/i,prefecture:/都道府県|県名/,municipality:/市区町村|希望勤務地|勤務地/,address:/住所/,job:/職種|希望職種/,source_company:/会社|応募先|派遣元/,qualifications:/資格/,experience_years:/経験/,nearest_station:/最寄/,desired_start_date:/入職|勤務開始|就業開始|就業可能/,csv_status:/ステータス|対応状況|進捗/};const usedCols=new Set(Object.values(idx));head.forEach((h,i)=>{if(usedCols.has(i))return;const nh=normH(h);for(const[k,re]of Object.entries(pats)){if(idx[k]==null&&re.test(nh)){idx[k]=i;usedCols.add(i);break}}});
 /* R3 (検証 #35): 通常経路でも「使われなかった列」を記録し、プレビューで明示する */
 try{window._importUnassigned=head.filter((h,i)=>!usedCols.has(i))}catch(e){}
-return rows.slice(1).map(r=>{const o={};for(const[k,i]of Object.entries(idx))o[k]=String(r[i]??"").trim();if(o.phone)o.phone=normalizeNumericString(o.phone);if(o.birth_date)o.birth_date=normalizeNumericString(o.birth_date);if(o.age!=null&&o.age!=="")o.age=normalizeNumericString(o.age);/* R3 (検証 #34): ファイル名を会社名として流用しない。会社が特定できない行は「会社名未登録」 */o.source_company=normalizeCompany(o.source_company||"");if(o.birth_date)o.birth_date=o.birth_date.replace(/\//g,"-").slice(0,10);o.applied_at=o.applied_at?o.applied_at.replace(/\//g,"-").replace(" ","T").slice(0,16):todayStr()+"T09:00";o.job_type=o.job?(/看護/.test(o.job)?"kango":(/介護|介護士|介護職|介護福祉士|ヘルパー|介護助手|ケアスタッフ/.test(o.job)?"kaigo":"")):"";return o})}
+return rows.slice(1).map(r=>{const o={};for(const[k,i]of Object.entries(idx))o[k]=String(r[i]??"").trim();if(o.phone)o.phone=normalizeNumericString(o.phone);if(o.birth_date)o.birth_date=normalizeNumericString(o.birth_date);if(o.age!=null&&o.age!=="")o.age=normalizeNumericString(o.age);/* R616 (ユーザー指示 2026-11-23): 会社名は「列 (クライアント列を含む) → ファイル名の社名」の順で決める。ファイル名からの補完は r616 ブロックの mapRows ラッパが担う。会社が特定できない行は「会社名未登録」 */o.source_company=normalizeCompany(o.source_company||"");if(o.birth_date)o.birth_date=o.birth_date.replace(/\//g,"-").slice(0,10);o.applied_at=o.applied_at?o.applied_at.replace(/\//g,"-").replace(" ","T").slice(0,16):todayStr()+"T09:00";o.job_type=o.job?(/看護/.test(o.job)?"kango":(/介護|介護士|介護職|介護福祉士|ヘルパー|介護助手|ケアスタッフ/.test(o.job)?"kaigo":"")):"";return o})}
 function detectGenericMapping(head){const norm=s=>String(s||"").normalize("NFKC").toLowerCase().replace(/[\s　]/g,"").replace(/（/g,"(").replace(/）/g,")");const pats={name:/氏名|名前|求職者|応募者|お名前/,furigana:/フリガナ|ふりがな|よみがな|カナ/,applied_at:/応募|エントリー|登録日時/,birth_date:/生年月日|誕生日/,age:/年齢/,phone:/電話|携帯|tel/i,email:/メール|e-mail|email/i,prefecture:/都道府県|県名/,municipality:/市区町村|希望勤務地|勤務地/,address:/住所/,job:/職種|希望職種/,source_company:/会社|応募先|派遣元/,qualifications:/資格/,experience_years:/経験/,nearest_station:/最寄/,desired_start_date:/入職|勤務開始|就業開始|就業可能/,csv_status:/ステータス|対応状況|進捗/};const idx={};const ambiguous=[];head.forEach((h,i)=>{const nh=norm(h);for(const[k,re]of Object.entries(pats)){if(re.test(nh)){if(idx[k]==null)idx[k]=i;else ambiguous.push(h);break}}});return{idx:idx,ambiguous:ambiguous,headers:head}}
-function applyGenericMapping(rows,idx){return rows.slice(1).map(r=>{const o={};for(const[k,i]of Object.entries(idx))o[k]=String(r[i]??"").trim();if(o.phone)o.phone=normalizeNumericString(o.phone);if(o.birth_date)o.birth_date=normalizeNumericString(o.birth_date);if(o.age!=null&&o.age!=="")o.age=normalizeNumericString(o.age);/* R3 (検証 #34): ファイル名を会社名として流用しない */o.source_company=normalizeCompany(o.source_company||"");if(o.birth_date)o.birth_date=o.birth_date.replace(/\//g,"-").slice(0,10);o.applied_at=o.applied_at?o.applied_at.replace(/\//g,"-").replace(" ","T").slice(0,16):todayStr()+"T09:00";o.job_type=o.job?(/看護/.test(o.job)?"kango":(/介護|介護士|介護職|介護福祉士|ヘルパー|介護助手|ケアスタッフ/.test(o.job)?"kaigo":"")):"";return o})}
+function applyGenericMapping(rows,idx){return rows.slice(1).map(r=>{const o={};for(const[k,i]of Object.entries(idx))o[k]=String(r[i]??"").trim();if(o.phone)o.phone=normalizeNumericString(o.phone);if(o.birth_date)o.birth_date=normalizeNumericString(o.birth_date);if(o.age!=null&&o.age!=="")o.age=normalizeNumericString(o.age);/* R616 (ユーザー指示 2026-11-23): 会社名は「列 → ファイル名の社名」の順。補完は r616 ブロック側 */o.source_company=normalizeCompany(o.source_company||"");if(o.birth_date)o.birth_date=o.birth_date.replace(/\//g,"-").slice(0,10);o.applied_at=o.applied_at?o.applied_at.replace(/\//g,"-").replace(" ","T").slice(0,16):todayStr()+"T09:00";o.job_type=o.job?(/看護/.test(o.job)?"kango":(/介護|介護士|介護職|介護福祉士|ヘルパー|介護助手|ケアスタッフ/.test(o.job)?"kaigo":"")):"";return o})}
 function genericMapRows(rows,fallbackCompany){var head=rows[0].map(h=>String(h).replace(/^\uFEFF+/,).trim());var m=detectGenericMapping(head);window._importMapping=m;return applyGenericMapping(rows,m.idx)}
 function viewImport(){$("#app").innerHTML=`<div class="card"><h2>CSV取り込み</h2><p class="small">ファイルを選ぶ → 内容を確認 → 確定で反映。同じファイルの再取り込みでは二重登録されません。</p><details><summary>取り込みの条件と照合ルール</summary><p class="small">条件: 62歳以下／エリア内／介護・看護のみ。照合: 電話・メール・氏名＋生年月日。新しい応募は対応履歴があっても最新応募として必ず登録します（ステータス・送信済みはリセットしない、「新規応募あり」フラグ）。Excelファイル（.xlsx／.xls）もそのまま取り込めます。</p></details>
 <div class="drop" id="dropZone">ここにファイル・フォルダーをドロップ（フォルダ対応）<br><input type="file" id="impFiles" multiple accept=".csv,.xlsx,.xls"></div>
@@ -7341,4 +7392,1649 @@ try {
   if ((location.hash || "").indexOf("#/list") === 0 && r6153ListPending_()) route();
 } catch(e) {}
 
-</script></body></html>
+</script><script>
+/* ================= R616: 旧アプリ水準への簡素化 =================
+   追加ブロックのみで実装する。6.11〜6.14の仕組み（読み込みゲート /
+   テスト送信ドック / 案件マスター連携 / SMS作成モーダル / outbox）は変更しない。
+   6.15 が触る SMSモーダル・番号取得まわり (smsTapIssue_ / openSmsCompose614 /
+   getApplicant) には一切手を入れない。
+   内容: 1) 一覧カードを旧アプリの形に 2) 「さらに表示」を画面下に固定
+   3) Gmail画面を施設メール方式に（条件→サーバーの対象人数→文面→送信）
+   4) 案件マスター取得の後読み化（需要駆動＋アイドル時バックグラウンド） */
+
+/* ---------- 共通: 固定バーの表示調整 ---------- */
+function r616PaintBars_(){
+  var more = false, mail = false;
+  try { more = r616PaintMoreBar_(); } catch(e) {}
+  try { mail = r616PaintMailBar_(); } catch(e) {}
+  try { document.body.style.paddingBottom = mail ? "108px" : (more ? "84px" : ""); } catch(e) {}
+}
+try { window.addEventListener("hashchange", function(){ setTimeout(function(){ try { r616PaintBars_(); } catch(e){} }, 0); }); } catch(e) {}
+var _route616 = route;
+route = function(){
+  try { r616SweepFailedOps_(); } catch(e) {}
+  /* 入口 (ホーム) は廃止: ルートを開いたら応募者一覧へ */
+  var h = location.hash || "";
+  if (h === "" || h === "#/" || h === "#/home") {
+    try { history.replaceState(null, "", "#/list"); } catch(e) {}
+  }
+  var r = _route616(); try { r616PaintBars_(); } catch(e) {} return r;
+};
+
+/* ---------- 1. 一覧カード: 旧アプリの形 ----------
+   名前(大) → 職種・都道府県・市区町村 → 応募：応募元｜日時 → 最も進んだ状況。
+   主ボタンは「初回SMS」と「おすすめ案件を見る」を並べ、送信済みチェックは
+   大きく（CSS）、詳細/電話は「求職者詳細」「電話する」にして大きくする。
+   情報量は 6.14 の削減状態を維持する（年齢は一覧から外し、詳細で確認）。 */
+var _cardHtml616 = cardHtml;
+cardHtml = function(a){
+  var h = "";
+  try { h = String(_cardHtml616(a) || ""); } catch(e) { return ""; }
+  try {
+    h = h.replace(/<article class="card/, '<article class="card r616card');
+    var applied = String((a && a.applied_at) || "").replace("T", " ").slice(0, 16);
+    /* マージ規則: 表示する応募会社は「直近の応募」の会社 (latest_application)。
+       日時は a.applied_at (直近の応募日時が入る) を使う */
+    var appliedCompany = "";
+    try { refreshProgress(a); appliedCompany = (a.latest_application && a.latest_application.company) || ""; } catch (e) {}
+    if (!appliedCompany) appliedCompany = normalizeCompany(a && a.source_company);
+    var job = (a && a.job_type) === "kango" ? "看護" : "介護";
+    var meta = '<p class="r616meta">' + job + "・" + esc((a && a.prefecture) || "") + "・" + esc((a && a.municipality) || "") + "</p>"
+      + '<p class="r616applied">応募： ' + esc(appliedCompany) + "｜" + esc(applied) + "</p>";
+    h = h.replace(/<p class="small">[^<]*<\/p>/, meta);
+    h = h.replace(">SMS作成を開く</button>", ">初回SMS</button>");
+    h = h.replace("送信済み（明示操作で記録）", "送信済み");
+    h = h.replace(/(<button onclick="openDetail\('[^']*'\)">)詳細(<\/button>)/, "$1求職者詳細$2");
+    h = h.replace(/(<a class="btn" href="tel:[^"]*">)電話(<\/a>)/, "$1電話する$2");
+    /* ボタン行に CSS 用クラスを付ける（6.14 のマーカーが付かないカード形状でも効かせる） */
+    h = h.replace(/<div class="flex" style="margin-top:8px">([\s\S]*?)<\/div>/g, function(m, inner){
+      var cls = "";
+      if (/openSmsCompose614\(|SMS作成（電話番号なし）|のためSMSは送れません/.test(inner)) cls = " r616main";
+      else if (/onclick="openDetail\('/.test(inner)) cls = " r616actions";
+      if (!cls) return m;
+      return '<div class="flex' + cls + '" style="margin-top:8px">' + inner + "</div>";
+    });
+    /* おすすめ案件を見る を主ボタンの隣へ移す（初回SMSと横並びにする） */
+    var rec = h.match(/<button onclick="state\.mode='recommend';route\(\)">おすすめ案件を見る<\/button>/);
+    if (rec) {
+      var bend = h.indexOf("初回SMS</button>");
+      if (bend >= 0) {
+        h = h.replace(rec[0], "");
+        var recBtn = rec[0].replace("<button onclick=", '<button class="r616recBtn" onclick=');
+        var at = bend + "初回SMS</button>".length;
+        h = h.slice(0, at) + recBtn + h.slice(at);
+      }
+    }
+  } catch(e) {}
+  return h;
+};
+
+/* ---------- 2. 「さらに表示」を画面下に固定 ----------
+   一覧表示中は固定バーに同じボタンを出し、流れの中のボタンは隠す。
+   標準の一覧（20件ずつ追加）は、画面全体を描き直さず末尾へ継ぎ足す。 */
+function r616MoreButton_(){
+  var app = document.getElementById("app");
+  if (!app || !app.querySelectorAll) return null;
+  var btns = app.querySelectorAll("button");
+  for (var i = 0; i < btns.length; i++) {
+    if (/さらに.*表示/.test(btns[i].textContent || "")) return btns[i];
+  }
+  return null;
+}
+function r616ListTotal_(){
+  var list = filtered();
+  if (window._smsSegFilter) list = list.filter(function(a){ return segmentOf(a) === window._smsSegFilter; });
+  return list.length;
+}
+function r616PaintMoreBar_(){
+  var bar = document.getElementById("r616MoreBar");
+  var onList = (location.hash || "").indexOf("#/list") === 0;
+  var btn = onList ? r616MoreButton_() : null;
+  if (!btn) { if (bar) bar.style.display = "none"; return false; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "r616MoreBar"; bar.className = "r616bar";
+    bar.innerHTML = '<button type="button" class="primary" id="r616MoreBtn"></button>';
+    document.body.appendChild(bar);
+  }
+  var b = document.getElementById("r616MoreBtn");
+  var label = (btn.textContent || "").trim() || "さらに表示";
+  var oc = btn.getAttribute("onclick") || "";
+  if (/state\.visible\+=20/.test(oc)) {
+    try { var rem = r616ListTotal_() - state.visible; if (rem > 0) label = "さらに表示（あと" + rem + "件）"; } catch(e) {}
+  }
+  if (b) {
+    b.textContent = label;
+    b.onclick = function(){ r616MoreClick_(btn); };
+  }
+  btn.style.display = "none";
+  bar.style.display = "";
+  return true;
+}
+function r616MoreClick_(btn){
+  var oc = btn.getAttribute("onclick") || "";
+  var appended = false;
+  if (/state\.visible\+=20/.test(oc)) {
+    try { appended = r616AppendMore_(btn); } catch(e) { appended = false; }
+  }
+  if (!appended) { try { btn.style.display = ""; } catch(e) {} btn.click(); return; }
+  try { r616PaintBars_(); } catch(e) {}
+}
+function r616AppendMore_(btn){
+  if (state.mode === "special" || state.mode === "reverse" || state.mode === "dig") return false;
+  var totalEl = document.getElementById("listTotal");
+  if (!totalEl || !btn.parentNode) return false;
+  var list = filtered();
+  if (window._smsSegFilter) list = list.filter(function(a){ return segmentOf(a) === window._smsSegFilter; });
+  var from = state.visible;
+  if (from >= list.length) return false;
+  state.visible += 20;
+  var add = list.slice(from, state.visible);
+  if (!add.length) return false;
+  var tmp = document.createElement("div");
+  tmp.innerHTML = add.map(function(a){ return cardHtml(a); }).join("");
+  while (tmp.firstChild) btn.parentNode.insertBefore(tmp.firstChild, btn);
+  var p = totalEl.parentNode;
+  if (p) {
+    for (var i = 0; i < p.childNodes.length; i++) {
+      var nd = p.childNodes[i];
+      if (nd.nodeType === 3 && /表示 \d+件/.test(nd.textContent)) {
+        nd.textContent = nd.textContent.replace(/表示 \d+件/, "表示 " + Math.min(state.visible, list.length) + "件");
+      }
+    }
+  }
+  if (state.visible >= list.length) btn.remove();
+  return true;
+}
+/* ===== 表示系は端末内 / 確定系はサーバー (速度の分離) =====
+   一覧の初回データが着地した後は、検索・絞り込み・さらに表示を
+   サーバー往復なしで画面側のデータだけで完結させる (体感0.1秒級)。
+   そのために、サーバーモードの一覧を最初に開いたときに、エリア全件の
+   ロスターを裏側で静かに読み切る (初回読み込み+裏側の静かな更新)。
+   完全性はサーバーの total と突き合わせて検証できたときだけ有効化し、
+   揃わなければ従来のサーバーページ方式のままにする (少なく見せない)。
+   送信・発行など古さが問題になる操作は従来どおりサーバーで確定。 */
+function r616RosterReady_(){
+  return !!(window._r616Roster && window._r616Roster.items && window._r616Roster.items.length && window._r616Roster.area === state.area);
+}
+function r616WarmRoster_(force){
+  if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return;
+  if (window._r616RosterLoading) return;
+  if (!force && r616RosterReady_()) return;
+  if (!force && window._r616RosterFailedArea === state.area) return;
+  if (force) window._r616RosterFailedArea = null;
+  window._r616RosterLoading = true;
+  var area = state.area, items = [], seen = {}, total = null;
+  var step = function(page){
+    return apiCall({ action: "searchApplicants", filter: { area: area }, page: page, page_size: 200 }).then(function(res){
+      var raw = (res && Array.isArray(res.items)) ? res.items : [];
+      if (res && typeof res.total === "number") total = res.total;
+      var added = 0;
+      raw.forEach(function(it){
+        var a = serverApplicantToLocal(it);
+        if (a && a.id && !seen[a.id]) { seen[a.id] = 1; items.push(a); added++; }
+      });
+      if (total != null && items.length < total && raw.length > 0 && added > 0 && page < 300) return step(page + 1);
+      window._r616RosterLoading = false;
+      if (total != null && items.length >= total && items.length > 0) {
+        window._r616Roster = { area: area, items: items, at: Date.now(), serverTotalAtLand: _r616LastServerTotal };
+        try { if ((location.hash || "").indexOf("#/list") === 0) route(); } catch(e) {}
+      } else {
+        window._r616RosterFailedArea = area;
+      }
+    }).catch(function(){ window._r616RosterLoading = false; window._r616RosterFailedArea = area; });
+  };
+  step(1);
+}
+/* ロスター着地後: 現在の絞り込み条件での全件を端末内で計算し、
+   サーバーページ方式のキャッシュへ差し込む。以後の検索・絞り込み・
+   さらに表示はこのキャッシュ (端末内データ) で完結し、往復しない */
+function r616SeedListCache_(){
+  if (!r616RosterReady_()) return;
+  if (state.mode === "special" || state.mode === "reverse" || state.mode === "dig") return;
+  var key; try { key = _r6ListKey(); } catch(e) { return; }
+  var saved = applicants; applicants = window._r616Roster.items;
+  var items; try { items = filtered().slice(); } finally { applicants = saved; }
+  window._r6ListCache = { key: key, items: items, total: items.length, loading: false, error: "" };
+}
+/* ===== 応募者同期: 開いた時・画面に戻った時・開いている間 =====
+   リアルタイムに近づけるため、同期は「軽い件数確認 + ズレたら収束」を
+   基本にする。全件の読み直しは初回と、件数がズレた時と、古くなった
+   ロスターを前面復帰で更新する時だけ。同期はすべて裏側で非同期に走り、
+   一覧の操作は止めない。端末内データは、新しいロスターが完全な形で
+   着地するまで差し替えない (壊さない)。
+   間隔: 開いていて見えている間は 60 秒ごと (定常時は getApplicantSummary
+   1回だけ = 数KB)。前面復帰と起動時は即時。 */
+var R616_SYNC_INTERVAL_MS = 60000;
+var R616_SYNC_MIN_GAP_MS = 2000;
+var R616_ROSTER_STALE_MS = 5 * 60000;
+var _r616SyncBusy = false, _r616LastSyncAt = 0, _r616LastServerTotal = null, _r616DivSeen = null;
+function r616SyncNow_(reason){
+  if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return Promise.resolve(false);
+  if (_r616SyncBusy) return Promise.resolve(false);
+  if (Date.now() - _r616LastSyncAt < R616_SYNC_MIN_GAP_MS) return Promise.resolve(false);
+  _r616SyncBusy = true;
+  var finish = function(){ _r616SyncBusy = false; _r616LastSyncAt = Date.now(); };
+  var p = (typeof fetchApplicantSummaryR6_ === "function") ? fetchApplicantSummaryR6_() : Promise.resolve(null);
+  return p.then(function(){
+    try {
+      var sm = window._r6ApplicantSummary;
+      var serverTotal = null;
+      if (sm && sm.areas && sm.areas[state.area] && typeof sm.areas[state.area].total === "number") serverTotal = sm.areas[state.area].total;
+      else if (sm && typeof sm.total === "number") serverTotal = sm.total;
+      if (serverTotal != null) {
+        if (_r616LastServerTotal != null && serverTotal !== _r616LastServerTotal) {
+          /* 件数が動いたらサーバーページ側のキャッシュも捨てて、次回描画で正を取り直す */
+          window._r6ListCache = { key: "", items: [], total: null, loading: false, error: "" };
+        }
+        _r616LastServerTotal = serverTotal;
+        var roster = window._r616Roster;
+        var have = (roster && roster.area === state.area && roster.items) ? roster.items.length : null;
+        var stale = !roster || !roster.at || (Date.now() - roster.at > R616_ROSTER_STALE_MS);
+        if (have != null && serverTotal !== have) {
+          /* ズレは次回同期で必ず収束: ロスターを読み直す (取り込み直後の
+             サーバー 6,189 vs 実機 6,159 のようなズレ対策)。
+             基準 (着地時に観測したサーバー総数) が無いか、サーバー総数が
+             基準から動いていれば即読み直す。基準と同じズレだけは着地直後の
+             観測ズレとして1回様子を見て、次の同期でも続けば読み直す */
+          var atLand = roster.serverTotalAtLand;
+          if (atLand == null || serverTotal !== atLand || window._r616DivSeen === serverTotal) { r616WarmRoster_(true); }
+          else { window._r616DivSeen = serverTotal; }
+        } else {
+          if (have != null && roster.serverTotalAtLand == null) roster.serverTotalAtLand = serverTotal;
+          window._r616DivSeen = null;
+          if (have == null || (reason !== "interval" && stale)) r616WarmRoster_(false);
+        }
+      }
+    } catch (e) {}
+    finish();
+    return true;
+  }).catch(function(){ finish(); return false; });
+}
+function r616StartSyncWatch_(){
+  if (window._r616SyncWatchStarted) return;
+  window._r616SyncWatchStarted = true;
+  try { document.addEventListener("visibilitychange", function(){ if (!document.hidden && document.visibilityState !== "hidden") r616SyncNow_("foreground"); }); } catch (e) {}
+  try { window.addEventListener("focus", function(){ r616SyncNow_("focus"); }); } catch (e) {}
+  try { setInterval(function(){ if (!document.hidden) r616SyncNow_("interval"); }, R616_SYNC_INTERVAL_MS); } catch (e) {}
+  r616SyncNow_("open");
+}
+var _viewList616 = viewList;
+viewList = function(){
+  try { r616SweepFailedOps_(); } catch(e) {}
+  try { if (window._r6ServerMode && state.mode !== "special" && state.mode !== "reverse" && state.mode !== "dig") { r616WarmRoster_(); r616SeedListCache_(); r616StartSyncWatch_(); } } catch(e) {}
+  /* 「今日の応募対応」機能は UI から潰す (ユーザー許可: 核の流れの外の
+     機能は画面から丸ごと削除してよい)。フォローモード頭のタブカードを
+     出さず、その絞り込み (followTab) も効かせない。裏側のデータ・
+     仕組み (followCategory 等) は壊さない */
+  try { if (state.mode === "follow") state.followTab = "all"; } catch(e) {}
+  var r = _viewList616();
+  try {
+    if (state.mode === "follow") {
+      var appF = document.getElementById("app");
+      if (appF) [].slice.call(appF.querySelectorAll(".card")).forEach(function(cd){
+        var h3 = cd.querySelector("h3");
+        if (h3 && (h3.textContent || "").indexOf("今日の応募対応") === 0 && cd.parentNode) cd.parentNode.removeChild(cd);
+      });
+    }
+  } catch(e) {}
+  try {
+    /* 一覧の核の手順に出てこない表示は削除する:
+       件数行はサマリーと重複するので消し、内訳行は「絞込/表示」だけに絞る */
+    var app = document.getElementById("app");
+    if (app) {
+      var dbl = app.querySelector(".dbCountLine");
+      if (dbl) r616RemoveEl_(dbl);
+      var lt = document.getElementById("listTotal");
+      if (lt && lt.parentNode) {
+        var nodes = [].slice.call(lt.parentNode.childNodes);
+        nodes.forEach(function(nd){
+          if (nd === lt) return;
+          if (nd.nodeType === 3 && /／表示 \d+件/.test(nd.textContent)) {
+            nd.textContent = nd.textContent.match(/／表示 \d+件/)[0];
+          } else if (nd.nodeType === 3) {
+            nd.textContent = "";
+          }
+        });
+      }
+    }
+  } catch(e) {}
+  try { r616ListTopButtons_(); } catch(e) {}
+  try { r616ScheduleCountsRepaint_(); } catch(e) {}
+  try { r616PaintBars_(); } catch(e) {}
+  return r;
+};
+
+/* ---------- 2b. 入口 (ホーム) 画面は廃止 (ユーザー指示・最新) ----------
+   アプリを開いたら、そのまま応募者一覧 (SMS一覧) が最初の画面になる。
+   ヘッダーの「入口」タブも消す。入口にあった導線のうち「案件から近くの
+   求職者を探す」「新着マッチ提案」は、一覧画面の上のボタンから辿れる
+   形で残す (別の入口ページは作らない)。件数の要約はヘッダーの1行表示
+   に集約 (既存のサマリーバー)。
+   経緯: 当初は旧アプリ入口写真の密度を基準に「大きいボタンだけの入口」
+   を作ったが、その後のユーザー指示「この入り口タブいらんくね？」で、
+   入口ページ自体を作らないことに確定した。写真は密度の基準として
+   引き続き有効 (一覧・各画面の要素の少なさの目安)。 */
+function r616RemoveHomeTab_(){
+  [].slice.call(document.querySelectorAll('nav a[href="#/"]')).forEach(function(a){
+    if (a.parentNode) a.parentNode.removeChild(a);
+  });
+}
+try { r616RemoveHomeTab_(); } catch(e) {}
+function r616ListTopButtons_(){
+  var app = document.getElementById("app");
+  if (!app || app.querySelector(".r616listTop")) return;
+  if ((location.hash || "").indexOf("#/list") !== 0) return;
+  var row = document.createElement("div");
+  row.className = "r616listTop";
+  row.innerHTML = '<button onclick="state.mode=\'reverse\';state.visible=20;route()">案件から近くの求職者を探す</button>'
+    + '<a class="r616listTopBtn" href="#/proposals">新着マッチ提案</a>';
+  app.insertBefore(row, app.firstChild);
+}
+/* viewHome の呼び出し (ルーター経由・回答同期後の直接呼び出しの両方) は
+   一覧へ委譲する。 */
+/* 未送信操作の再送/破棄という機能は操作画面から無くす (ユーザー指示)。
+   「要対応」「未送信のまま残っている操作」パネルはホームにしか出ない
+   ため、入口廃止と委譲で画面から消える。あわせて、失敗した操作は
+   保持せず捨てる: failed の操作は描画のついでに無言で掃除する
+   (キュー自体の送信・取り込みの仕組みは壊さない。失敗した時点の
+   通知は従来どおりその場で出る)。 */
+function r616SweepFailedOps_(){
+  try {
+    if (typeof outbox === "undefined" || !Array.isArray(outbox)) return;
+    var n = outbox.length;
+    outbox = outbox.filter(function(o){ return o.status !== "failed"; });
+    if (outbox.length !== n) { try { LS.set("outbox", outbox); } catch(e) {} }
+  } catch(e) {}
+}
+/* 件数の読み込みが終わったら一覧を1回だけ描き直す (同期の着地に
+   画面が追いつくように。読み込み中表示が残り続けないための補助) */
+var _r616RepaintTimer = null;
+function r616ScheduleCountsRepaint_(){
+  if (_r616RepaintTimer) return;
+  if (typeof r611CountsLoading_ !== "function") return;
+  var tries = 0;
+  _r616RepaintTimer = setInterval(function(){
+    tries++;
+    var loading = true;
+    try { loading = r611CountsLoading_(); } catch(e) { loading = false; }
+    if (!loading || tries > 70) {
+      clearInterval(_r616RepaintTimer); _r616RepaintTimer = null;
+      if (!loading && (location.hash || "").indexOf("#/list") === 0) { try { route(); } catch(e) {} }
+    }
+  }, 1000);
+}
+var _viewHome616chain = (typeof viewHome === "function") ? viewHome : null;
+if (typeof viewHome === "function") {
+  viewHome = function(){
+    /* 提案の独立画面 (#/proposals) は従来どおり入口描画の変換で出す */
+    if ((location.hash || "").indexOf("#/proposals") === 0 && _viewHome616chain) return _viewHome616chain();
+    /* 実DOMが無い環境 (ロジック検証用スタブ等) では委譲しない */
+    var domOk = false;
+    try { domOk = typeof document !== "undefined" && typeof document.getElementById === "function"; } catch(e) {}
+    if (!domOk && _viewHome616chain) return _viewHome616chain();
+    try { history.replaceState(null, "", "#/list"); } catch(e) {}
+    return viewList();
+  };
+}
+
+/* ---------- 3. Gmail画面: 施設メール方式 ----------
+   条件を選ぶ → 対象人数（サーバーの数字だけ）→ 文面 → 送信。
+   主画面の絞り込みは 地域 / 職種 / 年齢 / ステータス / 会社 の5つだけ。
+   それ以外の操作要素は画面に出さない（内部の絞り込みロジックは壊さない）。
+   回答フォームは自動で付く（付け外しの操作は主画面に出さない）。 */
+var R616_STATUS_ORDER = ["接触待ち", "誘致待ち", "アテンド待ち", "FIX待ち", "職見待ち", "内定待ち", "稼働中", "不通", "未対応", "選考NG", "他社決定", "登録辞退", "応募除外", "接触NG", "対象外", "退職済み", "CSV未取り込み", "未来人材"];
+/* 除外・内訳の日本語化（生コードは画面に出さない）。ユーザー指示:
+   送れないのは配信停止とアドレス不正・なしだけ。それ以外（同日送信済み・
+   対応中・おすすめ案件なし等）は無言で落とさず、確認の人数表示に出す。 */
+var R616_UNSENDABLE_JA = { optout: "配信停止", invalid_email: "アドレス不正", no_email: "アドレスなし" };
+function r616Count_(ex, keys){ var n = 0; keys.forEach(function(k){ n += Number((ex || {})[k] || 0); }); return n; }
+function r616SummaryLine_(ex, noRecommend){
+  ex = ex || {};
+  var parts = [
+    "メール未登録・形式不備 " + r616Count_(ex, ["no_email", "invalid_email"]) + "人",
+    "重複 " + r616Count_(ex, ["duplicate_email"]) + "人",
+    "対応中・停止 " + r616Count_(ex, ["active", "response_in_progress", "optout"]) + "人",
+    "おすすめ案件なし " + (Number(noRecommend || 0) || r616Count_(ex, ["no_recommend"])) + "人"
+  ];
+  var today = r616Count_(ex, ["sent_today"]); if (today) parts.push("本日送信済み " + today + "人");
+  var age = r616Count_(ex, ["age_over"]); if (age) parts.push("年齢上限 " + age + "人");
+  var term = r616Count_(ex, ["terminal"]); if (term) parts.push("終了 " + term + "人");
+  return parts.join("、");
+}
+function r616UnsendableText_(ex){
+  ex = ex || {};
+  var parts = [], total = 0;
+  Object.keys(R616_UNSENDABLE_JA).forEach(function(k){
+    var n = Number(ex[k] || 0);
+    if (n) { parts.push(R616_UNSENDABLE_JA[k] + " " + n + "人"); total += n; }
+  });
+  if (!total) return "";
+  return "このうち " + total + "人には送れません（" + parts.join("・") + "）";
+}
+function r616Statuses_(){
+  var out = R616_STATUS_ORDER.filter(function(s){ return CSV_STATUSES.indexOf(s) >= 0; });
+  CSV_STATUSES.forEach(function(s){ if (out.indexOf(s) < 0) out.push(s); });
+  return out;
+}
+function r616LoginOperator_(){
+  try {
+    var em = String((window._pingResult && window._pingResult.activeUserEmail) || "").trim().toLowerCase();
+    if (em) {
+      var me = operators.find(function(o){ return String((o && o.email) || "").trim().toLowerCase() === em; });
+      if (me) return me;
+    }
+  } catch(e) {}
+  return operators.find(function(o){ return o.email === MF.sender; }) || operators[0] || null;
+}
+function r616ToggleStatus_(s, on){
+  MF.csvStatuses = on ? MF.csvStatuses.concat([s]) : MF.csvStatuses.filter(function(x){ return x !== s; });
+  try { invalidateMailTargets(); } catch(e) {}
+  route();
+}
+function r616ToggleCompany_(c){
+  MF.companies = MF.companies.indexOf(c) >= 0 ? MF.companies.filter(function(x){ return x !== c; }) : MF.companies.concat([c]);
+  try { invalidateMailTargets(); } catch(e) {}
+  route();
+}
+function r616MailTopHtml_(){
+  var me = r616LoginOperator_();
+  var senderTxt = me ? esc(me.name || "") + "（" + esc(me.email || "") + "）" : esc(MF.sender || "");
+  var stRows = r616Statuses_().map(function(s){
+    var on = MF.csvStatuses.indexOf(s) >= 0;
+    return '<label class="r616check"><input type="checkbox" ' + (on ? "checked" : "") + ' onchange="r616ToggleStatus_(\'' + s + '\',this.checked)"><span>' + esc(s) + "</span></label>";
+  }).join("");
+  var coChips = COMPANIES.map(function(c){
+    var on = MF.companies.indexOf(c) >= 0;
+    return '<button type="button" class="r616co" aria-pressed="' + on + '" onclick="r616ToggleCompany_(\'' + esc(c) + '\')">' + esc(c) + "</button>";
+  }).join("");
+  return '<div class="card r616mailTop"><h3>宛先の絞り込み</h3>'
+    + '<p class="r616sender">送信者: ' + senderTxt + "（ログイン中の本人から送ります）</p>"
+    + "<label>ステータス（当てはまるものを全部選ぶ）</label><div class=\"r616checks\">" + stRows + "</div>"
+    + "<label>会社（応募元）</label><div class=\"flex r616cos\">" + coChips + "</div>"
+    + '<div class="r616count" id="r616MailCount">対象 未確認</div></div>';
+}
+function r616RemoveEl_(el){ if (el && el.parentNode) el.parentNode.removeChild(el); }
+function r616LabelByText_(root, text, exact){
+  var labels = root.querySelectorAll("label");
+  for (var i = 0; i < labels.length; i++) {
+    var t = (labels[i].textContent || "").trim();
+    if (exact ? t === text : t.indexOf(text) === 0) return labels[i];
+  }
+  return null;
+}
+/* 核の手順に出てこない要素は、折りたたみに残さず画面から削除する
+   （ユーザーの強い指示 2026-11-23。内部の絞り込みロジックとデータは壊さない。
+   削除した要素の一覧は FIX_R616_PREP_REPORT に明記し、戻せるようにする） */
+function r616MailSurgery_(){
+  var app = document.getElementById("app");
+  if (!app || !app.querySelectorAll) return;
+  /* フォームは自動で付ける: 状態を ON に固定し、付け外しの操作は削除する */
+  try { state.attachFormMail = true; LS.set("attachFormMail", true); } catch(e) {}
+  r616RemoveEl_(r616LabelByText_(app, "回答フォームを付ける"));
+  /* 送信者はログイン本人の固定表示: 選択欄は削除する（上部パネルに表示） */
+  var sels = app.querySelectorAll("select");
+  for (var i = 0; i < sels.length; i++) {
+    if ((sels[i].getAttribute("onchange") || "").indexOf("MF.sender") >= 0) {
+      var sl = sels[i].previousElementSibling;
+      if (sl && sl.tagName === "LABEL") r616RemoveEl_(sl);
+      r616RemoveEl_(sels[i]);
+    }
+  }
+  /* 開発者向け見出しを平易にする */
+  var h3s = app.querySelectorAll("h3");
+  for (var j = 0; j < h3s.length; j++) {
+    if ((h3s[j].textContent || "").indexOf("絞り込み") === 0) h3s[j].textContent = "絞り込み";
+  }
+  /* 「上から何人」は「最大で何人まで送るか」に置き換える（入力自体は残す） */
+  var topLbl = r616LabelByText_(app, "上から何人");
+  if (topLbl) topLbl.textContent = "最大で何人まで送るか（応募日が新しい順）";
+  /* 範囲外の操作要素が入ったカード（期間・希望条件・スライダー・セグメント保存・
+     ローカル計算の条件サマリー）は丸ごと削除する */
+  var live = document.getElementById("r4MailLive");
+  if (live) { var card = live.closest(".card"); if (card) r616RemoveEl_(card); }
+  /* 折りたたみ（詳細）から、主画面に残す 年齢 だけを表へ戻す。
+     資格の絞り込みUIはメイン画面から外す（ユーザー指示: 絞り込みは職種だけ。
+     裏の絞り込みロジック自体は壊さない） */
+  var det = app.querySelector("details.r614mailAdv");
+  if (det && det.parentNode) {
+    var kids = [].slice.call(det.children);
+    kids.forEach(function(el){
+      var t = el.textContent || "";
+      var isAge = el.classList && el.classList.contains("grid") && t.indexOf("年齢下限") >= 0;
+      if (isAge) det.parentNode.insertBefore(el, det);
+    });
+    /* 詳細に残った要素（FS登録あり・対応中も含める・回答対応中も含める等）は
+       5つの絞り込みの外なので、折りたたみごと削除する（既定の除外は維持される） */
+    r616RemoveEl_(det);
+  }
+  /* 住所キーワードは主画面に出さない（地域グリッド内の該当セルを削除） */
+  var grids = app.querySelectorAll(".grid");
+  for (var g = 0; g < grids.length; g++) {
+    if ((grids[g].textContent || "").indexOf("都道府県") < 0) continue;
+    [].slice.call(grids[g].children).forEach(function(cell){
+      var lb = cell.querySelector && cell.querySelector("label");
+      if (lb && (lb.textContent || "").trim() === "住所キーワード") r616RemoveEl_(cell);
+    });
+  }
+  /* 旧ステータスチップと旧会社チップは上部パネルに置き換えたので削除する */
+  var csvLbl = r616LabelByText_(app, "CSVステータス");
+  if (csvLbl) { r616RemoveEl_(csvLbl.nextElementSibling); r616RemoveEl_(csvLbl); }
+  var coLbl = r616LabelByText_(app, "登録会社");
+  if (coLbl) {
+    var n1 = coLbl.nextElementSibling;
+    var n2 = n1 && n1.nextElementSibling;
+    r616RemoveEl_(n2); r616RemoveEl_(n1); r616RemoveEl_(coLbl);
+  }
+  /* 文面まわりの補助指定（モード・おすすめ件数・送信タイミング）は削除する
+     （MF の既定値のまま動く。予約送信の内部処理自体は壊さない） */
+  ["モード", "おすすめ件数", "送信タイミング"].forEach(function(name){
+    var lb = r616LabelByText_(app, name, name !== "おすすめ件数");
+    if (!lb) return;
+    var sib = lb.nextElementSibling;
+    r616RemoveEl_(lb);
+    if (sib && (sib.tagName === "SELECT" || sib.tagName === "INPUT")) r616RemoveEl_(sib);
+  });
+  var dtInput = app.querySelector('input[type="datetime-local"]');
+  if (dtInput) r616RemoveEl_(dtInput);
+  /* デモ用フォームプレビューのボタンは削除する（説明文そのものは残す） */
+  var pvBtns = app.querySelectorAll("button");
+  for (var p = 0; p < pvBtns.length; p++) {
+    if ((pvBtns[p].getAttribute("onclick") || "").indexOf("previewMailForm") >= 0) r616RemoveEl_(pvBtns[p]);
+  }
+  /* 地域の連動カードの長い説明文は削除する（チップ自体は残す） */
+  var cards = app.querySelectorAll(".card");
+  for (var c = 0; c < cards.length; c++) {
+    var ch3 = cards[c].querySelector("h3");
+    if (ch3 && (ch3.textContent || "").indexOf("連動絞り込み") >= 0) {
+      var ps = cards[c].querySelectorAll("p.small");
+      if (ps.length) r616RemoveEl_(ps[0]);
+    }
+  }
+  /* 送信は下の固定バーが主経路: 流れの中の送信ボタン行は削除する */
+  var sticky = app.querySelector(".stickyAction");
+  if (sticky) r616RemoveEl_(sticky);
+  /* 上部パネルを差し込む */
+  if (!document.getElementById("r616MailTop")) {
+    var anchor = app.querySelector("h2");
+    var div = document.createElement("div");
+    div.id = "r616MailTop";
+    div.innerHTML = r616MailTopHtml_();
+    if (anchor && anchor.nextSibling) app.insertBefore(div, anchor.nextSibling);
+    else app.insertBefore(div, app.firstChild);
+  }
+  r616PaintCountEls_();
+}
+</script>
+<script>
+/* ---------- 3b. 件数はサーバーの1セットだけ ----------
+   ローカル計算の内訳・サマリーは表示しない。サーバー確認が失敗したら
+   静かに1回だけ再試行し、それでもダメなら平易な一文だけ出す
+   （生のエラー文字列や英語の除外コードは画面に出さない）。 */
+/* サーバー由来のエラーメッセージだけを返す（NetworkError 等の生の例外は出さない） */
+function r616ServerErrText_(e){
+  var m = String((e && e.message) || e || "");
+  if (!m) return "";
+  if (/NetworkError|Failed to fetch|HTTP \d{3}|network/i.test(m)) return "";
+  return m;
+}
+function r616MailCountText_(){
+  var s = window._r616MailServer;
+  try {
+    if (s && window._mailSnapshot && s.snap === window._mailSnapshot && mailSnapshot() === window._mailSnapshot) return "対象 " + s.target + "人";
+  } catch(e) {}
+  if (window._r616MailChecking) return "対象を確認中…";
+  return "対象 未確認";
+}
+function r616PaintCountEls_(){
+  var c = document.getElementById("r616MailCount");
+  if (c) {
+    var s = window._r616MailServer;
+    var fresh = false;
+    try { fresh = !!(s && window._mailSnapshot && s.snap === window._mailSnapshot && mailSnapshot() === window._mailSnapshot); } catch(e) {}
+    c.innerHTML = fresh
+      ? "対象 " + s.target + "人 <span class=\"small\">（条件に合った " + s.matched + "人）</span>"
+      : esc(r616MailCountText_());
+  }
+  var bc = document.getElementById("r616MailBarCount");
+  if (bc) bc.innerHTML = r616MailBarHtml_();
+}
+/* 固定バーの件数表示: 確認済みなら「○人へ個別メール」＋補足、他は状態だけ */
+function r616MailBarHtml_(){
+  var s = window._r616MailServer;
+  var fresh = false;
+  try { fresh = !!(s && window._mailSnapshot && s.snap === window._mailSnapshot && mailSnapshot() === window._mailSnapshot); } catch(e) {}
+  if (fresh) return s.target + '人へ個別メール<br><small style="font-weight:400;font-size:11px">送信開始後は画面を閉じても順次送信</small>';
+  return esc(r616MailCountText_());
+}
+function r616PaintServerBreak_(){
+  var brk = document.getElementById("mailBreak");
+  var s = window._r616MailServer;
+  if (!brk || !s) return;
+  var unsendable = r616UnsendableText_(s.excluded);
+  brk.innerHTML = '<h3 style="font-size:22px;margin:4px 0">' + s.target + "人に送信</h3>"
+    + "<p>条件一致 " + s.matched + "人 / 送信可能 " + s.sendable + "人。" + esc(r616SummaryLine_(s.excluded, s.noRecommend)) + "</p>"
+    + (unsendable ? '<p class="small">' + esc(unsendable) + "</p>" : "")
+    + r616ConfirmListHtml_()
+    + mailPreviewHtml();
+}
+/* ---------- 3c. 確認一覧: 対象者1人ずつ、その人のおすすめ案件 ----------
+   サーバーの mailPreviewTargets の preview（1人ずつの宛先・おすすめ案件）を
+   そのまま描く。「この案件を外す」は今回の送信分だけの入れ替えで、外すと
+   サーバーの候補リストの次の候補が補充される。文面プレビューは常に
+   「いま画面に出ている案件」で作り直す（表示と実送信が食い違う作りにしない）。 */
+function r616Candidates_(pv){
+  return ((pv && (pv.recommended_candidates || pv.recommended)) || []).slice();
+}
+function r616DisplayN_(pv){
+  var rec = (pv && pv.recommended) || [];
+  return rec.length || r616Candidates_(pv).length;
+}
+function r616DisplayedCases_(pv){
+  var ov = (window._r616CaseOverrides || {})[pv.applicant_id];
+  var ex = (ov && ov.excluded) || [];
+  return r616Candidates_(pv).filter(function(c){ return ex.indexOf(c.case_id) < 0; }).slice(0, r616DisplayN_(pv));
+}
+function r616ConfirmListHtml_(){
+  var s = window._r616MailServer;
+  var list = (s && s.preview) || [];
+  if (!list.length) return "";
+  var rows = list.map(function(pv){
+    var job = pv.job_type === "kango" ? "看護師" : "介護士";
+    var meta = [pv.prefecture || "", pv.municipality || "", job];
+    if (pv.age != null && pv.age !== "") meta.push(pv.age + "歳");
+    var cases = r616DisplayedCases_(pv).map(function(c){
+      return '<span class="r616caseChip">' + esc(c.facility_name || c.case_id) + ' <button type="button" onclick="r616RemoveCase_(\'' + pv.applicant_id + "','" + c.case_id + '\')">外す</button></span>';
+    }).join(" ");
+    return '<div class="r616trow"><p><b>' + esc(pv.name || pv.applicant_id) + "</b> ｜ " + esc(meta.filter(Boolean).join("・")) + "</p>"
+      + '<p class="small">おすすめ案件: ' + (cases || "なし") + "</p>"
+      + '<p><button type="button" onclick="r616PreviewBodyFor_(\'' + pv.applicant_id + '\')">文面</button></p></div>';
+  }).join("");
+  var more = (s.target > list.length) ? '<p><button type="button" id="r616MoreTargetsBtn" onclick="r616MoreTargets_()">さらに50人を表示</button></p>' : "";
+  return '<div id="r616ConfirmList"><h4>対象者とおすすめ案件を確認</h4>' + rows + more + "</div>";
+}
+function r616RemoveCase_(applicantId, caseId){
+  var ov = window._r616CaseOverrides || (window._r616CaseOverrides = {});
+  var e = ov[applicantId] || (ov[applicantId] = { excluded: [] });
+  if (e.excluded.indexOf(caseId) < 0) e.excluded.push(caseId);
+  r616PaintServerBreak_();
+  /* その人の文面を開いていたら、新しい案件で作り直して即反映する */
+  try { if (window._mailPreviewServer && window._mailPreviewServer.applicant_id === applicantId) r616PreviewBodyFor_(applicantId); } catch(err) {}
+}
+function r616MoreTargets_(){
+  var s = window._r616MailServer;
+  if (!s) return Promise.resolve(false);
+  var params = {};
+  try { params = buildMailServerParams(); } catch(e) { params = {}; }
+  params.action = "mailPreviewTargets";
+  params.preview_offset = s.preview.length;
+  return apiCall(params).then(function(res){
+    var add = ((res && res.preview) || []).filter(function(pv){ return !s.preview.some(function(x){ return x.applicant_id === pv.applicant_id; }); });
+    s.preview = s.preview.concat(add);
+    r616PaintServerBreak_();
+    return add.length > 0;
+  }).catch(function(){ return false; });
+}
+function r616PreviewBodyFor_(applicantId){
+  var s = window._r616MailServer;
+  var pv = s && (s.preview || []).find(function(x){ return x.applicant_id === applicantId; });
+  if (!pv) return Promise.resolve(false);
+  var ids = r616DisplayedCases_(pv).map(function(c){ return c.case_id; });
+  var subj = ($("#mSubj") ? $("#mSubj").value : templates.mail_subject);
+  var tpl = ($("#mBody") ? $("#mBody").value : templates.mail_body);
+  var attempt = function(n){
+    return apiCall({ action: "mailPreviewBody", applicant_id: applicantId, subject: subj, body_template: tpl, recommended_case_ids: ids, sender_email: MF.sender, include_form: true }).then(function(b){
+      if (!b || !b.body) throw new Error("サーバーがプレビュー本文を返しませんでした");
+      window._mailPreviewServer = { applicant_id: applicantId, subject: b.subject || "", body: b.body };
+      var el = document.getElementById("mailPreviewCard");
+      if (el) el.innerHTML = "<h4>生成済み文面プレビュー（" + esc(pv.name || applicantId) + " あて）</h4><p class=\"small\">件名: " + esc(b.subject || "") + '</p><p class="kv small">' + esc(b.body) + "</p>";
+      return true;
+    }).catch(function(e){
+      if (n < 1) return new Promise(function(r){ setTimeout(r, 1200); }).then(function(){ return attempt(n + 1); });
+      var el = document.getElementById("mailPreviewCard");
+      if (el) {
+        var msg = r616ServerErrText_(e);
+        el.innerHTML = '<h4>プレビューを表示できませんでした</h4><p class="small">通信状態を確認して、もう一度お試しください。</p>' + (msg ? '<p class="small">理由: ' + esc(msg) + "</p>" : "") + '<p><button type="button" onclick="r616PreviewBodyFor_(\'' + applicantId + '\')">再試行する</button></p>';
+      }
+      return false;
+    });
+  };
+  return attempt(0);
+}
+function r616ServerCounts_(paintBreak){
+  var brk = document.getElementById("mailBreak");
+  if (!CONFIG.API_URL) {
+    if (paintBreak && brk) brk.innerHTML = '<p class="small">対象の確認は、サーバーにつながっているときに表示されます。</p>';
+    return Promise.resolve(null);
+  }
+  window._r616MailChecking = true;
+  r616PaintCountEls_();
+  if (paintBreak && brk) brk.innerHTML = '<p class="small">対象を確認しています…</p>';
+  var snap = "";
+  try { snap = mailSnapshot(); } catch(e) {}
+  var attempt = function(n){
+    return fetchMailPreview().then(function(res){
+      if (!res || typeof res.target_count !== "number") throw new Error("bad response");
+      if (!window._r616MailServer || window._r616MailServer.snap !== snap) window._r616CaseOverrides = {};
+      window._r616MailServer = { snap: snap, matched: res.matched_count, sendable: res.sendable_count, target: res.target_count, excluded: res.excluded || {}, noRecommend: res.no_recommend_count, preview: res.preview || [], recommendCount: res.recommend_count };
+      window._r616MailChecking = false;
+      if (paintBreak) r616PaintServerBreak_();
+      r616PaintCountEls_();
+      try { r616PaintBars_(); } catch(e) {}
+      return res;
+    }).catch(function(){
+      if (n < 1) return new Promise(function(r){ setTimeout(r, 1200); }).then(function(){ return attempt(n + 1); });
+      window._r616MailChecking = false;
+      if (paintBreak) {
+        var b2 = document.getElementById("mailBreak");
+        if (b2) b2.innerHTML = '<p class="small">対象を確認できませんでした。通信状態を確認して、もう一度「対象を確認」を押してください。</p>';
+      }
+      r616PaintCountEls_();
+      try { r616PaintBars_(); } catch(e) {}
+      return null;
+    });
+  };
+  return attempt(0);
+}
+mailServerCheck = function(){ return r616ServerCounts_(true); };
+var _checkMailTargets616 = checkMailTargets;
+checkMailTargets = function(){
+  var r = _checkMailTargets616();
+  try { r616PaintBars_(); } catch(e) {}
+  return r;
+};
+/* 条件が変わったら、ローカル計算ではなくサーバー確認で件数を出し直す */
+var _r616LiveTimer = null;
+function r616ScheduleServerCounts_(){
+  if ((location.hash || "").indexOf("#/mail") !== 0) return;
+  if (_r616LiveTimer) clearTimeout(_r616LiveTimer);
+  _r616LiveTimer = setTimeout(function(){ _r616LiveTimer = null; try { r616ServerCounts_(false); } catch(e) {} }, 600);
+}
+updateMailLive = function(){ try { r616ScheduleServerCounts_(); } catch(e) {} };
+/* 送信ボタン脇の件数も、確認済みのサーバー値を優先する */
+var _paintSendCountNear616 = paintSendCountNear;
+paintSendCountNear = function(){
+  _paintSendCountNear616();
+  try {
+    var s = window._r616MailServer;
+    var sc = document.getElementById("sendCountNear");
+    if (s && sc && window._mailSnapshot && s.snap === window._mailSnapshot && mailSnapshot() === window._mailSnapshot) {
+      sc.textContent = "対象 " + s.target + "名";
+    }
+  } catch(e) {}
+};
+/* プレビュー生成: 失敗したら静かに1回再試行する。最終失敗時は平易な一文に、
+   サーバー由来の理由があればそれだけを添える（NetworkError 等の生の例外は
+   出さない。サーバーのエラー内容は出す = R6.8 C2 の思想を維持）。
+   案件は「いま画面に出ている案件」で作る（外す/補充の反映）。 */
+var _fetchMailPreviewBody616 = fetchMailPreviewBody_;
+fetchMailPreviewBody_ = function(){
+  var subj = ($("#mSubj") ? $("#mSubj").value : templates.mail_subject);
+  var tpl = ($("#mBody") ? $("#mBody").value : templates.mail_body);
+  var attempt = function(n){
+    return fetchMailPreview().then(function(res){
+      var pv = res && res.preview && res.preview[0];
+      if (!pv || !pv.applicant_id) throw new Error("サーバーが対象者を返しませんでした（対象が0件の可能性があります）");
+      var ids = [];
+      try {
+        var held = ((window._r616MailServer || {}).preview || []).find(function(x){ return x.applicant_id === pv.applicant_id; });
+        var src = held || pv;
+        ids = r616DisplayedCases_(src).map(function(c){ return c.case_id; });
+      } catch(e) {}
+      return apiCall({ action: "mailPreviewBody", applicant_id: pv.applicant_id, subject: subj, body_template: tpl, recommended_case_ids: ids, sender_email: MF.sender, include_form: true }).then(function(b){
+        if (!b || !b.body) throw new Error("サーバーがプレビュー本文を返しませんでした");
+        window._mailPreviewServer = { applicant_id: pv.applicant_id, subject: b.subject || "", body: b.body };
+        window._mailServerFirst = { applicant_id: pv.applicant_id, name: pv.name || "" };
+        var el = document.getElementById("mailPreviewCard");
+        if (!el) return;
+        el.innerHTML = "<h4>生成済み文面プレビュー（先頭の対象者あて）</h4><p class=\"small\">宛先: " + esc(pv.name || pv.applicant_id) + "／件名: " + esc(b.subject || "") + '</p><p class="kv small">' + esc(b.body) + "</p>";
+      });
+    }).catch(function(e){
+      if (n < 1) return new Promise(function(r){ setTimeout(r, 1200); }).then(function(){ return attempt(n + 1); });
+      window._mailPreviewServer = null;
+      var el = document.getElementById("mailPreviewCard");
+      if (!el) return;
+      var msg = r616ServerErrText_(e);
+      el.innerHTML = '<h4>プレビューを生成できませんでした</h4><p class="small">サーバー生成に失敗したため、プレビューは表示していません。</p>' + (msg ? '<p class="small">理由: ' + esc(msg) + "</p>" : "") + '<p><button type="button" onclick="fetchMailPreviewBody_()">再試行する</button></p>';
+    });
+  };
+  return attempt(0);
+};
+/* Gmail画面の入口: 既存の描画のあとに簡素化手術を行う */
+var _viewMail616 = viewMail;
+viewMail = function(){
+  _viewMail616();
+  try { r616MailSurgery_(); } catch(e) {}
+  try { r616PaintBars_(); } catch(e) {}
+};
+/* Gmail固定バー: 対象を確認 → 一括送信 */
+function r616PaintMailBar_(){
+  var bar = document.getElementById("r616MailBar");
+  var onMail = (location.hash || "").indexOf("#/mail") === 0;
+  if (!onMail) { if (bar) bar.style.display = "none"; return false; }
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "r616MailBar"; bar.className = "r616bar";
+    bar.innerHTML = '<button type="button" id="r616MailCheckBtn">対象を確認</button><span class="r616barCount" id="r616MailBarCount">対象 未確認</span><button type="button" class="primary" id="r616MailSendBtn">一括送信</button>';
+    document.body.appendChild(bar);
+    document.getElementById("r616MailCheckBtn").onclick = function(){ try { checkMailTargets(); } catch(e) {} };
+    document.getElementById("r616MailSendBtn").onclick = function(){ try { sendMail(); } catch(e) {} };
+  }
+  var bc = document.getElementById("r616MailBarCount");
+  if (bc) bc.innerHTML = r616MailBarHtml_();
+  bar.style.display = "";
+  return true;
+}
+
+/* ---------- 4. 案件マスターの後読み ----------
+   起動時はホームと一覧を先に出す。案件取得は「需要があったとき」
+   （案件を探す・別案件・おすすめを開く）か、アイドル時に開始する。
+   取得が終わるまでは 6.13 のゲートが働き、サンプル案件は出ない。 */
+var _fetchCaseMaster616 = fetchCaseMasterR613_;
+var _r616CaseTimer = null;
+function r616CasesLoaded_(){
+  try { return _r613CaseSync.status === "ok" || !!window._r613CasesFromServer; } catch(e) { return false; }
+}
+/* デモモード (サーバーモード未有効化) では案件取得を開始しない。
+   判定はアプリ自身の起動経路と同じ: r613ServerExpected_ かつ
+   window._r6ServerMode (有効化済み) の両方が立つときだけ開始する */
+function r616ServerExpected_(){
+  try {
+    if (typeof r613ServerExpected_ === "function" && !r613ServerExpected_()) return false;
+    return !!window._r6ServerMode;
+  } catch(e) { return false; }
+}
+function r616StartCasesNow_(){
+  if (_r616CaseTimer) {
+    try { clearTimeout(_r616CaseTimer); } catch(e) {}
+    try { if (window.cancelIdleCallback) cancelIdleCallback(_r616CaseTimer); } catch(e) {}
+    _r616CaseTimer = null;
+  }
+  if (!r616ServerExpected_()) return Promise.resolve(false);
+  window._r616CaseDemand = true;
+  if (!r616CasesLoaded_()) { try { return _fetchCaseMaster616(); } catch(e) {} }
+  return Promise.resolve(false);
+}
+fetchCaseMasterR613_ = function(){
+  if (!r616ServerExpected_()) return _fetchCaseMaster616();
+  if (window._r616CaseDemand || r616CasesLoaded_()) return _fetchCaseMaster616();
+  if (_r616CaseTimer) return Promise.resolve(false);
+  var start = function(){ _r616CaseTimer = null; try { r616StartCasesNow_(); } catch(e) {} };
+  _r616CaseTimer = setTimeout(start, 1200);
+  return Promise.resolve(false);
+};
+var _openCaseSearch616 = openCaseSearch;
+openCaseSearch = function(){ r616StartCasesNow_(); return _openCaseSearch616(); };
+var _openAltCases616 = openAltCases;
+openAltCases = function(id){ r616StartCasesNow_(); return _openAltCases616(id); };
+/* recommend は需要点にしない: カード描画 (expandTags→tagFreshCase→freshCaseFor) が
+   recommend を経由するため、ここで取得を開始すると描画のたびにサーバー呼び出しが
+   発生し、6.15.2 の「描画はサーバー往復なしで完結する」に反する。案件取得の
+   需要点は openCaseSearch / openAltCases / proposalsAll / reverseView と
+   一覧着地後の経路に限る (取得前は新着タグ・おすすめが空になるだけで劣化しない)。 */
+/* 提案（ホーム）と逆引きも需要点: 呼ばれたら取得を即開始する（表示はブロック
+   しない。取得が終わるまでは 6.13 のゲートが「読み込み中」を出し、サンプル
+   案件は出ない）。取得自体は元の関数の in-flight ガードで二重に走らない。 */
+var _proposalsAll616 = proposalsAll;
+proposalsAll = function(){ try { r616StartCasesNow_(); } catch(e) {} return _proposalsAll616(); };
+var _reverseView616 = reverseView;
+reverseView = function(list){ try { r616StartCasesNow_(); } catch(e) {} return _reverseView616(list); };
+/* 送信パラメータ: 案件の入れ替えがあった人だけ、画面に出ている案件を
+   case_overrides として載せる（項目名はバックエンド第2段の実装に合わせた。
+   バックエンドは req.case_overrides しか読まないため、この名前で送らないと
+   上書きが無言で届かない = 監査ブロッカー 2026-11-23）。 */
+function r616OverridesPayload_(){
+  var ov = window._r616CaseOverrides || {};
+  var s = window._r616MailServer;
+  if (!s || !s.preview) return null;
+  var out = null;
+  Object.keys(ov).forEach(function(id){
+    if (!ov[id].excluded || !ov[id].excluded.length) return;
+    var pv = s.preview.find(function(x){ return x.applicant_id === id; });
+    if (!pv) return;
+    out = out || {};
+    out[id] = r616DisplayedCases_(pv).map(function(c){ return c.case_id; });
+  });
+  return out;
+}
+var _bmsp616 = buildMailServerParams;
+buildMailServerParams = function(){
+  var p = _bmsp616();
+  try { var ov = r616OverridesPayload_(); if (ov) p.case_overrides = ov; } catch(e) {}
+  return p;
+};
+
+/* ---------- 5. 案件の選択は「検索して絞れる一覧」に統一 ----------
+   素の select に大量の option を詰める方式 (iOS の巨大ピッカー) は、
+   案件・市区町村など件数の多い選択すべてで禁止 (ユーザー所見)。
+   案件を探すモーダルを唯一の案件ピッカーとし、4軸 (都道府県 /
+   市区町村 / 職種 / 案件取得日) + 文字検索で絞れるようにする。
+   逆引きの案件 select と市区町村 select、一覧の市区町村 select は
+   ピッカー起動方式に置き換える。 */
+function r616CsState_(){
+  var cs = state.caseSearch || (state.caseSearch = { range: "all", q: "", job: "", shown: 50 });
+  if (cs.pref === undefined) cs.pref = "";
+  if (cs.muni === undefined) cs.muni = "";
+  return cs;
+}
+function r616CsSetPref(p){ var cs = r616CsState_(); cs.pref = p; cs.muni = ""; openCaseSearch(); }
+function r616CsSetMuni(m){ var cs = r616CsState_(); cs.muni = m; openCaseSearch(); }
+function r616CaseSearchChips_(){
+  var dlg = document.getElementById("dlg");
+  if (!dlg || dlg.querySelector(".r616csAxes")) return;
+  var labels = [].slice.call(dlg.querySelectorAll("label"));
+  var anchor = null;
+  labels.forEach(function(l){ if ((l.textContent || "").indexOf("取得日フィルター") === 0) anchor = l; });
+  if (!anchor || !anchor.parentNode) return;
+  var cs = r616CsState_();
+  var prefs = [];
+  CASES.forEach(function(c){ if (c.prefecture && prefs.indexOf(c.prefecture) < 0) prefs.push(c.prefecture); });
+  prefs.sort();
+  var html = '<div class="r616csAxes"><label>都道府県</label><div class="flex">'
+    + '<button aria-pressed="' + (!cs.pref) + '" onclick="r616CsSetPref(\'\')">すべて</button>'
+    + prefs.map(function(p){ return '<button aria-pressed="' + (cs.pref === p) + '" onclick="r616CsSetPref(\'' + p + '\')">' + esc(p) + '</button>'; }).join("")
+    + '</div>';
+  if (cs.pref) {
+    var munis = [];
+    CASES.forEach(function(c){ if (c.prefecture === cs.pref && c.municipality && munis.indexOf(c.municipality) < 0) munis.push(c.municipality); });
+    munis.sort();
+    html += '<label>市区町村</label><div class="flex r616csMunis">'
+      + '<button aria-pressed="' + (!cs.muni) + '" onclick="r616CsSetMuni(\'\')">すべて</button>'
+      + munis.map(function(m){ return '<button aria-pressed="' + (cs.muni === m) + '" onclick="r616CsSetMuni(\'' + m + '\')">' + esc(m) + '</button>'; }).join("")
+      + '</div>';
+  }
+  html += '</div>';
+  var box = document.createElement("div");
+  box.innerHTML = html;
+  var node = box.firstChild;
+  var after = anchor.nextElementSibling; /* 取得日チップの行の後に入れる */
+  anchor.parentNode.insertBefore(node, after ? after.nextSibling : null);
+}
+var _openCaseSearch616w = openCaseSearch;
+openCaseSearch = function(){
+  var cs = r616CsState_();
+  var saved = null;
+  if (cs.pref || cs.muni) {
+    saved = CASES;
+    CASES = CASES.filter(function(c){
+      return (!cs.pref || c.prefecture === cs.pref) && (!cs.muni || c.municipality === cs.muni);
+    });
+  }
+  try { _openCaseSearch616w(); } finally { if (saved) CASES = saved; }
+  try { r616CaseSearchChips_(); } catch(e) {}
+};
+/* 逆引き: 案件 select (全案件 option) を選択中表示 +「案件を探す」に、
+   市区町村 select をピッカー起動ボタンに置き換える */
+var _reverseView616w = reverseView;
+reverseView = function(list){
+  var html = _reverseView616w(list);
+  html = html.replace(/<select onchange="state\.reverseCase=this\.value;route\(\)">[\s\S]*?<\/select>/, function(){
+    var c = CASES.find(function(x){ return x.id === state.reverseCase; }) || CASES[0];
+    return '<div class="r616caseNow"><b>' + esc(c ? c.facility : "") + '</b> <span class="small">'
+      + esc(c ? c.prefecture : "") + '・' + (c && c.job_type === "kango" ? "看護" : "介護") + '</span></div>';
+  });
+  html = html.replace(/<select onchange="state\.reverseMuni=this\.value;route\(\)"[^>]*>[\s\S]*?<\/select>/,
+    '<button onclick="r616OpenMuniPicker(\'reverse\')">市区町村: ' + esc(state.reverseMuni || "すべて") + '</button>');
+  return html;
+};
+/* 一覧の絞り込み: 市区町村 select をピッカー起動ボタンに置き換える */
+var _filterBar616w = filterBar;
+filterBar = function(list){
+  var html = _filterBar616w(list);
+  html = html.replace(/<select style="flex:1" onchange="F\.muni=this\.value;route\(\)">[\s\S]*?<\/select>/,
+    '<button style="flex:1" onclick="r616OpenMuniPicker(\'list\')">市区町村: ' + esc(F.muni || "すべて") + '</button>');
+  return html;
+};
+/* 市区町村ピッカー: 検索 + チップの一覧からタップで選ぶ */
+function r616MuniList_(mode){
+  if (mode === "reverse") {
+    var c = CASES.find(function(x){ return x.id === state.reverseCase; }) || CASES[0];
+    if (!c) return [];
+    /* サーバーモードではサーバーファセット (R7) を候補にする
+       (ローカルプールはページ単位で不完全なため) */
+    try {
+      var facets = (window._r7Facets && typeof r7ReverseCaseKey === "function") ? window._r7Facets[r7ReverseCaseKey(c)] : null;
+      if (facets && facets.length) return facets.slice().sort();
+    } catch(e) {}
+    var seen = {};
+    applicants.forEach(function(a){
+      if (!isTestApplicant(a) && a.job_type === c.job_type && a.prefecture === c.prefecture && a.municipality) seen[a.municipality] = 1;
+    });
+    return Object.keys(seen).sort();
+  }
+  return areaMunis(state.area);
+}
+function r616OpenMuniPicker(mode){
+  window._r616MuniMode = mode;
+  window._r616MuniQ = "";
+  r616PaintMuniPicker_();
+}
+function r616PaintMuniPicker_(){
+  var mode = window._r616MuniMode || "list";
+  var q = window._r616MuniQ || "";
+  var all = r616MuniList_(mode);
+  var rows = all.filter(function(m){ return !q || m.indexOf(q) >= 0; });
+  window._r616MuniRows = rows;
+  var cur = mode === "reverse" ? state.reverseMuni : F.muni;
+  showModal('<h3>市区町村を選ぶ</h3>'
+    + '<label>検索</label><input id="r616MuniQ" value="' + esc(q) + '" oninput="window._r616MuniQ=this.value;r616PaintMuniPicker_()">'
+    + '<div class="r616muniChips">'
+    + '<button aria-pressed="' + (!cur) + '" onclick="r616PickMuni(-1)">すべて</button>'
+    + rows.map(function(m, i){ return '<button aria-pressed="' + (cur === m) + '" onclick="r616PickMuni(' + i + ')">' + esc(m) + '</button>'; }).join("")
+    + '</div>'
+    + '<p class="small">全' + all.length + '件中 ' + rows.length + '件</p>'
+    + '<button onclick="closeModal()">閉じる</button>');
+  var inp = document.getElementById("r616MuniQ");
+  if (inp && q) { try { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); } catch(e) {} }
+}
+function r616PickMuni(i){
+  var m = i < 0 ? "" : (window._r616MuniRows || [])[i] || "";
+  if ((window._r616MuniMode || "list") === "reverse") state.reverseMuni = m;
+  else F.muni = m;
+  closeModal();
+  route();
+}
+try {
+/* ===== 会社名は正式名称で保持・表示する (ユーザー決定 2026-11-23) =====
+   normalizeCompany の正規形を正式名称に寄せる。照合側 (サーバーの
+   normalizeCompany_ は法人格を剥がして照合する) と壊れない。
+   ファーストスタッフィングはアプリ既存表記のまま (正式名称リストの指定どおり)。 */
+var R616_FORMAL_COMPANY_ = {
+  "グラスト": "株式会社グラスト",
+  "ラブキャリア": "株式会社ラブキャリア",
+  "カナミックネットワーク": "株式会社カナミックネットワーク",
+  "グローバルヒューマンブリッジ": "株式会社グローバルヒューマンブリッジ",
+  "FIDIASOLUTIONS": "FIDIA SOLUTIONS株式会社",
+  "ジョブコレ大阪": "ジョブコレ大阪株式会社",
+  "キャストウェル": "株式会社キャストウェル",
+  "ビースタイルスマートキャリア": "株式会社ビースタイルスマートキャリア",
+  "朝日エンジニアリング": "株式会社朝日エンジニアリング",
+  "NEXTスタッフサービス": "株式会社NEXTスタッフサービス"
+};
+var _normalizeCompany616 = normalizeCompany;
+normalizeCompany = function (raw) {
+  var n = _normalizeCompany616(raw);
+  return R616_FORMAL_COMPANY_[n] || n;
+};
+/* ===== 複数応募のマージ表示 (ユーザー決定 2026-11-23) =====
+   土台 (refreshProgress) が latest_application (直近の応募) と
+   furthest_status (全応募で一番進んだステータス + その出所の会社) を
+   既に計算している。表示側は次の規則に合わせる:
+   - ステータスは一番進んだものを主表示にする (終了系より進んだ方を優先。
+     終了系しかない人は従来どおり終了系のまま)。
+   - そのステータスの出所の会社が、現在の会社 (直近の応募会社) と違う
+     場合だけ「内定待ち（○○）」のように正式名称で併記する。 */
+var _progressBadgeHtml616 = progressBadgeHtml;
+progressBadgeHtml = function (a) {
+  try {
+    refreshProgress(a);
+    var f = a && a.furthest_status, t = a && a.terminal_status, latest = a && a.latest_application;
+    var st = f ? statusStage(f.status) : null;
+    if (f && st && !st.terminal && st.rank > 0) {
+      var label = f.status;
+      if (latest && f.company && latest.company && f.company !== latest.company) label += "（" + f.company + "）";
+      var html = '<span class="badge ok">' + esc(label) + "</span>";
+      if (t && !(t.company === f.company && t.date === f.date)) html = '<span class="badge term">終了: ' + esc(t.status) + "</span> " + html;
+      return html;
+    }
+  } catch (e) {}
+  return _progressBadgeHtml616(a);
+};
+
+/* ===== フォーム回答の3項目を中継の収集元・アダプタへ通す (監査ブロッカー) =====
+   desired_time_slots / desired_days_per_week / start_timing_code は、
+   中継の主経路の収集元 relayLocalResponseFromDom に受け口が無いと届かない。
+   収集元 (チップ _fChips から submitForm と同じ意味で拾う) と、アダプタ
+   buildRelayAnswers (ホワイトリスト方式なので明示的に通す) の両方に足す。 */
+var _relayLocal616 = relayLocalResponseFromDom;
+relayLocalResponseFromDom = function () {
+  var r = _relayLocal616();
+  try {
+    var ch = window._fChips || {};
+    if (r.desired_time_slots == null) r.desired_time_slots = (ch.slots && ch.slots.length) ? ch.slots.slice() : [];
+    if (r.desired_days_per_week == null) r.desired_days_per_week = ch.days != null ? String(ch.days) : "";
+    if (r.start_timing_code == null) r.start_timing_code = r.start ? "" : (ch.timing || "");
+  } catch (e) {}
+  return r;
+};
+var _buildRelayAnswers616 = buildRelayAnswers;
+buildRelayAnswers = function (token, r) {
+  var out = _buildRelayAnswers616(token, r);
+  try {
+    r = r || {};
+    out.desired_time_slots = Array.isArray(r.desired_time_slots) ? r.desired_time_slots.map(function (x) { return String(x); }).filter(Boolean) : (r.desired_time_slots ? [String(r.desired_time_slots)] : []);
+    out.desired_days_per_week = String(r.desired_days_per_week != null ? r.desired_days_per_week : "");
+    out.start_timing_code = String(r.start_timing_code || "");
+  } catch (e) {}
+  return out;
+};
+
+/* ===== CSV取り込み: 会社名は「列 → ファイル名の社名」で決める =====
+   (ユーザー指示 2026-11-23。「ファイル名を会社名として流用しない」という
+   従来ルールは廃止し、本仕様に置き換える)
+   1. 行の会社名列が最優先。refo 書き出しの実カラム名「クライアント」を
+      SYNONYMS の source_company に追加する (完全一致の見出しだけが対象。
+      「クライアント種別」「NGクライアント」は拾わない。パターン正規表現
+      には追加しない = 種別列を誤認させない)。
+   2. 列で取れない行は、ファイル名から会社名を判定して補完する。既知の
+      会社名 (アプリ内データの会社名 + refo 11テナント) を正規化し、
+      ファイル名 (拡張子なし) に含まれていれば一致とみなす。
+   3. 補完したファイルはプレビューに「会社名: ○○（ファイル名から）」と出す。
+   4. どれにも一致しなければ従来どおり「会社名未登録」(推測で入れない)。 */
+try { if (typeof SYNONYMS !== "undefined" && SYNONYMS.source_company && SYNONYMS.source_company.indexOf("クライアント") < 0) SYNONYMS.source_company.push("クライアント"); } catch (e) {}
+var R616_REFO_COMPANIES_ = ["ファーストスタッフィング", "株式会社グラスト", "株式会社ラブキャリア", "株式会社カナミックネットワーク", "株式会社グローバルヒューマンブリッジ", "FIDIA SOLUTIONS株式会社", "ジョブコレ大阪株式会社", "株式会社キャストウェル", "株式会社ビースタイルスマートキャリア", "株式会社朝日エンジニアリング", "株式会社NEXTスタッフサービス"];
+function r616KnownCompanies_(){
+  var set = {}, out = [];
+  var add = function (name) { var n = normalizeCompany(name || ""); if (n && n !== "会社名未登録" && !set[n]) { set[n] = 1; out.push(n); } };
+  R616_REFO_COMPANIES_.forEach(add);
+  try { (typeof COMPANIES !== "undefined" ? COMPANIES : []).forEach(add); } catch (e) {}
+  try { companyRegistry().forEach(function (r) { add(r && r.name); }); } catch (e) {}
+  try { applicants.forEach(function (a) { add(a && a.source_company); }); } catch (e) {}
+  return out;
+}
+function r616CompanyKey_(s){ return String(s || "").normalize("NFKC").replace(/[\s　]/g, ""); }
+/* 実ファイル名はローマ字スラッグ (glast_full_01_….csv 等) のため、
+   スラッグ→正式名称の対応表で照合する (監査ブロッカー 2026-11-23)。
+   照合はトークン単位 (ファイル名を英数以外で分割し、トークンの完全一致)。 */
+var R616_SLUG_COMPANY_ = {
+  first: "ファーストスタッフィング",
+  glast: "株式会社グラスト",
+  lovecareer: "株式会社ラブキャリア",
+  kanamic: "株式会社カナミックネットワーク",
+  global: "株式会社グローバルヒューマンブリッジ",
+  fidia: "FIDIA SOLUTIONS株式会社",
+  jobcolle: "ジョブコレ大阪株式会社",
+  castwell: "株式会社キャストウェル",
+  bstyle: "株式会社ビースタイルスマートキャリア",
+  asahi: "株式会社朝日エンジニアリング",
+  next: "株式会社NEXTスタッフサービス"
+};
+function r616CompanyFromFilename_(stem){
+  /* 1) スラッグ照合 (実ファイル名の形式)。2) 日本語名の照合
+     (正式名称そのものと、法人格を外した中核名の両方)。返すのは正式名称 */
+  var tokens = String(stem || "").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  for (var ti = 0; ti < tokens.length; ti++) {
+    if (R616_SLUG_COMPANY_[tokens[ti]]) return R616_SLUG_COMPANY_[tokens[ti]];
+  }
+  var key = r616CompanyKey_(stem);
+  if (!key) return "";
+  var best = "", bestLen = 0;
+  r616KnownCompanies_().forEach(function (c) {
+    var core = String(c).replace(/^株式会社/, "").replace(/株式会社$/, "");
+    [c, core].forEach(function (cand) {
+      var ck = r616CompanyKey_(cand);
+      if (ck && key.indexOf(ck) >= 0 && ck.length > bestLen) { best = c; bestLen = ck.length; }
+    });
+  });
+  return best;
+}
+function r616FillCompanyFromFilename_(mapped, stem){
+  if (!Array.isArray(mapped) || !mapped.length) return "";
+  if (!mapped.some(function (r) { return r && normalizeCompany(r.source_company || "") === "会社名未登録"; })) return "";
+  var company = r616CompanyFromFilename_(stem);
+  if (!company) return "";
+  mapped.forEach(function (r) { if (r && normalizeCompany(r.source_company || "") === "会社名未登録") r.source_company = company; });
+  (window._r616FileCompany = window._r616FileCompany || {})[String(stem || "")] = company;
+  return company;
+}
+var _mapRows616 = mapRows;
+mapRows = function (rows, fallbackCompany) {
+  var mapped = _mapRows616(rows, fallbackCompany);
+  try { r616FillCompanyFromFilename_(mapped, fallbackCompany); } catch (e) {}
+  return mapped;
+};
+var _genericMapRows616 = genericMapRows;
+genericMapRows = function (rows, fallbackCompany) {
+  var mapped = _genericMapRows616(rows, fallbackCompany);
+  try { r616FillCompanyFromFilename_(mapped, fallbackCompany); } catch (e) {}
+  return mapped;
+};
+var _remapImportColumn616 = remapImportColumn;
+remapImportColumn = function (fileIdx, k, v) {
+  var r = _remapImportColumn616(fileIdx, k, v);
+  try {
+    var srcs = window._importSources || [];
+    var changed = false;
+    srcs.forEach(function (x) { if (x && x.mode === "generic" && x.mapped && r616FillCompanyFromFilename_(x.mapped, String(x.file || "").replace(/\.[^.]+$/, ""))) changed = true; });
+    if (changed) { var all = []; srcs.forEach(function (x) { all.push.apply(all, x.mapped || []); }); renderImportPreview(all, (window._importPerFile || []).map(function (x) { return x.file; }).join(",")); }
+  } catch (e) {}
+  return r;
+};
+/* プレビュー: ファイルごとの内訳 (新規/最新応募/更新/スキップ/除外) を足し、
+   ファイル名から会社名を補完したファイルにはその旨をファイル行に付ける。
+   複数ファイルの一括投入前に、ファイル単位で確認できるようにする */
+function r616ImportGroups_(){
+  if (!importPreview || !importPreview.judged) return null;
+  var perFile = window._importPerFile || [];
+  if (!perFile.length) return null;
+  var groups = splitJudgedByFile(importPreview.judged, perFile);
+  return groups.map(function (g, gi) {
+    var c = { new: 0, latest: 0, updated: 0, skip: 0, excluded: 0 };
+    (g.rows || []).forEach(function (x) { var cat = x.j && x.j.category; if (cat === "new") c.new++; else if (cat === "latest") c.latest++; else if (cat === "updated") c.updated++; else if (cat === "skip") c.skip++; else c.excluded++; });
+    return { file: (perFile[gi] && perFile[gi].file) || g.file || "", counts: c, rows: g.rows || [] };
+  });
+}
+var _renderImportPreview616 = renderImportPreview;
+renderImportPreview = function (rows, fname) {
+  var r = _renderImportPreview616(rows, fname);
+  try {
+    var el = document.getElementById("impResult");
+    var lines = r616ImportGroups_();
+    if (el && lines) {
+      el.insertAdjacentHTML("beforeend", '<div class="card"><h4>ファイルごとの内訳</h4>' + lines.map(function (L) {
+        return '<p class="small">・' + esc(L.file) + '： 新規 ' + L.counts.new + ' ／ 最新応募 ' + L.counts.latest + ' ／ 更新 ' + L.counts.updated + ' ／ スキップ ' + L.counts.skip + ' ／ 除外 ' + L.counts.excluded + '</p>';
+      }).join("") + '</div>');
+      var fc = window._r616FileCompany || {};
+      var perFile = window._importPerFile || [];
+      [].slice.call(el.querySelectorAll("p.small")).forEach(function (p) {
+        var t = p.textContent || "";
+        perFile.forEach(function (x) {
+          var stem = String(x.file || "").replace(/\.[^.]+$/, "");
+          var company = fc[stem];
+          if (company && t.indexOf("・" + x.file) === 0 && t.indexOf("ファイル名から") < 0) p.insertAdjacentHTML("beforeend", " ／ 会社名: " + esc(company) + "（ファイル名から）");
+        });
+      });
+    }
+  } catch (e) {}
+  return r;
+};
+/* サーバー照合プレビューでも、ファイル名から補完したファイルにはその旨を付ける */
+var _renderImportPreviewServer616 = renderImportPreviewServer;
+renderImportPreviewServer = function (serverResults, fileNames) {
+  var r = _renderImportPreviewServer616(serverResults, fileNames);
+  try {
+    var el = document.getElementById("impResult");
+    var fc = window._r616FileCompany || {};
+    if (el) [].slice.call(el.querySelectorAll("p.small")).forEach(function (p) {
+      var t = p.textContent || "";
+      (window._importPerFile || []).forEach(function (x) {
+        var stem = String(x.file || "").replace(/\.[^.]+$/, "");
+        var company = fc[stem];
+        if (company && t.indexOf("・" + x.file) === 0 && t.indexOf("ファイル名から") < 0) p.insertAdjacentHTML("beforeend", " ／ 会社名: " + esc(company) + "（ファイル名から）");
+      });
+    });
+  } catch (e) {}
+  return r;
+};
+/* 投入後の履歴はファイルごとに追えるようにする。結合エントリ (state.imports)
+   はキューの完了書込が先頭エントリに紐づくため壊さず、ファイル単位の記録を
+   別に保持して取り込み画面に同じ形式で出す (現行の履歴形式をファイル単位で維持) */
+var _commitImport616 = commitImport;
+commitImport = function () {
+  var snap = importPreview;
+  var perFileSnap = (window._importPerFile || []).slice();
+  var fileCounts = null;
+  try {
+    if (snap && perFileSnap.length > 1) {
+      if (snap.judged) {
+        fileCounts = splitJudgedByFile(snap.judged, perFileSnap).map(function (g, gi) {
+          var c = { new: 0, latest: 0, updated: 0, skip: 0, excluded: 0, unclassified: 0 };
+          (g.rows || []).forEach(function (x) {
+            var cat = x.j && x.j.category;
+            if (cat === "new") c.new++; else if (cat === "latest") c.latest++; else if (cat === "updated") c.updated++; else if (cat === "skip") c.skip++; else c.excluded++;
+            if (x.r && x.r.csv_status && CSV_STATUSES.indexOf(x.r.csv_status) < 0) c.unclassified++;
+          });
+          return { file: (perFileSnap[gi] && perFileSnap[gi].file) || g.file || "", counts: c };
+        });
+      } else if (Array.isArray(snap.perFile)) {
+        fileCounts = snap.perFile.map(function (r) {
+          var latest = (typeof r.latest_application === "number") ? r.latest_application : Math.max(0, (r.updated || 0) - (r.attr_updated || 0));
+          var excl = (r.excluded != null) ? r.excluded : (r.skipped_reasons || {});
+          var exclN = (typeof excl === "number") ? excl : Object.keys(excl).reduce(function (a, k) { return a + Number(excl[k] || 0); }, 0);
+          return { file: r.file_name || "", counts: { new: r.added || 0, latest: latest, updated: Math.max(0, (r.updated || 0) - latest), skip: r.skipped || 0, excluded: exclN, unclassified: r.unclassified || 0 } };
+        });
+      }
+    }
+  } catch (e) {}
+  var headBefore = (state.imports && state.imports[0]) || null;
+  var r = _commitImport616();
+  try {
+    if (fileCounts && state.imports && state.imports[0] && state.imports[0] !== headBefore) {
+      var hist = [];
+      try { hist = LS.get("r616ImportFileHist", []) || []; } catch (e) {}
+      var now = todayStr();
+      fileCounts.slice().reverse().forEach(function (fc) { hist.unshift({ at: now, file: fc.file, new: fc.counts.new, latest: fc.counts.latest, updated: fc.counts.updated, skip: fc.counts.skip, excluded: fc.counts.excluded, unclassified: fc.counts.unclassified || 0 }); });
+      try { LS.set("r616ImportFileHist", hist.slice(0, 100)); } catch (e) {}
+    }
+  } catch (e) {}
+  return r;
+};
+var _viewImport616 = viewImport;
+viewImport = function () {
+  var r = _viewImport616();
+  try {
+    var hist = LS.get("r616ImportFileHist", []) || [];
+    var app = document.getElementById("app");
+    if (app && hist.length) {
+      app.insertAdjacentHTML("beforeend", '<div class="card"><h3>ファイルごとの取り込み履歴</h3>' + hist.map(function (h) {
+        return '<p class="small">・' + esc(h.at) + ' ' + esc(h.file) + ' — 新規' + h.new + '／最新応募' + h.latest + '／更新' + h.updated + '／スキップ' + h.skip + '／除外' + h.excluded + (h.unclassified ? '／未分類' + h.unclassified : '') + '</p>';
+      }).join("") + '</div>');
+    }
+  } catch (e) {}
+  return r;
+};
+
+  if (window.__APP_LOGIC__) {
+    window.__APP_LOGIC__.r616StartCasesNow = r616StartCasesNow_;
+    window.__APP_LOGIC__.r616ServerCounts = r616ServerCounts_;
+    window.__APP_LOGIC__.r616SummaryLine = r616SummaryLine_;
+    window.__APP_LOGIC__.r616UnsendableText = r616UnsendableText_;
+    window.__APP_LOGIC__.r616DisplayedCases = r616DisplayedCases_;
+    window.__APP_LOGIC__.r616MailCountText = r616MailCountText_;
+    window.__APP_LOGIC__.r616CompanyFromFilename = r616CompanyFromFilename_;
+    window.__APP_LOGIC__.r616MapRows = mapRows;
+    window.__APP_LOGIC__.r616RosterReady = r616RosterReady_;
+    window.__APP_LOGIC__.r616WarmRoster = r616WarmRoster_;
+    window.__APP_LOGIC__.r616SyncNow = r616SyncNow_;
+    window.__APP_LOGIC__.r616RosterCount = function(){ return (window._r616Roster && window._r616Roster.items) ? window._r616Roster.items.length : null; };
+    window.__APP_LOGIC__.r616OpenMuniPicker = r616OpenMuniPicker;
+    window.__APP_LOGIC__.r616MuniList = r616MuniList_;
+    window.__APP_LOGIC__.r616CsSetPref = r616CsSetPref;
+    window.__APP_LOGIC__.r616CsSetMuni = r616CsSetMuni;
+  }
+} catch(e) {}
+
+/* ===== R616 同梱: SMS導線トップレベル化 (sms-toplevel-work/front/rtop_block.js) =====
+   ユーザー指示 (2026-11-23 23:08) で公開に同梱する。6.15.3 への移植は
+   FRONT_DIFF.md §2 の意味的な接続点で行った (rtop_block.js の 6.15.1
+   ベースの丸ごと再定義は採用しない。6.15.3 の直接応答方式 (発行の成否を
+   commit の応答で判断し、失敗を即返す) を巻き戻さないため):
+   - 土台は 6.15.3 の openSmsDirect615 そのまま (番号取得とフォーム発行の
+     並行準備・直接応答の主信号化を含む)。差し替えは finish 点のみ。
+   - ヘルパー (rTopEnabled_ 等) は rtop_block.js のまま。ただし起動アンカー
+     とボタン化した主ボタンの文言は 6.16 のカード形に合わせ「初回SMS」。
+   - cardHtml ラッパー (描画時アンカーのボタン化) はサーバーモード時のみ
+     効かせる (デモ/ローカルでは 6.15.2 の挙動を維持)。
+   起動ページ pages/sms.html はリポジトリ直下へ別途配置する (報告書参照)。
+   GAS 側 sms_launch.gs と Worker 側エンドポイントは別レーン。 */
+/* ================= RTOP: SMS導線のみトップレベル化 =================
+   実機所見: Apps Script の iframe 内では sms: への遷移が iPhone で開かない
+   (6.15.1 のアンカー差し替えでも、環境によっては発火しない)。
+   方針 (B_VERDICT §5.4 (c)): 担当者画面本体は iframe のまま、SMS 作成だけを
+   トップレベルの起動ページ (GitHub Pages の sms.html) に切り出す。
+
+   動き:
+   - 準備 (番号取得 + フォーム発行) は従来どおり openSmsDirect615 の前段。
+   - finish() で本文が完成したら、sms: の href を直接アンカーに載せる代わりに
+     サーバーへ issueSmsLaunch を依頼する。サーバーは番号の一致・配信停止・
+     フォームURLの発行記録を検証し、{番号, 本文} を relay (KV, 10分・
+     ワンタイム) へ Push して起動トークンだけを返す。
+   - ボタンを「起動ページへの target="_top" アンカー」に差し替え、
+     プログラムクリックを試みる (効かなければアンカーが残るので実タップで
+     遷移できる)。起動ページ側がトークンで {番号, 本文} を引き、本物の
+     sms: アンカーを描く。番号・本文は URL クエリに載せない。
+   - relay / サーバー側の都合で起動が作れない場合 (検証エラー以外) は、
+     従来の sms: アンカー差し替えにフォールバックする (relay 障害で
+     SMS が今日より悪くならないように)。検証エラー (番号不一致・配信停止
+     等) は理由を表示して止める (別番号へ飛ばさない)。
+   - 6.15.2 の「描画時点で完成した sms: アンカーを置く」最適化は、
+     トップレベル化が有効な間は無効化する (起動トークンはタップごとに
+     発行する必要があるため、描画時点では作れない)。カードは従来の
+     ボタン表示に戻る。
+
+   無効化: このブロックより前で window.SMS_TOPLEVEL_ENABLED = false を
+   置くと、本ブロックは一切介入せず 6.15.x の挙動に戻る。
+   移植メモ: FRONT_DIFF.md を参照 (6.15.3 / 6.16 への移植手順)。 */
+
+function rTopEnabled_(){
+  try { return window.SMS_TOPLEVEL_ENABLED !== false; } catch(e) { return true; }
+}
+function rTopLaunchUrl_(token){
+  var base = "";
+  try { base = String(PAGES_BASE_URL || ""); } catch(e) {}
+  if (!base) base = "https://first-staffing.github.io/kansai-sms-app/";
+  return base + "sms.html?t=" + encodeURIComponent(String(token || ""));
+}
+/* サーバー検証エラー (この場合はフォールバックせず理由を表示する) */
+function rTopIsValidationError_(msg){
+  var s = String(msg || "");
+  return s.indexOf("一致しません") >= 0 || s.indexOf("配信停止") >= 0 ||
+         s.indexOf("登録されていません") >= 0 || s.indexOf("本文が空") >= 0 ||
+         s.indexOf("本文が長すぎます") >= 0 || s.indexOf("見つかりません") >= 0;
+}
+function rTopShowLaunchAnchor_(btn, url){
+  var anchor = null;
+  try {
+    if (btn && btn.parentNode && btn.ownerDocument) {
+      anchor = btn.parentNode.querySelector("a.rtopSms");
+      if (!anchor) {
+        anchor = btn.ownerDocument.createElement("a");
+        anchor.className = "btn primary rtopSms";
+        anchor.textContent = "初回SMS";
+        btn.parentNode.insertBefore(anchor, btn.nextSibling);
+      }
+      anchor.setAttribute("href", url);
+      anchor.setAttribute("target", "_top");
+      anchor.style.display = "";
+      btn.style.display = "none";
+    }
+  } catch(e) { anchor = null; }
+  return anchor;
+}
+function rTopRemoveLaunchAnchor_(btn){
+  try {
+    if (btn && btn.parentNode) {
+      var anchor = btn.parentNode.querySelector("a.rtopSms");
+      if (anchor) anchor.remove();
+      if (btn.style.display === "none") btn.style.display = "";
+    }
+  } catch(e) {}
+}
+
+/* ---- SMS主経路: 6.15.3 の openSmsDirect615 (直接応答方式) を土台に、finish 点だけトップレベル化 ---- */
+function openSmsDirect615(id, btn){
+  var a = null;
+  try { a = applicants.find(function(x){ return x.id === id; }); } catch(e) {}
+  if (!a) return;
+  if (btn && btn.getAttribute("data-r615busy") === "1") return;
+  var done = false;
+  var issueRecId = null;
+  var issueWaiter = null;
+  var launchStarted = false;
+  var stopWait = function(){
+    if (issueWaiter) { r6153UnwaitIssue_(id, issueWaiter); issueWaiter = null; }
+  };
+  var fail = function(msg){
+    if (done) return; done = true;
+    stopWait();
+    r6151RemoveSmsAnchor_(btn);
+    rTopRemoveLaunchAnchor_(btn);
+    r615SetBusy_(btn, false);
+    r615CardError_(btn, msg);
+  };
+  var finish = function(phone, urlOverride){
+    if (done || launchStarted) return;
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var url = "";
+    try { url = urlOverride || formUrlFor(a); } catch(e) {}
+    var body = "";
+    try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    /* R616移植 (FRONT_DIFF §2-1 の接続点): 番号と本文が確定したここで、
+       href を直接アンカーに載せる代わりに起動トークンを発行し、起動ページ
+       への target="_top" アンカーに差し替える。検証エラーは理由を表示して
+       止め、それ以外 (relay 未設定・通信失敗等) は 6.15.3 の従来経路
+       (finishLegacy) にフォールバックする。 */
+    var finishLegacy = function(){
+      if (done) return;
+      done = true;
+      stopWait();
+      r615SetBusy_(btn, false);
+      try { window._r6151LastSmsHref = href; } catch(e) {}
+      var anchor = r6151ShowSmsAnchor_(btn, href);
+      if (anchor) {
+        try { anchor.click(); } catch(e) {}
+      } else {
+        try { r615NavigateSms_(href); } catch(e) {}
+      }
+    };
+    var canApi = false;
+    try { canApi = !!(window._r6ServerMode && typeof apiCall === "function"); } catch(e) {}
+    if (!rTopEnabled_() || !canApi) { finishLegacy(); return; }
+    launchStarted = true;
+    if (btn) { try { btn.textContent = "起動ページを準備中…"; } catch(e) {} }
+    apiCall({ action: "issueSmsLaunch", applicant_id: id, phone: phone, body: body })
+      .then(function(res){
+        if (done) return;
+        if (res && res.launch_token) {
+          done = true;
+          stopWait();
+          r615SetBusy_(btn, false);
+          try { window._rTopLastLaunchUrl = rTopLaunchUrl_(res.launch_token); } catch(e) {}
+          var anchor = rTopShowLaunchAnchor_(btn, rTopLaunchUrl_(res.launch_token));
+          if (anchor) {
+            try { anchor.click(); } catch(e) {}
+          } else {
+            try { window.top.location.href = rTopLaunchUrl_(res.launch_token); } catch(e) {}
+          }
+        } else {
+          finishLegacy();
+        }
+      })
+      .catch(function(err){
+        if (done) return;
+        var msg = "";
+        try { msg = String((err && err.message) || err || ""); } catch(e) {}
+        if (rTopIsValidationError_(msg)) { fail(msg); return; }
+        finishLegacy();
+      });
+  };
+  r615SetBusy_(btn, true, "発行中…");
+  var attach = true;
+  try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+  var phoneState = "wait"; /* wait | ok | ng */
+  var phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phoneVal) phoneState = "ok";
+  var urlState = attach ? "wait" : "ok"; /* wait | ok | ng */
+  var issuedUrl = "";
+  var issueFailMsg = "";
+  var check = function(){
+    if (done) return;
+    if (phoneState === "ng") { fail("電話番号なし"); return; }
+    if (urlState === "ng") {
+      if (issueFailMsg) r6153PurgeIssueRecord_(issueRecId);
+      fail(issueFailMsg || "フォームURLの発行に時間がかかっています。もう一度タップしてください");
+      return;
+    }
+    if (phoneState === "ok" && urlState === "ok") finish(phoneVal, issuedUrl);
+  };
+  /* フォーム発行 (番号取得と並行に開始する) */
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else {
+      var issueStart = Date.now();
+      try { delete window._r6153IssueOutcome[a.id]; } catch(e) {}
+      var dRec = null, issueErr = false;
+      try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return; }
+      issueRecId = (dRec && dRec.id) || null;
+      var u1 = "";
+      try { u1 = formUrlFor(a); } catch(e) {}
+      if (u1) { urlState = "ok"; }
+      else {
+        /* 直接応答 (commit の Promise) を主信号にする */
+        issueWaiter = r6153WaitIssue_(a.id, issueStart, function(rec){
+          if (done) return;
+          if (rec.state === "failed") {
+            issueFailMsg = r6153IssueFailMessage_(rec.error);
+            urlState = "ng";
+            check();
+          } else if (rec.state === "ok" && rec.url) {
+            issuedUrl = rec.url;
+            urlState = "ok";
+            check();
+          }
+          /* ok でも URL が無い場合はポーリング側の判定に委ねる */
+        });
+        /* 予備のポーリング (直接応答が来ない環境向け) */
+        var maxPoll = 60;
+        try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+        var n = 0;
+        var timer = setInterval(function(){
+          if (done) { clearInterval(timer); return; }
+          n++;
+          var u = "";
+          try { u = formUrlFor(a); } catch(e) {}
+          if (u) { clearInterval(timer); urlState = "ok"; check(); return; }
+          var rec2 = null;
+          try { rec2 = window._r6153IssueOutcome[a.id]; } catch(e) {}
+          if (rec2 && rec2.at >= issueStart - 1000) {
+            if (rec2.state === "failed") {
+              clearInterval(timer);
+              issueFailMsg = r6153IssueFailMessage_(rec2.error);
+              urlState = "ng";
+              check();
+              return;
+            }
+            if (rec2.state === "ok" && rec2.url) {
+              clearInterval(timer);
+              issuedUrl = rec2.url;
+              urlState = "ok";
+              check();
+              return;
+            }
+          }
+          if (n > maxPoll) { clearInterval(timer); urlState = "ng"; check(); }
+        }, 250);
+      }
+    }
+  }
+  /* 番号取得 (発行と並行) */
+  if (phoneState === "wait") {
+    var canFetch = false;
+    try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+    if (!canFetch) { phoneState = "ng"; check(); }
+    else {
+      if (btn) { try { btn.textContent = "番号を確認中…"; } catch(e) {} }
+      apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+        var det = (res && res.applicant) || null;
+        if (det) {
+          if (det.phone != null) a.phone = String(det.phone || "");
+          if (det.email != null) a.email = String(det.email || "");
+        }
+        phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+        phoneState = phoneVal ? "ok" : "ng";
+        if (btn && phoneState === "ok") { try { btn.textContent = "発行中…"; } catch(e) {} }
+        check();
+      }).catch(function(){ fail("電話番号を確認できませんでした"); });
+    }
+  }
+  check();
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+/* ---- 描画時点の完成 sms: アンカー (6.15.2) をトップレベル化中はボタンに戻す ----
+   起動トークンはタップごとの発行が前提なので、描画時点では作れない。
+   6.15.2 の cardHtml ラッパーが置いた a.r6152sms を、標準のボタンに戻す。
+   R616移植時の調整: 変換はサーバーモードのときだけ (デモ/ローカル表示では
+   6.15.2 の描画時アンカーをそのまま維持する)。ボタンの文言は 6.16 の
+   カード形に合わせて「初回SMS」。 */
+try {
+  var _cardHtmlRTop = cardHtml;
+  cardHtml = function(a){
+    var h = "";
+    try { h = String(_cardHtmlRTop(a) || ""); } catch(e) { return ""; }
+    try {
+      if (rTopEnabled_() && window._r6ServerMode && a && a.id) {
+        h = h.replace(/<a class="btn primary r6152sms" href="[^"]*">SMS作成を開く<\/a>/,
+          '<button class="btn primary" onclick="openSmsDirect615(\'' + a.id + '\',this)">初回SMS</button>');
+      }
+    } catch(e) {}
+    return h;
+  };
+  try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.cardHtml = cardHtml; } catch(e) {}
+} catch(e) {}
+
+</script>
+
+</body></html>

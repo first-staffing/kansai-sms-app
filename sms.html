@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>SMS作成を開く</title>
+<!--
+  SMS起動ページ (トップレベル)。担当者アプリ (Apps Script の iframe) から
+  target="_top" で遷移してくる。URL の ?t=<起動トークン> で relay Worker
+  から宛先番号と本文を1回だけ引き、本物の sms: アンカーを描く。
+  番号・本文は URL に載せない (トークン経由でのみ取得する)。
+  配置: GitHub Pages リポジトリ first-staffing/kansai-sms-app のルートに
+  index.html と並べて置く (…/kansai-sms-app/sms.html)。
+  定数 RELAY_URL / APP_URL は担当者アプリ側 CONFIG と一致させること。
+-->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+         background: #f4f6f8; color: #1c2733; }
+  .wrap { max-width: 560px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 20px; margin: 8px 0 16px; }
+  .card { background: #fff; border: 1px solid #d9e0e7; border-radius: 12px;
+          padding: 16px; margin-bottom: 16px; }
+  .label { font-size: 13px; color: #5a6a78; margin-bottom: 6px; }
+  .phone { font-size: 24px; font-weight: 700; letter-spacing: .02em; }
+  .body { white-space: pre-wrap; word-break: break-word; font-size: 15px;
+          line-height: 1.6; max-height: 40vh; overflow: auto; }
+  a.big { display: block; text-align: center; background: #0b66c3; color: #fff;
+          font-size: 18px; font-weight: 700; text-decoration: none;
+          padding: 18px 12px; border-radius: 12px; min-height: 60px; }
+  a.sub, button.sub { display: block; width: 100%; text-align: center; background: #fff;
+          color: #0b66c3; border: 1px solid #0b66c3; font-size: 16px;
+          padding: 14px 12px; border-radius: 12px; min-height: 52px;
+          margin-top: 12px; text-decoration: none; cursor: pointer; }
+  .note { font-size: 13px; color: #5a6a78; line-height: 1.6; margin-top: 14px; }
+  .err { background: #fdf0f0; border: 1px solid #e5b4b4; color: #8c2f2f;
+         border-radius: 12px; padding: 16px; font-size: 15px; line-height: 1.6; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SMS作成</h1>
+
+  <div id="loading" class="card">読み込み中です…</div>
+
+  <div id="main" class="hidden">
+    <div class="card">
+      <div class="label">宛先</div>
+      <div class="phone" id="phone"></div>
+    </div>
+    <div class="card">
+      <div class="label">本文</div>
+      <div class="body" id="body"></div>
+    </div>
+    <a class="big" id="openSms" href="#">メッセージ作成画面を開く</a>
+    <button class="sub" id="copyBody" type="button">本文をコピー</button>
+    <p class="note">ボタンを押すと、宛先と本文が入った状態でメッセージ作成画面が開きます。
+      このページは1回だけ表示できます。開き直す場合はアプリに戻って、もう一度SMSボタンを押してください。</p>
+  </div>
+
+  <div id="error" class="hidden">
+    <div class="err" id="errorText"></div>
+  </div>
+
+  <a class="sub" id="backToApp" href="#">アプリに戻る</a>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  // 担当者アプリ側 CONFIG と一致させること。
+  var RELAY_URL = "https://kansai-form-relay.career-line-bot.workers.dev";
+  var APP_URL = "https://script.google.com/a/macros/kikari.co.jp/s/AKfycbz_zVmCNnwXIPj7PXdVobdsHQdJBZ87_9MYchlblChzHT29OFrs5cM9Kc0Q3l6NHMoOXg/exec";
+
+  var el = function(id){ return document.getElementById(id); };
+  el("backToApp").setAttribute("href", APP_URL);
+
+  function showError(msg){
+    el("loading").classList.add("hidden");
+    el("main").classList.add("hidden");
+    el("errorText").textContent = msg;
+    el("error").classList.remove("hidden");
+  }
+
+  // iPhone 形式 sms:番号&body= (担当者アプリの smsLink と同一の作り方)
+  function smsLink(phone, body){
+    return "sms:" + String(phone || "").replace(/[^0-9+]/g, "") +
+           "&body=" + encodeURIComponent(body || "");
+  }
+  function prettyPhone(p){
+    var d = String(p || "").replace(/[^0-9]/g, "");
+    if (/^0\d{10}$/.test(d)) return d.slice(0,3) + "-" + d.slice(3,7) + "-" + d.slice(7);
+    if (/^0\d{9}$/.test(d)) return d.slice(0,2) + "-" + d.slice(2,6) + "-" + d.slice(6);
+    return String(p || "");
+  }
+
+  var params = new URLSearchParams(location.search);
+  var token = params.get("t") || params.get("token") || "";
+  if (!token) {
+    showError("起動情報がありません。アプリに戻って、もう一度SMSボタンを押してください。");
+    return;
+  }
+
+  fetch(RELAY_URL + "/sms-launch?token=" + encodeURIComponent(token), { method: "GET" })
+    .then(function(res){
+      return res.json().then(function(j){ return { status: res.status, json: j }; });
+    })
+    .then(function(r){
+      if (!r.json || !r.json.ok) {
+        var code = r.json && r.json.error;
+        if (code === "launch_expired") {
+          showError("有効期限が切れました。アプリに戻って、もう一度SMSボタンを押してください。");
+        } else if (code === "launch_not_found") {
+          showError("このリンクは既に使われたか、見つかりませんでした。アプリに戻って、もう一度SMSボタンを押してください。");
+        } else {
+          showError("読み込みに失敗しました。アプリに戻って、もう一度SMSボタンを押してください。");
+        }
+        return;
+      }
+      // 取得できたら、URL からトークンを消す (履歴・共有への残留防止)。
+      // トークンは消費済みなので、消しても再表示はできない。
+      try { history.replaceState(null, "", location.pathname); } catch(e) {}
+      el("phone").textContent = prettyPhone(r.json.phone);
+      el("body").textContent = String(r.json.body || "");
+      el("openSms").setAttribute("href", smsLink(r.json.phone, r.json.body));
+      el("copyBody").addEventListener("click", function(){
+        var done = function(){
+          el("copyBody").textContent = "コピーしました";
+          setTimeout(function(){ el("copyBody").textContent = "本文をコピー"; }, 2000);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(String(r.json.body || "")).then(done, done);
+        } else { done(); }
+      });
+      el("loading").classList.add("hidden");
+      el("main").classList.remove("hidden");
+    })
+    .catch(function(){
+      showError("通信に失敗しました。電波の良い場所で、アプリからもう一度やり直してください。");
+    });
+})();
+</script>
+</body>
+</html>

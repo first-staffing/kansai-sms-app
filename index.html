@@ -590,7 +590,7 @@ function viewList(){if(!window._smsSegFilter){try{const sh=JSON.parse(sessionSto
  if(state.mode==="special")body=specialView(list);
  else if(state.mode==="reverse")body=reverseView(list);
  else if(state.mode==="dig")body=digView(list);
- else body=`<p class="small"><span id="listTotal">絞込 ${list.length}件</span>／表示 ${slice.length}件／送信済み ${areaSummary(state.area).sent}名（応募日新しい順・20件ずつ追加）</p>`+slice.map(a=>cardHtml(a)).join("")+(list.length>state.visible?`<button class="primary" style="width:100%" onclick="state.visible+=20;route()">さらに20件表示</button>`:"")+(list.length===0?`<div class="card">0件です。理由: 現在の絞り込み条件に一致しません。<button onclick="clearF()">条件を全クリア</button></div>`:"");
+ else body=`<p class="small"><span id="listTotal">絞込 ${list.length}件</span>／表示 ${slice.length}件／送信済み ${areaSummary(state.area).loading?"読み込み中…":areaSummary(state.area).sent+"名"}（応募日新しい順・20件ずつ追加）</p>`+slice.map(a=>cardHtml(a)).join("")+(list.length>state.visible?`<button class="primary" style="width:100%" onclick="state.visible+=20;route()">さらに20件表示</button>`:"")+(list.length===0?`<div class="card">0件です。理由: 現在の絞り込み条件に一致しません。<button onclick="clearF()">条件を全クリア</button></div>`:"");
  $("#app").innerHTML=`<h2 class="oldH">応募者SMS一覧・関西</h2><p class="dbCountLine">関西全体のDB ${areaSummary(state.area).loading?"読み込み中…":areaSummary(state.area).total+"名"} ／ SMS送信対象 ${areaSummary(state.area).loading?"読み込み中…":areaSummary(state.area).smsTarget+"名"}</p><div class="tabs" role="group" aria-label="モード">${MODES.filter(([k])=>k!=="reverse").map(([k,v])=>`<button aria-pressed="${state.mode===k}" onclick="state.mode='${k}';state.visible=20;route()">${v}</button>`).join("")}<a class="btn" href="#/mail">Gmail配信</a></div><a class="bigNavBtn" href="#/list" onclick="state.mode='reverse';state.visible=20;route()">案件から近くの求職者を探す</a>`+(window._smsSegFilter?`<div class="notice">掘り起こしから引き継ぎ: セグメント「${esc(window._smsSegFilter)}」で絞り込み中 <button onclick="window._smsSegFilter='';try{sessionStorage.removeItem('smsHandoff')}catch(e){};route()">解除</button></div>`:"")+filterBar(list)+body}
 function cardHtml(a){const age=ageOf(a.birth_date);let extra="";
  if(state.mode==="first"){const tpl=smsModes.find(m=>m.id===smsModeId)||smsModes[0];const full=personalize(tpl.body,a).replace("{不足ヒヤリング}",missingHearing(a));try{rememberSmsBody(a.id,full,[])}catch(e){}extra=`<div class="flex" style="margin-top:8px">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" href="${smsLink(a.phone,full,(tpl.id==="registration_compact"?"first_compact":"first"))}">SMS作成を開く（端末の作成画面）</a>`}<label style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" ${a.sms_sent?"checked":""} ${isOptoutForSms(a)?"disabled":""} onchange="markSms('${a.id}',this.checked)">送信済み（明示操作で記録）</label></div><p class="small">リンクを開いただけでは送信済みになりません。本文は「SMS作成を開く」から端末の作成画面で確認できます。</p>`}
@@ -1013,7 +1013,7 @@ if(typeof progressBadgeHtml==="undefined"){var progressBadgeHtml=function(a){ret
 if(typeof progressHtml==="undefined"){var progressHtml=function(a){return ""}};
 if(typeof responseBadgesHtml==="undefined"){var responseBadgesHtml=function(a){return ""}};
 if(typeof relDays==="undefined"){var relDays=function(iso){if(!iso)return "";var dd=Math.round((new Date(todayStr())-new Date(String(iso).slice(0,10)))/864e5);if(isNaN(dd))return "";if(dd===0)return "今日";if(dd===1)return "昨日";if(dd>1)return dd+"日前";return ""}};
-route();
+window.__r612RouteDeferred=true;
 </script>
 <script>
 /* ===== R2 追加要件 (フロント第2ラウンド): 連動絞り込み / 別案件導線 / 特需ライブラリ+年齢上限 / 固定レイアウト軽量化 / 掘り起こし二重ステータス / 回答通知導線 ===== */
@@ -1208,7 +1208,7 @@ const _viewImportR3=viewImport;viewImport=function(){_viewImportR3();const app=d
 const _viewSettingsR3=viewSettings;viewSettings=function(){_viewSettingsR3();const app=document.getElementById("app");if(app){app.insertAdjacentHTML("beforeend",`<div class="card"><h3>会社レジストリ（正規化マッピング）</h3><p class="small">取り込みで見つかった新しい会社は仮登録され、表記ゆれ候補が提示されます。ここで追加・編集した内容はローカルに保存されます。</p><div id="coRegistry"></div></div>`)}renderCompanyRegistry()};
 const _viewMailR3b=viewMail;viewMail=function(){_viewMailR3b();const mb=document.getElementById("mailBreak");if(window._mailTargets&&mb&&!mb.innerHTML)checkMailTargets()};
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{statusStage,refreshProgress,multiJobSmsBody,buildMailBody,persistApplicants,mailFooter,companyRegistry,registerCompanyCandidate,judgeCaseRow,parseCaseCsv,getApplicants:()=>applicants,isTestApplicant,nonTestApplicants,TEST_SEND_EMAIL,getPersistInfo:()=>_persistInfo,getDataVersion:()=>_dataVersion,bumpDataVersion,companyCounts,csvStatusCounts,areaSummary,areaPrefCounts,filtered})}
-route();
+window.__r612RouteDeferred=true;
 </script>
 <script>
 /* ===== 追補20/21: フォーム回答フロント配線 (FORM_SYSTEM §3) + カレンダー連携 (電話アポ) =====
@@ -1812,7 +1812,7 @@ submitForm=function(){if(window._formSubmitting)return;window._formSubmitting=tr
 /* ---------- ルート後処理: 現在地・danger・設定の未保存 (H2-2/M2-12/L2-3) ---------- */
 var _routeR4=route;
 route=function(){_routeR4();var app=document.getElementById?document.getElementById("app"):$("#app");if(app&&app.classList&&!/^#\/(form|optout)/.test(String(location.hash||"")))app.classList.remove("formWarm");document.querySelectorAll("header nav a").forEach(function(aEl){var href=aEl.getAttribute("href")||"";var cur=(location.hash||"#/").startsWith(href)&&href!=="#/"||(href==="#/"&&(location.hash==="#/"||location.hash===""));if(cur)aEl.setAttribute("aria-current","page");else aEl.removeAttribute("aria-current")});document.querySelectorAll("#app button").forEach(function(b){var t=b.textContent||"";if(/削除|配信停止にする|募集終了にする/.test(t))b.classList.add("danger-ghost");else if(/元に戻す/.test(t))b.classList.add("danger-ghost")});if(String(location.hash||"").startsWith("#/settings")&&app){app.oninput=function(){var d=document.getElementById?document.getElementById("r4Dirty"):null;if(!d){app.insertAdjacentHTML("afterbegin",'<p id="r4Dirty"><span class="badge warn">未保存の変更があります</span></p>')}}}if(window._lsError){showToast("保存に失敗しました（容量超過の可能性があります）。操作は画面上に保持されています","bad");window._lsError=false}};
-route();
+window.__r612RouteDeferred=true;
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{SMS_LIMITS:SMS_LIMITS,smsLimitCheck:smsLimitCheck,publicSalaryBandText:publicSalaryBandText,publicSalaryText:publicSalaryText,publicHoursText:publicHoursText,publicHoursShort:publicHoursShort,publicCaseItem:publicCaseItem,publicCaseLine:publicCaseLine,expandTags:expandTags,tagNearest:tagNearest,tagDesired:tagDesired,tagFreshCase:tagFreshCase,digScore:digScore,digTodaySorted:digTodaySorted,brakeFor:brakeFor,stuckCalc:stuckCalc,stage8Of:stage8Of,segmentsAll:segmentsAll,saveSegmentRec:saveSegmentRec,applySegmentRec:applySegmentRec,proposalsAll:proposalsAll,setProposalStatus:setProposalStatus,snapshotCasesOf:snapshotCasesOf,timelineHtml:timelineHtml,hearingMissing:hearingMissing,formCasesFor:formCasesFor,retryOutbox:retryOutbox,issueFormInvite:issueFormInvite,buildMailBody:buildMailBody,mailFooter:mailFooter,opToRequests:opToRequests,apiCall:apiCall,smsSnapshotFor:smsSnapshotFor,distKm:distKm,parseCaseCsv:parseCaseCsv,snapCaseView:snapCaseView,showServerSnapshot:showServerSnapshot,showEventSnapshot:showEventSnapshot,rememberSmsBody:rememberSmsBody,coordBasicCheck:coordBasicCheck,coordPrecisionCheck:coordPrecisionCheck,discardOutbox:discardOutbox,resendRespNotify:resendRespNotify,mailFilterToServer:mailFilterToServer,buildMailServerParams:buildMailServerParams,mailDateDaysAgo:mailDateDaysAgo,importRowToServer:importRowToServer,splitJudgedByFile:splitJudgedByFile,getOutbox:function(){return outbox}})}
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{stepBadgeStates:stepBadgeStates,buildMailConfirmInfo:buildMailConfirmInfo,paintMailSteps:paintMailSteps,getMailStep:function(){return window._mailStep||1}})}
 </script>
@@ -5495,6 +5495,194 @@ filteredCompute=function(){
 if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
   r611CountsLoading:r611CountsLoading_,r611ResponsesLoading:r611ResponsesLoading_,
   r611ServerExpected:r611ServerExpected_
+})}
+</script>
+<script>
+/* ===== ラウンド6.12: 初回同期前のローカル件数を「一瞬も」出さない =====
+   実地 (2026-11-23 14:45, Deploy A): 6.11 のゲート後も次の2つが残った。
+   (1) ホーム本文にローカルプールの内訳 (21名/府県別) がテキストとして
+       残った。原因はパース時 route() (基底ブロック末尾の3回) が R6/R69/
+       R611 のラッパー設置前に走り、その未ゲート描画が初回 route() まで
+       DOM に残り続けること。ヘッダーだけは非同期の renderSummary で
+       先にプレースホルダへ更新されるため、本文と食い違って見えた。
+   (2) ナビの「回答一覧」バッジが同期前に端末内件数 (7)、同期中は
+       マージ件数 (7+3=10) を出し、完了後に 3 へ戻った。バッジの描画者は
+       追補20の renderSummary ラッパー (respSummaryCalc = 端末内集計) で、
+       6.11 のゲート対象外だった。
+   対策は「ゲート判定は 6.11 と単一・共有」「執行は全描画の出口で一括」:
+   A. 基底編集 (apply_fix_r612.py): パース時 route() 3回を遅延フラグ化し、
+      全ラッパー設置後の本ブロックで1回だけ実行する (初回描画そのものが
+      ゲート済みになる)。あわせて一覧本文の「送信済み N名」が読み込み中
+      形を見ず null名 になる1行を、隣接行と同じ読み込み中表示に揃える。
+   B. 本ブロック: 6.11 のゲート判定 (r611CountsLoading_ /
+      r611ResponsesLoading_) を土台に、renderSummary / route /
+      viewResponses の出口と MutationObserver (描画前マイクロタスク) で
+      DOM を一括スクラブする。経路ごとに塞ぐのではなく、どの経路で
+      描かれても「未同期の間は件数をプレースホルダにする」が効く形。
+      回答ゲートは1点だけ拡張する: 6.11 は _respSync が立てば開くが、
+      有効化前の base 同期 (A6・マージ型) も _respSync を立てるため、
+      マージ件数 (7 / 10) がサーバー真値として顔を出す窓があった。
+      本ブロックは回答同期をラップし、「サーバーモードで呼ばれた
+      置換同期の成功」をもって初めてゲートを開く (失敗確定時は従来
+      どおり開く)。
+   ゲートが開く条件は 6.11 と同一 (同期完了 / 疎通失敗確定 / 60秒安全弁)
+   なので、オフライン時は従来どおりローカル件数が表示される。 */
+
+function r612CountsBlocked_(){
+  try{return typeof r611CountsLoading_==="function"&&r611CountsLoading_()}catch(e){return false}
+}
+function r612CountsBlocked_(){
+  try{return typeof r611CountsLoading_==="function"&&r611CountsLoading_()}catch(e){return false}
+}
+function r612ResponsesBlocked_(){
+  var base=false;
+  try{base=!!(typeof r611ResponsesLoading_==="function"&&r611ResponsesLoading_())}catch(e){}
+  if(base)return true;
+  /* 6.11 のゲートは _respSync が立てば開くが、有効化前に走る base 同期
+     (A6) は端末内とマージした結果で _respSync を立てるため、その時点の
+     件数 (7 や 7+3=10) はサーバー真値ではない。有効化後に「置換」同期が
+     成功するまでは閉じたままにする。同期が失敗で確定した場合は、従来
+     どおりローカル表示に落とす (6.11 の A3/失敗時挙動を維持)。 */
+  try{
+    if(typeof r611ServerExpected_!=="function"||!r611ServerExpected_())return false;
+    if(window._r612RespSettled)return false;
+    var st=window._respSync;
+    if(st&&st.ok===false)return false;
+    if(window._r6ServerMode)return true;
+  }catch(e){}
+  return false;
+}
+/* 回答同期の完了を「置換 (サーバーモード) で成功したか」で記録する。
+   呼び出し時点でサーバーモードだった同期だけがサーバー真値を持つ。 */
+var _syncResponsesR612=syncResponsesFromServer;
+syncResponsesFromServer=function(){
+  var serverModeAtCall=false;
+  try{serverModeAtCall=!!window._r6ServerMode}catch(e){}
+  var p=_syncResponsesR612();
+  if(serverModeAtCall&&p&&typeof p.then==="function"){
+    return p.then(function(res){
+      try{if(res&&res.ok)window._r612RespSettled=true}catch(e){}
+      return res;
+    });
+  }
+  return p;
+};
+
+var _r612Scrubbing=false;
+function r612Scrub_(){
+  if(_r612Scrubbing)return;
+  var cBlocked=false,rBlocked=false;
+  try{cBlocked=!!r612CountsBlocked_()}catch(e){}
+  try{rBlocked=!!r612ResponsesBlocked_()}catch(e){}
+  var nav=null;
+  try{nav=document.getElementById?document.getElementById("respNavBadge"):null}catch(e){}
+  if(!cBlocked&&!rBlocked){
+    /* ゲートが開いた後: ナビバッジにプレースホルダが残っていたら、
+       追補20の描画者と同じ集計 (この時点ではサーバー真値) で塗り直す */
+    try{
+      if(nav&&/読み込み中/.test(nav.textContent||"")&&typeof respSummaryCalc==="function"){
+        var oc=respSummaryCalc().open_count||0;
+        nav.innerHTML=oc?'<span class="badge bad">'+oc+"</span>":"";
+      }
+    }catch(e){}
+    return;
+  }
+  _r612Scrubbing=true;
+  try{
+    var bar=document.getElementById("summaryBar");
+    if(rBlocked){
+      if(nav&&/\d/.test(nav.textContent||"")){
+        nav.innerHTML='<span class="small">読み込み中…</span>';
+      }
+      if(bar){
+        var bh=bar.innerHTML||"";
+        var nbh=bh.replace(/回答未対応\s*\d+件/,"回答未対応 読み込み中…");
+        if(nbh!==bh)bar.innerHTML=nbh;
+      }
+    }
+    var app=document.getElementById("app");
+    if(app){
+      if(rBlocked){
+        var badges=app.querySelectorAll(".badge");
+        for(var i=0;i<badges.length;i++){
+          var bt=badges[i].textContent||"";
+          if(/未対応\s*\d+/.test(bt))badges[i].textContent="未対応 読み込み中…";
+        }
+        var mc=app.querySelector("#respMorningCard");
+        if(mc){
+          var mh=mc.innerHTML||"";
+          var nmh=mh.replace(/(未対応|対応中)\s*\d+件/g,"$1 読み込み中…")
+                    .replace(/（未対応＋対応中\s*=\s*\d+件）/,"");
+          if(nmh!==mh)mc.innerHTML=nmh;
+        }
+      }
+      if(cBlocked){
+        var bars=app.querySelectorAll(".prefBar");
+        for(var b=0;b<bars.length;b++){
+          var btns=bars[b].querySelectorAll("button");
+          for(var j=0;j<btns.length;j++){
+            var tx=btns[j].textContent||"";
+            if(!/\d+名|null|NaN/.test(tx))continue;
+            if(/関西全体|関東全体/.test(tx)){
+              btns[j].textContent=(/関東/.test(tx)?"関東全体":"関西全体")+" 読み込み中…";
+            }else{
+              btns[j].textContent=tx.replace(/\s*(null|NaN|\d+)名\s*$/," …");
+            }
+          }
+        }
+        var dbl=app.querySelector(".dbCountLine");
+        if(dbl){
+          var dt=dbl.textContent||"";
+          if(/\d+名|null|NaN/.test(dt))dbl.textContent=dt.replace(/(null|NaN|\d+)名/g,"読み込み中…");
+        }
+        var propRow=app.querySelector("[data-r69-proposals-nav]");
+        if(propRow){
+          var ph=propRow.innerHTML||"";
+          var nph=ph.replace(/未読\s*\d+件/,"未読 読み込み中…");
+          if(nph!==ph)propRow.innerHTML=nph;
+        }
+      }
+    }
+  }catch(e){}
+  _r612Scrubbing=false;
+}
+
+/* 全描画の出口でスクラブする (route は hashchange リスナが旧参照を掴む
+   既存事情があるため、route 内で必ず呼ばれる renderSummary 側でも行う) */
+var _renderSummaryR612=renderSummary;
+renderSummary=function(){
+  _renderSummaryR612();
+  r612Scrub_();
+};
+var _routeR612=route;
+route=function(){
+  _routeR612();
+  r612Scrub_();
+};
+var _viewResponsesR612=viewResponses;
+viewResponses=function(){
+  _viewResponsesR612();
+  r612Scrub_();
+};
+/* どの経路の非同期描画 (直接の view 呼び出し・タイマー等) でも、
+   描画前マイクロタスクで捕まえる */
+try{
+  var _r612Obs=new MutationObserver(function(){r612Scrub_()});
+  _r612Obs.observe(document.body,{childList:true,subtree:true,characterData:true});
+}catch(e){}
+
+/* パース時 route() の残骸を即時に掃除してから、遅延された初回 route() を
+   全ラッパー設置済みの状態で1回だけ実行する */
+try{r612Scrub_()}catch(e){}
+try{
+  if(window.__r612RouteDeferred){
+    window.__r612RouteDeferred=false;
+    if(typeof route==="function")route();
+  }
+}catch(e){}
+
+if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{
+  r612Scrub:r612Scrub_,r612CountsBlocked:r612CountsBlocked_,r612ResponsesBlocked:r612ResponsesBlocked_
 })}
 </script>
 </body></html>

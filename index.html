@@ -10893,6 +10893,241 @@ viewList = function(){
 #app .r618moreBody>div.flex,#app .r618moreBody>details{flex:1 1 100%;margin:0}
 </style>
 
+<script>
+/* ================================================================
+   R619 (6.18.1) 2026-11-24
+   1. おすすめ案件「なし」をなくす (20km圏内に同職種の案件が無い人の補完)
+   2. Gmail のステータス・会社の選択で画面が動かないようにする
+   既存ブロックは編集せず、末尾で再定義・ラップする。通信仕様は変えない
+   (案件の指定は既存の case_overrides / case_ids の枠で送る)。
+   ================================================================ */
+window._r619 = "6.18.1";
+
+/* ---------- 1. 20km圏内に案件が無い人の補完 ----------
+   通常のおすすめ (サーバー・端末とも「同職種・20km圏内」) で1件も無い人に
+   限り、同職種・募集中の案件を 40km → 80km → 同じ府県 の順に近い順で選ぶ。
+   20km圏内に1件でもある人は従来どおり (補完しない)。 */
+function r619ApplicantFor_(idOrObj){
+  var a = (idOrObj && typeof idOrObj === "object") ? idOrObj : null;
+  var id = a ? (a.applicant_id || a.id) : idOrObj;
+  var full = null;
+  try { full = r6161FindApplicant_(String(id || "")); } catch(e) {}
+  return full || a;
+}
+function r619FallbackCases_(applicant, n){
+  var a = r619ApplicantFor_(applicant);
+  if (!a) return [];
+  n = n || 3;
+  var job = a.job_type || (applicant && applicant.job_type) || "";
+  var pref = a.prefecture || (applicant && applicant.prefecture) || "";
+  var muni = a.municipality || (applicant && applicant.municipality) || "";
+  var list = [];
+  try {
+    (CASES || []).forEach(function(c){
+      if (!c || c.open === false || (job && c.job_type !== job)) return;
+      var d = null;
+      try { d = distKm(a.lat, a.lon, c.lat, c.lon); } catch(e) { d = null; }
+      if (d == null && muni && c.municipality === muni && (!pref || !c.prefecture || c.prefecture === pref)) d = 1;
+      list.push({ c: c, d: d });
+    });
+  } catch(e) { return []; }
+  var byDist = function(x, y){ return (x.d - y.d) || String(y.c.acquired || "").localeCompare(String(x.c.acquired || "")); };
+  var pick = function(max){ return list.filter(function(x){ return x.d != null && x.d <= max; }).sort(byDist); };
+  var hit = pick(40);
+  if (!hit.length) hit = pick(80);
+  if (!hit.length && pref) {
+    hit = list.filter(function(x){ return x.c.prefecture === pref; })
+      .sort(function(x, y){ return ((x.d == null ? 9e9 : x.d) - (y.d == null ? 9e9 : y.d)) || String(y.c.acquired || "").localeCompare(String(x.c.acquired || "")); });
+  }
+  return hit.slice(0, n).map(function(x){ return { case: x.c, dist: x.d }; });
+}
+/* 1a. SMS のフォーム: 20km圏内が0件なら補完した案件でフォームを発行する */
+if (typeof issueFormInvite === "function") {
+  var r619PrevIssue_ = issueFormInvite;
+  issueFormInvite = function(a, channel, caseIds, campaignId){
+    try {
+      if (a && !(caseIds && caseIds.length) && r617CasesReadyNow_()) {
+        var ranked = [];
+        try { ranked = rankCasesForApplicant(a); } catch(e) { ranked = []; }
+        if (!ranked.length) {
+          var fb = r619FallbackCases_(a, 5).map(function(x){ return x.case.id; });
+          if (fb.length) return r619PrevIssue_.call(this, a, channel, fb, campaignId);
+        }
+      }
+    } catch(e) {}
+    return r619PrevIssue_.apply(this, arguments);
+  };
+}
+/* 1b. Gmail の確認一覧: サーバーのおすすめが0件の人に補完案件を出し、
+   送信パラメータ case_overrides に載せる (サーバーはこの指定で文面を作る) */
+var r619PrevCandidates_ = r616Candidates_;
+r616Candidates_ = function(pv){
+  var base = r619PrevCandidates_.apply(this, arguments);
+  if (base && base.length) return base;
+  try {
+    if (!pv || !r617CasesReadyNow_()) return base;
+    var n = 3;
+    try { n = (window._r616MailServer && window._r616MailServer.recommendCount) || MF.recCount || 3; } catch(e) {}
+    pv._r619fb = pv._r619fb || r619FallbackCases_(pv, n).map(function(x){
+      return { case_id: x.case.id, facility_name: (x.case.facility || x.case.id) + (x.dist != null ? "（約" + Math.round(x.dist) + "km）" : "（同じ府県）"), _r619: true };
+    });
+    return pv._r619fb.slice();
+  } catch(e) { return base; }
+};
+var r619PrevOverrides_ = r616OverridesPayload_;
+r616OverridesPayload_ = function(){
+  var out = null;
+  try { out = r619PrevOverrides_.apply(this, arguments); } catch(e) { out = null; }
+  try {
+    var s = window._r616MailServer;
+    if (!s || !s.preview) return out;
+    /* 確認一覧に出ている人 */
+    s.preview.forEach(function(pv){
+      var server = r619PrevCandidates_(pv);
+      if (server && server.length) return;
+      var ids = r616DisplayedCases_(pv).map(function(c){ return c.case_id; });
+      if (ids.length) { out = out || {}; out[pv.applicant_id] = ids; }
+    });
+    /* 一覧に出ていない対象者も、名簿 (端末内) で事前計算した補完を載せる */
+    var fbm = r619FallbackMap_();
+    if (fbm) {
+      var cnt = 0;
+      Object.keys(fbm).some(function(id){
+        if (cnt >= 3000) return true;
+        if (out && out[id]) return false;
+        out = out || {}; out[id] = fbm[id]; cnt++;
+        return false;
+      });
+    }
+  } catch(e) {}
+  return out;
+};
+/* 名簿全体の「20km圏内0件の人」と補完案件を裏で少しずつ計算しておく。
+   案件を職種×約20km四方の格子に分けて、近くの格子だけを見る (全件総当たりをしない) */
+window._r619Fb = window._r619Fb || { key: "", map: null, running: false };
+function r619FallbackMap_(){
+  try {
+    if (typeof r616RosterReady_ !== "function" || !r616RosterReady_() || !r617CasesReadyNow_()) return null;
+    var key = (window._r616Roster.at || 0) + "|" + (CASES || []).length + "|" + ((typeof MF !== "undefined" && MF.recCount) || 3);
+    var F = window._r619Fb;
+    if (F.key === key && F.map) return F.map;
+    if (!F.running || F.runKey !== key) r619BuildFallbackMap_(key);
+    return F.key === key ? F.map : null;
+  } catch(e) { return null; }
+}
+function r619BuildFallbackMap_(key){
+  var F = window._r619Fb;
+  F.running = true; F.runKey = key;
+  var G = 0.2, grid = {}, byMuni = {};
+  (CASES || []).forEach(function(c){
+    if (!c || c.open === false) return;
+    if (c.lat != null && c.lon != null && isFinite(c.lat) && isFinite(c.lon)) {
+      var k = c.job_type + "|" + Math.floor(c.lat / G) + "|" + Math.floor(c.lon / G);
+      (grid[k] || (grid[k] = [])).push(c);
+    }
+    var mk = c.job_type + "|" + (c.prefecture || "") + "|" + (c.municipality || "");
+    byMuni[mk] = 1;
+  });
+  var has20 = function(a){
+    if (a.lat != null && a.lon != null && isFinite(a.lat) && isFinite(a.lon)) {
+      var gy = Math.floor(a.lat / G), gx = Math.floor(a.lon / G);
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -2; dx <= 2; dx++) {
+        var cell = grid[a.job_type + "|" + (gy + dy) + "|" + (gx + dx)];
+        if (!cell) continue;
+        for (var i = 0; i < cell.length; i++) {
+          var d = null; try { d = distKm(a.lat, a.lon, cell[i].lat, cell[i].lon); } catch(e) {}
+          if (d != null && d <= 20) return true;
+        }
+      }
+    }
+    return !!(byMuni[a.job_type + "|" + (a.prefecture || "") + "|" + (a.municipality || "")] || byMuni[a.job_type + "||" + (a.municipality || "")]);
+  };
+  var items = (window._r616Roster.items || []).slice(), i = 0, map = {};
+  var n = (typeof MF !== "undefined" && MF.recCount) || 3;
+  var step = function(){
+    if (F.runKey !== key) return;
+    var end = Math.min(items.length, i + 300);
+    for (; i < end; i++) {
+      var a = items[i];
+      if (!a || has20(a)) continue;
+      var ids = r619FallbackCases_(a, n).map(function(x){ return x.case.id; });
+      if (ids.length) map[a.id] = ids;
+    }
+    if (i < items.length) { setTimeout(step, 0); return; }
+    F.map = map; F.key = key; F.running = false;
+  };
+  setTimeout(step, 0);
+}
+
+/* ---------- 2. ステータス・会社の選択で画面を作り直さない ----------
+   従来は1つ選ぶたびに画面全体を描き直し (route)、スクロール位置が動いて
+   いた。チェック・ボタンの見た目はその場で切り替え、人数の確認だけを走らせる */
+r616ToggleStatus_ = function(s, on){
+  MF.csvStatuses = on ? (MF.csvStatuses.indexOf(s) >= 0 ? MF.csvStatuses : MF.csvStatuses.concat([s])) : MF.csvStatuses.filter(function(x){ return x !== s; });
+  try { invalidateMailTargets(); } catch(e) {}
+  r619AfterFilterChange_();
+};
+r616ToggleCompany_ = function(c){
+  var on = MF.companies.indexOf(c) < 0;
+  MF.companies = on ? MF.companies.concat([c]) : MF.companies.filter(function(x){ return x !== c; });
+  try { invalidateMailTargets(); } catch(e) {}
+  try {
+    [].slice.call(document.querySelectorAll("button.r616co")).forEach(function(b){
+      if ((b.getAttribute("onclick") || "").indexOf("r616ToggleCompany_('" + c + "')") >= 0 || (b.textContent || "") === c) b.setAttribute("aria-pressed", String(on));
+    });
+  } catch(e) {}
+  r619AfterFilterChange_();
+};
+function r619AfterFilterChange_(){
+  try {
+    var brk = document.getElementById("mailBreak");
+    if (brk && brk.innerHTML) brk.innerHTML = '<p class="small">条件が変わりました。対象を確認しています…</p>';
+  } catch(e) {}
+  try { if (typeof updateMailLive === "function") updateMailLive(); } catch(e) {}
+}
+/* 人数が出たら、確認一覧を開いていた場合はその場で描き直す */
+var r619PrevServerCounts_ = r618ServerCounts_;
+r618ServerCounts_ = function(){
+  return r619PrevServerCounts_.apply(this, arguments).then(function(res){
+    try {
+      var brk = document.getElementById("mailBreak");
+      if (res && brk && /条件が変わりました/.test(brk.textContent || "")) r616PaintServerBreak_();
+    } catch(e) {}
+    return res;
+  });
+};
+/* ---------- 3. Gmail 送信の依頼に案件指定 (case_overrides) を載せる ----------
+   送信パラメータには case_overrides が入っていたが、サーバー依頼への変換
+   (opToRequests の mail_delivery) で落ちていたため、「外す」操作や 20km圏外の
+   補完がサーバーに届いていなかった (6.16 からの不具合)。そのまま渡す */
+var r619PrevOpToRequests_ = opToRequests;
+opToRequests = function(op){
+  var reqs = r619PrevOpToRequests_.apply(this, arguments);
+  try {
+    if (op && op.type === "mail_delivery" && Array.isArray(reqs) && op.payload && op.payload.case_overrides) {
+      reqs.forEach(function(r){ if (r && r.action === "mailCreateDelivery" && !r.case_overrides) r.case_overrides = op.payload.case_overrides; });
+    }
+  } catch(e) {}
+  return reqs;
+};
+
+/* ---------- 4. 回答一覧の氏名: サーバーの回答に氏名が無いときは名簿から補う ----------
+   (従来は端末のサンプル応募者から探していたため「応募者不明」になり得た) */
+if (typeof serverResponseToLocal === "function") {
+  var r619PrevRespToLocal_ = serverResponseToLocal;
+  serverResponseToLocal = function(item){
+    var out = r619PrevRespToLocal_.apply(this, arguments);
+    try {
+      if (out && !out.applicant_name && out.applicant_id) {
+        var a = r6161FindApplicant_(out.applicant_id);
+        if (a && a.name) out.applicant_name = a.name;
+      }
+    } catch(e) {}
+    return out;
+  };
+}
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

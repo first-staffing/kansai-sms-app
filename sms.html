@@ -136,6 +136,11 @@
       });
       el("loading").classList.add("hidden");
       el("main").classList.remove("hidden");
+      // 表示できたら、そのままメッセージ作成画面を開くことを試す (1タップ減らす)。
+      // 端末に止められた場合も、上のボタンからいつでも開ける。
+      setTimeout(function(){
+        try { location.href = smsLink(r.json.phone, r.json.body); } catch(e) {}
+      }, 300);
     })
     .catch(function(){
       showError("通信に失敗しました。電波の良い場所で、アプリからもう一度やり直してください。");

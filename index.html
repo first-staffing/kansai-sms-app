@@ -11529,6 +11529,44 @@ r616SummaryLine_ = function(ex, noRecommend){
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script>
+/* ================================================================
+   R623 (9.0.1) 2026-11-24  初回SMS本文の段落に空行を入れる (詰まって見える対策)
+   あいさつ / 案件とフォームのリンク / 次の流れ / ヒアリングのお願い の間に空行。
+   320字を超える場合は従来の字数調整 (r6161FitFirstBody_) を通し、それでも超える・
+   リンクが落ちる場合は空行なしの本文に戻す (送れないよりは詰まっている方がよい)。
+   ================================================================ */
+window._r623 = "9.0.1";
+window.APP_VERSION_LABEL = "v9.0.1";
+var R623_PARA_HEADS = ["直近で", "気になる案件", "よければ", "お電話できる", "※"];
+function r623Spacing_(body){
+  var lines = String(body || "").split("\n");
+  var out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    var head = R623_PARA_HEADS.some(function(h){ return l.indexOf(h) === 0; });
+    if (head && out.length && out[out.length - 1] !== "") out.push("");
+    out.push(l);
+  }
+  return out.join("\n");
+}
+var r623PrevBodyWithUrl_ = r614BodyWithUrl_;
+r614BodyWithUrl_ = function(body, url){
+  var plain = r623PrevBodyWithUrl_.apply(this, arguments);
+  try {
+    if (!plain || String(plain).indexOf("フォームからご回答いただけます") < 0) return plain;
+    var lim = (typeof SMS_LIMITS !== "undefined" && SMS_LIMITS.first_compact) || 320;
+    var size = function(t){ try { return smsSize(t).len; } catch(e) { return String(t || "").length; } };
+    var spaced = r623Spacing_(plain);
+    if (size(spaced) > lim && typeof r6161FitFirstBody_ === "function") spaced = r6161FitFirstBody_(spaced);
+    if (size(spaced) > lim) return plain;
+    if (url && String(spaced).indexOf(url) < 0) return plain;
+    return spaced;
+  } catch(e) { return plain; }
+};
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

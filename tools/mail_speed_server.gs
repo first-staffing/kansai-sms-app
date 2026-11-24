@@ -176,3 +176,22 @@ processSendQueue = function (e) {
   try { return mfPrevProcessSendQueue_.apply(this, arguments); }
   finally { if (outer) mfMemo_ = null; }
 };
+
+/* D. 案件を1件ずつ探すたびに案件表 (約7,000行) を全部読んでいた (1人あたり3.5秒)。
+   1回の実行の中では索引を作って使い回す。案件表に書いたら作り直す。
+   (本番では mfMemoForget_ / updateRowByPk_ ラッパーにも cases の索引破棄を入れてある) */
+var mfCasesIdx_ = null;
+var mfPrevFindRow_ = findRow_;
+findRow_ = function (tableName, key, value) {
+  if (tableName === 'cases' && key === 'case_id') {
+    if (!mfCasesIdx_) {
+      var idx = {};
+      readTable_('cases').rows.forEach(function (c) { idx[String(c.case_id)] = c; });
+      mfCasesIdx_ = idx;
+    }
+    var hit = mfCasesIdx_[String(value)];
+    if (hit) return hit;
+    throw new Error('cases に case_id ' + value + ' が見つかりません');
+  }
+  return mfPrevFindRow_.apply(this, arguments);
+};

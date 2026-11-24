@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>回答フォーム</title>
+<!--
+  回答フォームの短い入口 (SMS 本文を短くするため)。
+  …/kansai-sms-app/f?t=<トークン> を、従来のフォーム …/kansai-sms-app/#/form?token=<トークン> へ転送する。
+  トークンはそのまま渡すだけで、このページでは保存も送信もしない。
+-->
+<script>
+(function(){
+  var t = "";
+  try { t = new URLSearchParams(location.search).get("t") || ""; } catch (e) {}
+  var dest = "./#/form" + (t ? "?token=" + encodeURIComponent(t) : "");
+  location.replace(dest);
+  document.addEventListener("DOMContentLoaded", function(){
+    var a = document.getElementById("go");
+    if (a) a.setAttribute("href", dest);
+  });
+})();
+</script>
+<style>body{font-family:-apple-system,"Hiragino Sans",sans-serif;margin:0;padding:32px 20px;color:#1c2733;text-align:center}a{color:#0b66c3}</style>
+</head>
+<body>
+<p>回答フォームを開いています…</p>
+<p><a id="go" href="./#/form">開かない場合はこちら</a></p>
+</body>
+</html>

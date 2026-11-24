@@ -12900,6 +12900,22 @@ window._r637RadiusSet = true;
 window._r637Done = window._r637Done || {};   // key -> {at, data}
 window._r637Local = window._r637Local || {};  // key -> data
 
+/* 案件に座標が無いときは、住所 (市区町村) の代表点で補う。サーバー検索にもこの座標を渡す */
+function r637FixCase_(c){
+  try {
+    if (!c || (c.lat != null && c.lon != null && isFinite(c.lat) && isFinite(c.lon))) return c;
+    var p = null;
+    try { if (c.prefecture && c.municipality && typeof muniRepPoint === "function") p = muniRepPoint(c.prefecture, c.municipality); } catch(e) {}
+    if (!p || p.lat == null) { try { var q = campaignCoordsForAddress(c.address || ((c.prefecture || "") + (c.municipality || ""))); if (q && q.lat != null) p = q; } catch(e) {} }
+    if (p && p.lat != null) { c.lat = Number(p.lat); c.lon = Number(p.lon); c._r637RepCoord = true; }
+  } catch(e) {}
+  return c;
+}
+function r637AppCoord_(a){
+  if (a.lat != null && a.lon != null) return { lat: a.lat, lon: a.lon };
+  try { var p = muniRepPoint(a.prefecture, a.municipality); if (p && p.lat != null) return { lat: Number(p.lat), lon: Number(p.lon) }; } catch(e) {}
+  return null;
+}
 function r637LocalCompute_(c){
   try {
     if (typeof r616RosterReady_ !== "function" || !r616RosterReady_()) return null;
@@ -12911,8 +12927,9 @@ function r637LocalCompute_(c){
     window._r616Roster.items.forEach(function(a){
       if (!a || a.is_test || a.mail_optout || a.job_type !== c.job_type) return;
       if (a.prefecture === c.prefecture && a.municipality) munis[a.municipality] = 1;
-      if (a.lat == null || a.lon == null) return;
-      var d = distKm(c.lat, c.lon, a.lat, a.lon);
+      var ac = r637AppCoord_(a);
+      if (!ac) return;
+      var d = distKm(c.lat, c.lon, ac.lat, ac.lon);
       if (d == null || !(d <= r)) return;
       if (muni && !wide && a.municipality !== muni) return;
       var m = 0; try { m = reverseMatchCount(a); } catch(e) { m = 0; }
@@ -12936,6 +12953,7 @@ function r637LocalCompute_(c){
 
 var r637PrevFetch_ = fetchReverseR7_;
 fetchReverseR7_ = function(c){
+  try { r637FixCase_(c); } catch(e0) {}
   try {
     var key = r7ReverseKey(c);
     var done = window._r637Done[key];
@@ -12950,7 +12968,7 @@ fetchReverseR7_ = function(c){
       var key2 = r7ReverseKey(c);
       if (window._r7Reverse && window._r7Reverse.key === key2 && window._r7Reverse.total != null) return;
       var loc = r637LocalCompute_(c);
-      if (loc) {
+      if (loc && loc.total > 0) { /* 0名のときはサーバーにも確かめる */
         window._r7Reverse = { key: key2, items: loc.items, total: loc.total, facets: loc.facets, loading: false, error: "", _r637Full: true };
         try { if (loc.facets) window._r7Facets[r7ReverseCaseKey(c)] = loc.facets; } catch(e) {}
         try { r7MergePool(loc.items); } catch(e) {}
@@ -12971,6 +12989,7 @@ function r637RosterHasPhones_(){
 
 var r637PrevResults_ = reverseResults;
 reverseResults = function(cid){
+  try { r637FixCase_(CASES.find(function(x){ return x.id === cid; }) || CASES[0]); } catch(e0) {}
   var out = r637PrevResults_.apply(this, arguments);
   try {
     if (!window._r6ServerMode) return out;
@@ -13000,7 +13019,7 @@ reverseResults = function(cid){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.4";
+window.APP_VERSION_LABEL = "v9.3.5";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 <style id="r637css">.r637note{color:#1d3d73;background:#eef4ff;border-radius:6px;padding:4px 8px}</style>

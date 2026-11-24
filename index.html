@@ -9646,6 +9646,7 @@ function r617Paint_(id){
   try { var dk = document.getElementById("r617SmsDock"); if (dk && dk.getAttribute("data-id") === id) dk.remove(); } catch(e) {}
   try {
     if (s.phase === "busy") {
+      try { var oe = b.parentNode && b.parentNode.querySelector(".r615err"); if (oe) oe.remove(); } catch(e) {}
       if (b.getAttribute("data-r615busy") === "1") { if (s.label) b.textContent = s.label; }
       else r615SetBusy_(b, true, s.label || "発行中…");
     } else if (s.phase === "launch") {
@@ -9816,12 +9817,30 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
   };
   var finish = function(phone, urlOverride){
     if (done || launchStarted) return;
+    /* C: 発行済みURLを本文の組み立て前に登録する。発行結果の通知順の都合で
+       formUrlFor() がまだ空のまま本文を作ると、テンプレの {フォームURL} が
+       空行になり、URL が末尾に案内文ごと追記されて字数が膨らんでいた */
+    if (urlOverride) {
+      try { window._issuedFormUrls = window._issuedFormUrls || {}; if (!window._issuedFormUrls[a.id]) window._issuedFormUrls[a.id] = urlOverride; } catch(e) {}
+    }
     var st = { tpl: null, body: "" };
     try { st = r614FirstBody_(a); } catch(e) {}
     var url = "";
     try { url = urlOverride || formUrlFor(a); } catch(e) {}
     var body = "";
     try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    if (attach && !url) { fail("回答フォームのURLを取得できませんでした。もう一度タップしてください"); return; }
+    if (attach && url && String(body).indexOf(url) < 0) { fail("本文に回答フォームのURLを入れられませんでした（文面のテンプレートを確認してください）"); return; }
+    /* 圧縮版は 320 字以内を確定させる (超えたまま起動ページへ渡さない) */
+    try {
+      if (st.tpl && st.tpl.id === "registration_compact") {
+        var lim = (typeof SMS_LIMITS !== "undefined" && SMS_LIMITS.first_compact) || 320;
+        if (smsSize(body).len > lim && typeof r6161FitFirstBody_ === "function") body = r6161FitFirstBody_(body);
+        var ln = smsSize(body).len;
+        if (ln > lim) { fail("本文が" + ln + "字で上限" + lim + "字を超えています。文面のテンプレートを短くしてください"); return; }
+        if (attach && String(body).indexOf(url) < 0) { fail("字数調整で回答フォームのURLが落ちました。文面のテンプレートを確認してください"); return; }
+      }
+    } catch(e) {}
     var href = "";
     try { href = smsLink(phone, body); } catch(e) {}
     if (!href || href.charAt(0) === "#") {
@@ -9881,20 +9900,19 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
     }
     if (phoneState === "ok" && urlState === "ok") finish(phoneVal, issuedUrl);
   };
-  if (attach) {
-    var u0 = "";
-    try { u0 = formUrlFor(a); } catch(e) {}
-    if (u0) { urlState = "ok"; }
-    else {
+  var casesWaiting = false;
+  var startIssue = function(){
+      if (done) return;
       var issueStart = Date.now();
-      try { delete window._r6153IssueOutcome[a.id]; } catch(e) {}
+      var inflight = r617IssueInflight_(a.id);
+      if (!inflight) { try { delete window._r6153IssueOutcome[a.id]; } catch(e) {} r617PurgeStaleInvites_(a.id); }
       var dRec = null, issueErr = false;
-      try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
-      if (issueErr) { fail("フォーム発行に失敗しました"); return { abort: function(){} }; }
+      if (!inflight) { try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; } }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return; }
       issueRecId = (dRec && dRec.id) || null;
       var u1 = "";
       try { u1 = formUrlFor(a); } catch(e) {}
-      if (u1) { urlState = "ok"; }
+      if (u1) { urlState = "ok"; check(); }
       else {
         issueWaiter = r6153WaitIssue_(a.id, issueStart, function(rec){
           if (done) return;
@@ -9938,6 +9956,24 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
           if (n > maxPoll) { clearInterval(timer); timer = null; urlState = "ng"; check(); }
         }, 250);
       }
+  };
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else if (r617CasesReadyNow_()) { startIssue(); }
+    else {
+      /* フォームに載せるおすすめ案件はサーバーの案件マスターから選ぶ。
+         取得前に発行すると同梱サンプル案件のIDで発行されてしまうため待つ */
+      casesWaiting = true;
+      setBusy("案件を読み込み中…");
+      r617EnsureCases_().then(function(ok){
+        casesWaiting = false;
+        if (done) return;
+        if (!ok) { fail("案件データを読み込めませんでした。少し待ってからもう一度タップしてください"); return; }
+        if (!launchStarted) setBusy(phoneState === "wait" ? "番号を確認中…" : "発行中…");
+        startIssue();
+      });
     }
   }
   if (phoneState === "wait") {
@@ -9955,7 +9991,7 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
         }
         phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
         phoneState = phoneVal ? "ok" : "ng";
-        if (phoneState === "ok" && !launchStarted) setBusy("発行中…");
+        if (phoneState === "ok" && !launchStarted) setBusy(casesWaiting ? "案件を読み込み中…" : "発行中…");
         check();
       }).catch(function(){ fail("電話番号を確認できませんでした"); });
     }
@@ -9964,6 +10000,95 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
   return { abort: function(){ done = true; stopWait(); } };
 }
 try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+
+/* ---------------------------------------------------------------
+   C. 初回SMSの本文に回答フォームのリンクを必ず入れる
+   --------------------------------------------------------------- */
+/* 案件マスター: サーバー案件が CASES に入っているか */
+function r617CasesReadyNow_(){
+  try {
+    if (typeof r616ServerExpected_ === "function" && !r616ServerExpected_()) return true; /* デモ (端末モード) */
+    return (typeof r616CasesLoaded_ === "function") ? r616CasesLoaded_() : true;
+  } catch(e) { return true; }
+}
+/* 案件マスターの取得を (失敗済みでも) やり直して、着地を待つ。最大 60 秒 */
+function r617KickCases_(){
+  try {
+    if (typeof _r613CaseSync !== "undefined" && _r613CaseSync.status === "error") { _r613FetchStarted = false; }
+    if (typeof r616StartCasesNow_ === "function") r616StartCasesNow_();
+  } catch(e) {}
+}
+function r617EnsureCases_(){
+  if (r617CasesReadyNow_()) return Promise.resolve(true);
+  return new Promise(function(resolve){
+    var t0 = Date.now(), kicks = 1, pending = false;
+    r617KickCases_();
+    var iv = setInterval(function(){
+      if (r617CasesReadyNow_()) { clearInterval(iv); resolve(true); return; }
+      var err = false;
+      try { err = _r613CaseSync.status === "error"; } catch(e) {}
+      if (err && !pending) {
+        if (kicks >= 4) { clearInterval(iv); resolve(false); return; }
+        pending = true;
+        setTimeout(function(){ kicks++; pending = false; r617KickCases_(); }, 1500 * kicks);
+      }
+      if (Date.now() - t0 > 60000) { clearInterval(iv); resolve(false); }
+    }, 300);
+  });
+}
+/* 案件マスターの取得失敗は、そのセッション中ずっとサンプル案件のままに
+   なっていた (取得開始フラグが立ったまま再試行されない)。間隔を空けて自動で取り直す */
+var _r617CaseRetry = { n: 0, tm: null };
+function r617WatchCases_(){
+  if (_r617CaseRetry.tm) return;
+  var delays = [15000, 30000, 60000, 120000, 300000];
+  var tick = function(){
+    _r617CaseRetry.tm = null;
+    try {
+      if (!window._r6ServerMode || r617CasesReadyNow_()) { _r617CaseRetry.n = 0; return; }
+      var st = ""; try { st = _r613CaseSync.status; } catch(e) {}
+      if (st === "error" && !document.hidden) { _r617CaseRetry.n++; r617KickCases_(); }
+    } catch(e) {}
+    _r617CaseRetry.tm = setTimeout(tick, delays[Math.min(_r617CaseRetry.n, delays.length - 1)]);
+  };
+  _r617CaseRetry.tm = setTimeout(tick, delays[0]);
+}
+/* 同じ応募者への発行がまだ送信中か */
+function r617IssueInflight_(aid){
+  try {
+    return (outbox || []).some(function(o){ return o && o.type === "issueFormToken" && o.payload && o.payload.applicant_id === aid && o.status === "pending"; });
+  } catch(e) { return false; }
+}
+/* URLの付かなかった過去の発行記録を外す。issueFormInvite は同じ (応募者・
+   案件) の記録があるとそれを返して再発行しないため、一度失敗・中断すると
+   以後のタップで発行が二度と送られなかった */
+function r617PurgeStaleInvites_(aid){
+  try {
+    if (!Array.isArray(state.deliveries)) return;
+    var n = state.deliveries.length;
+    state.deliveries = state.deliveries.filter(function(d){ return !(d && d.form_invite && d.applicant_id === aid && !d.form_url); });
+    if (state.deliveries.length !== n) { try { saveAll(); } catch(e) {} }
+  } catch(e) {}
+}
+/* 発行応答に form_url が無く form_token だけがある場合は、回答フォームの
+   公開URL (GitHub Pages の index.html の #/form?token=) を組み立てる。
+   (担当者画面の #/form は gasApplicantRouteRedirect_ により同じ公開URLへ
+   転送されるため、ここで作る形と一致する) */
+if (typeof r6153RecordIssueOutcome_ === "function") {
+  var r617PrevRecordIssue_ = r6153RecordIssueOutcome_;
+  r6153RecordIssueOutcome_ = function(op){
+    try {
+      if (op && op.type === "issueFormToken" && op.status === "done") {
+        var res = op.result || (op.result = {});
+        if (!res.form_url && res.form_token) {
+          res.form_url = String(PAGES_BASE_URL || "https://first-staffing.github.io/kansai-sms-app/") + "#/form?token=" + encodeURIComponent(String(res.form_token));
+        }
+      }
+    } catch(e) {}
+    return r617PrevRecordIssue_.apply(this, arguments);
+  };
+}
 
 /* ---------------------------------------------------------------
    B. ロスター (エリア全件の名簿) の取得を作り直す
@@ -10253,7 +10378,7 @@ if (typeof activateServerModeR6_ === "function") {
   var r617PrevActivate_ = activateServerModeR6_;
   activateServerModeR6_ = function(){
     var p = r617PrevActivate_.apply(this, arguments);
-    try { setTimeout(function(){ try { r616WarmRoster_(false); if (typeof r616StartSyncWatch_ === "function") r616StartSyncWatch_(); } catch(e) {} }, 0); } catch(e) {}
+    try { setTimeout(function(){ try { r616WarmRoster_(false); if (typeof r616StartSyncWatch_ === "function") r616StartSyncWatch_(); } catch(e) {} try { r617WatchCases_(); } catch(e) {} }, 0); } catch(e) {}
     return p;
   };
 }
@@ -10264,6 +10389,508 @@ try { window.addEventListener("online", function(){ try { window._r617Roster.nex
 .r617smsDock .r617dockTxt{flex:1;font-size:13px;font-weight:700;line-height:1.35}
 .r617smsDock a.btn{min-height:48px;padding:8px 16px;font-size:15px;white-space:nowrap}
 .r617smsDock button{min-height:44px;min-width:44px;padding:4px 10px;font-size:18px}
+</style>
+
+<script>
+/* ================================================================
+   R618 (6.18) 2026-11-24
+   D. SMS の高速化  E. Gmail 画面の高速化  F. 一覧UIの簡素化 (旧アプリ準拠)
+   既存ブロックは編集せず、末尾で再定義・ラップする。
+   サーバー (Apps Script) との通信仕様 (action 名・引数・応答の読み方) は変えない。
+   ================================================================ */
+window._r618 = "6.18";
+
+/* ---------------------------------------------------------------
+   D-1/E-1. サーバー呼び出しの優先度
+   実測 (6.17.1): ロスター全件取得 (3本並列×約44ページ) が起動直後に
+   サーバーの同時処理枠を占有し、SMS の番号確認・フォーム発行・起動、
+   Gmail の対象確認が後ろに並んで待たされていた。
+   → 人が待っている呼び出し (前景) を数え、前景が動いている間・SMS 処理中・
+     Gmail 画面で件数確認中は、ロスターの次のページ取得を止めて待つ。
+   --------------------------------------------------------------- */
+var R618_FG_ACTIONS = { getApplicant: 1, issueSmsLaunch: 1, issueFormToken: 1, mailPreviewTargets: 1, mailPreviewBody: 1, mailCreateDelivery: 1, getCaseMaster: 1, markSmsSent: 1, recordContact: 1 };
+window._r618Fg = 0;
+var r618PrevPostJson_ = postJson_;
+postJson_ = function(req){
+  var fg = !!(req && R618_FG_ACTIONS[req.action]);
+  if (fg) window._r618Fg++;
+  var p;
+  try { p = r618PrevPostJson_.apply(this, arguments); } catch(e) { if (fg) window._r618Fg--; throw e; }
+  if (fg && p && typeof p.then === "function") {
+    var done = false;
+    var dec = function(){ if (!done) { done = true; window._r618Fg = Math.max(0, window._r618Fg - 1); } };
+    p.then(dec, dec);
+    setTimeout(dec, 90000); /* 応答が来ない呼び出しで永久に止めない */
+  } else if (fg) window._r618Fg = Math.max(0, window._r618Fg - 1);
+  return p;
+};
+function r618ForegroundBusy_(){
+  try {
+    if (window._r618Fg > 0) return true;
+    var S = window._r617Sms || {};
+    for (var k in S) { if (S[k] && S[k].phase === "busy") return true; }
+    if (window._r616MailChecking) return true;
+  } catch(e) {}
+  return false;
+}
+/* ロスターのページ取得は、前景が空くまで待ってから出す (最大 45 秒) */
+function r618WaitIdle_(){
+  if (!r618ForegroundBusy_()) return Promise.resolve();
+  return new Promise(function(resolve){
+    var t0 = Date.now();
+    var iv = setInterval(function(){
+      if (!r618ForegroundBusy_() || Date.now() - t0 > 45000) { clearInterval(iv); resolve(); }
+    }, 200);
+  });
+}
+R617_ROSTER.conc = 2;
+r617FetchRosterPage_ = function(area, page, size){
+  var tries = 0;
+  var go = function(){
+    return r618WaitIdle_().then(function(){
+      return r617Timeout_(apiCall({ action: "searchApplicants", filter: { area: area }, page: page, page_size: size }), R617_ROSTER.callTimeoutMs);
+    }).catch(function(e){
+      tries++;
+      if (tries >= R617_ROSTER.pageTries) throw e;
+      return r617Sleep_(1500 * Math.pow(2, tries - 1)).then(go);
+    });
+  };
+  return go();
+};
+/* ロスターは案件マスターの着地 (最大 30 秒) を待ってから始める
+   (フォーム発行に必要な案件マスターを先にそろえる) */
+var r618PrevWarm_ = r616WarmRoster_;
+var _r618RosterGateAt = 0;
+r616WarmRoster_ = function(force){
+  try {
+    if (!force && window._r6ServerMode && !r617CasesReadyNow_()) {
+      if (!_r618RosterGateAt) _r618RosterGateAt = Date.now();
+      if (Date.now() - _r618RosterGateAt < 30000) {
+        if (!window._r618RosterGateTm) window._r618RosterGateTm = setTimeout(function(){ window._r618RosterGateTm = null; try { r616WarmRoster_(false); } catch(e) {} }, 1500);
+        return;
+      }
+    }
+  } catch(e) {}
+  return r618PrevWarm_.apply(this, arguments);
+};
+
+/* ---------------------------------------------------------------
+   D-2. 案件マスターを起動直後に取得し、端末 (IndexedDB) に保存する
+   フォーム発行には案件マスター (約7,000件) が必要。従来は localStorage
+   (上限 4.5MB) に入りきらないと保存されず、毎回の起動で全件取得を
+   待っていた (実測想定 15 秒前後)。IndexedDB に保存し、次回からは
+   起動と同時に復元 → 差分 (updated_since) だけ取得する。
+   --------------------------------------------------------------- */
+var R618_IDB = { name: "r618_app", store: "kv", key: "case_master_v1" };
+function r618Idb_(){
+  return new Promise(function(resolve, reject){
+    try {
+      if (!window.indexedDB) { reject(new Error("no idb")); return; }
+      var rq = indexedDB.open(R618_IDB.name, 1);
+      rq.onupgradeneeded = function(){ try { rq.result.createObjectStore(R618_IDB.store); } catch(e) {} };
+      rq.onsuccess = function(){ resolve(rq.result); };
+      rq.onerror = function(){ reject(rq.error || new Error("idb open")); };
+    } catch(e) { reject(e); }
+  });
+}
+function r618IdbGet_(key){
+  return r618Idb_().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var tx = db.transaction(R618_IDB.store, "readonly");
+        var rq = tx.objectStore(R618_IDB.store).get(key);
+        rq.onsuccess = function(){ resolve(rq.result || null); };
+        rq.onerror = function(){ resolve(null); };
+      } catch(e) { resolve(null); }
+    });
+  }).catch(function(){ return null; });
+}
+function r618IdbPut_(key, val){
+  return r618Idb_().then(function(db){
+    return new Promise(function(resolve){
+      try {
+        var tx = db.transaction(R618_IDB.store, "readwrite");
+        tx.objectStore(R618_IDB.store).put(val, key);
+        tx.oncomplete = function(){ resolve(true); };
+        tx.onerror = function(){ resolve(false); };
+      } catch(e) { resolve(false); }
+    });
+  }).catch(function(){ return false; });
+}
+if (typeof r613PersistCases_ === "function") {
+  var r618PrevPersist_ = r613PersistCases_;
+  r613PersistCases_ = function(){
+    var r = false;
+    try { r = r618PrevPersist_.apply(this, arguments); } catch(e) {}
+    try {
+      var rows = CASES.filter(function(c){ return !r613IsLocalImportRow_(c); });
+      if (rows.length) r618IdbPut_(R618_IDB.key, { server_time: _r613CaseSync.serverTime || "", saved_at: new Date().toISOString(), cases: rows });
+    } catch(e) {}
+    return r;
+  };
+}
+/* 起動時の復元 (localStorage で復元できなかった場合だけ) */
+var _r618CasesRestore = (function(){
+  try {
+    if (typeof r613ServerExpected_ !== "function" || !r613ServerExpected_()) return Promise.resolve(false);
+    if (window._r613CasesFromServer) return Promise.resolve(false);
+    return r618IdbGet_(R618_IDB.key).then(function(obj){
+      try {
+        if (!obj || !Array.isArray(obj.cases) || !obj.cases.length) return false;
+        if (window._r613CasesFromServer) return false; /* 先にサーバーから届いていればそちらが正 */
+        var kept = [];
+        try { kept = CASES.filter(function(c){ return r613IsLocalImportRow_(c); }); } catch(e) {}
+        CASES = kept.concat(obj.cases);
+        _r613CaseSync.serverTime = String(obj.server_time || "");
+        _r613CaseSync.count = obj.cases.length;
+        _r613CaseSync.status = "restored";
+        _r613CaseSync.persisted = true;
+        window._r613CasesFromServer = true;
+        try { bumpDataVersion(); } catch(e) {}
+        /* 取得が走っていなければ差分取得を始める (走っていればそれが正) */
+        try { if (!_r613FetchStarted && window._r6ServerMode) { window._r616CaseDemand = true; fetchCaseMasterR613_(); } } catch(e) {}
+        return true;
+      } catch(e) { return false; }
+    });
+  } catch(e) { return Promise.resolve(false); }
+})();
+/* サーバーモードに入ったら案件マスターを「すぐ」取りに行く (従来はアイドル待ち) */
+if (typeof activateServerModeR6_ === "function") {
+  var r618PrevActivate_ = activateServerModeR6_;
+  activateServerModeR6_ = function(){
+    var p = r618PrevActivate_.apply(this, arguments);
+    try {
+      _r618CasesRestore.then(function(){
+        try { if (typeof r616StartCasesNow_ === "function" && !r617CasesReadyNow_()) r616StartCasesNow_(); } catch(e) {}
+      });
+    } catch(e) {}
+    return p;
+  };
+}
+
+/* ---------------------------------------------------------------
+   D-3. 番号の先読み: ボタンに指が触れた時点 (pointerdown) で番号確認を
+   始める。番号は画面のメモリにだけ置き (10分)、端末には保存しない。
+   --------------------------------------------------------------- */
+window._r618Phone = window._r618Phone || {};
+/* 先読みは「指が触れてから 60 秒以内のタップ」で1回だけ使う (他の画面の
+   番号確認には使わない = 詳細画面などが古い値を見ることはない) */
+function r618PrefetchApplicant_(id){
+  var c = window._r618Phone[id];
+  if (c && Date.now() - c.at < 60000) return c.p;
+  var p = r618PrevApiCall_({ action: "getApplicant", applicant_id: id });
+  window._r618Phone[id] = { at: Date.now(), p: p };
+  p.catch(function(){ try { delete window._r618Phone[id]; } catch(e) {} });
+  return p;
+}
+try {
+  document.addEventListener("pointerdown", function(ev){
+    try {
+      var b = ev.target && ev.target.closest ? ev.target.closest("button[onclick^=\"openSmsDirect615('\"]") : null;
+      if (!b || !window._r6ServerMode) return;
+      var m = (b.getAttribute("onclick") || "").match(/^openSmsDirect615\('([^']*)'/);
+      if (!m) return;
+      var a = null; try { a = r6161FindApplicant_(m[1]); } catch(e) {}
+      if (!(a && String(a.phone || "").replace(/[^0-9]/g, ""))) r618PrefetchApplicant_(m[1]);
+      if (!r617CasesReadyNow_()) r617KickCases_();
+    } catch(e) {}
+  }, true);
+} catch(e) {}
+var r618PrevApiCall_ = apiCall;
+apiCall = function(req){
+  try {
+    if (req && req.action === "getApplicant" && req.applicant_id && Object.keys(req).length === 2) {
+      var c = window._r618Phone[req.applicant_id];
+      if (c && Date.now() - c.at < 60000) { delete window._r618Phone[req.applicant_id]; return c.p; }
+    }
+  } catch(e) {}
+  return r618PrevApiCall_.apply(this, arguments);
+};
+
+/* D-4. 進行表示に経過秒を出す (どこで待っているかが分かるように) */
+setInterval(function(){
+  try {
+    var S = window._r617Sms || {};
+    Object.keys(S).forEach(function(id){
+      var s = S[id];
+      if (!s || s.phase !== "busy") return;
+      var b = r617LiveBtn_(id);
+      if (!b) return;
+      var sec = Math.floor((Date.now() - (s.stepAt || s.at)) / 1000);
+      var base = s.label || "発行中…";
+      var txt = sec >= 2 ? base + " " + sec + "秒" : base;
+      if (b.textContent !== txt) b.textContent = txt;
+    });
+  } catch(e) {}
+}, 500);
+/* ラベルが変わった時点を記録する (経過秒は工程ごとに数える) */
+var r618PrevPaint_ = r617Paint_;
+r617Paint_ = function(id){
+  try {
+    var s = window._r617Sms[id];
+    if (s && s.phase === "busy" && s._lastLabel !== s.label) { s._lastLabel = s.label; s.stepAt = Date.now(); }
+  } catch(e) {}
+  return r618PrevPaint_.apply(this, arguments);
+};
+
+/* ---------------------------------------------------------------
+   E. Gmail 画面
+   E-2. 対象確認 (mailPreviewTargets) を条件ごとにメモする。
+        ・同じ条件に戻ったときは即表示 (3分以内)
+        ・同じ条件の確認が重なったら1回にまとめる (件数表示とプレビュー
+          生成がそれぞれ同じ確認を出していた)
+   E-3. 条件変更から確認開始までの待ちを 600ms → 300ms
+   E-4. 確認中も前回の人数を出したまま「更新中」と添える (表示が消えない)
+   E-5. 人数が出たら、先頭の人の文面 (フォームのリンク入り) を続けて先に作る
+   --------------------------------------------------------------- */
+var R618_MAIL_TTL = 3 * 60000;
+window._r618MailCache = window._r618MailCache || {};
+if (typeof fetchMailPreview === "function") {
+  var r618PrevFetchMailPreview_ = fetchMailPreview;
+  fetchMailPreview = function(){
+    var key = "";
+    try { key = JSON.stringify(buildMailServerParams()); } catch(e) { key = ""; }
+    if (!key) return r618PrevFetchMailPreview_.apply(this, arguments);
+    var c = window._r618MailCache[key];
+    if (c && (c.p || Date.now() - c.at < R618_MAIL_TTL)) return c.p || Promise.resolve(c.res);
+    var p = r618PrevFetchMailPreview_.apply(this, arguments);
+    window._r618MailCache[key] = { p: p, at: Date.now() };
+    p.then(function(res){
+      window._r618MailCache[key] = { res: res, at: Date.now() };
+    }, function(){ delete window._r618MailCache[key]; });
+    return p;
+  };
+}
+/* 送信を作ったら (対象が変わり得るので) メモを捨てる */
+try {
+  var r618PrevSendMail_ = sendMail;
+  sendMail = function(){ window._r618MailCache = {}; window._r618BodyCache = {}; return r618PrevSendMail_.apply(this, arguments); };
+} catch(e) {}
+r616ScheduleServerCounts_ = function(){
+  if ((location.hash || "").indexOf("#/mail") !== 0) return;
+  if (_r616LiveTimer) clearTimeout(_r616LiveTimer);
+  window._r618MailPending = true;
+  try { r616PaintCountEls_(); } catch(e) {}
+  _r616LiveTimer = setTimeout(function(){ _r616LiveTimer = null; window._r618MailPending = false; try { r618ServerCounts_(); } catch(e) {} }, 300);
+};
+updateMailLive = function(){ try { r616ScheduleServerCounts_(); } catch(e) {} };
+function r618ServerCounts_(){
+  return r616ServerCounts_(false).then(function(res){
+    try { if (res && document.getElementById("mailPreviewCard")) r618PrefetchFirstBody_(); } catch(e) {}
+    return res;
+  });
+}
+var r618PrevMailCountText_ = r616MailCountText_;
+r616MailCountText_ = function(){
+  try {
+    var s = window._r616MailServer;
+    if ((window._r616MailChecking || window._r618MailPending) && s && typeof s.target === "number") return "対象 " + s.target + "人（条件を更新中…）";
+  } catch(e) {}
+  return r618PrevMailCountText_.apply(this, arguments);
+};
+/* 先頭の人の文面を先に作っておく (同じ条件・文面ならメモから即表示) */
+window._r618BodyCache = window._r618BodyCache || {};
+var _r618FirstBodyBusy = false;
+function r618PrefetchFirstBody_(){
+  if (_r618FirstBodyBusy) return;
+  var el = document.getElementById("mailPreviewCard");
+  if (!el) return;
+  _r618FirstBodyBusy = true;
+  Promise.resolve(fetchMailPreviewBody_()).then(function(){ _r618FirstBodyBusy = false; }, function(){ _r618FirstBodyBusy = false; });
+}
+if (typeof apiCall === "function") {
+  var r618PrevApiCall2_ = apiCall;
+  apiCall = function(req){
+    try {
+      if (req && req.action === "mailPreviewBody") {
+        var key = JSON.stringify([req.applicant_id, req.subject, req.body_template, req.recommended_case_ids, req.sender_email, req.include_form]);
+        var c = window._r618BodyCache[key];
+        if (c && (c.p || Date.now() - c.at < R618_MAIL_TTL)) return c.p || Promise.resolve(c.res);
+        var p = r618PrevApiCall2_.apply(this, arguments);
+        window._r618BodyCache[key] = { p: p, at: Date.now() };
+        p.then(function(res){ window._r618BodyCache[key] = { res: res, at: Date.now() }; }, function(){ delete window._r618BodyCache[key]; });
+        return p;
+      }
+    } catch(e) {}
+    return r618PrevApiCall2_.apply(this, arguments);
+  };
+}
+/* E-6. 人数の表示は「いまの条件で取得した結果か」だけで判断する
+   (送信前の確認状態 _mailSnapshot には触れない。送信時の確認手順は従来どおり) */
+function r618MailFresh_(){
+  try { var s = window._r616MailServer; return !!(s && !window._r618MailPending && s.snap === mailSnapshot()); } catch(e) { return false; }
+}
+r616PaintCountEls_ = function(){
+  var c = document.getElementById("r616MailCount");
+  if (c) {
+    var s = window._r616MailServer;
+    c.innerHTML = r618MailFresh_()
+      ? "対象 " + s.target + "人 <span class=\"small\">（条件に合った " + s.matched + "人）</span>" + (window._r616MailChecking ? ' <span class="small">更新中…</span>' : "")
+      : esc(r616MailCountText_());
+  }
+  var bc = document.getElementById("r616MailBarCount");
+  if (bc) bc.innerHTML = r616MailBarHtml_();
+};
+r616MailBarHtml_ = function(){
+  var s = window._r616MailServer;
+  if (r618MailFresh_()) return s.target + '人へ個別メール<br><small style="font-weight:400;font-size:11px">送信開始後は画面を閉じても順次送信</small>';
+  return esc(r616MailCountText_());
+};
+/* Gmail 画面を開いたら、確認済みでなければすぐ対象確認を始める */
+var r618PrevViewMail_ = viewMail;
+viewMail = function(){
+  var r = r618PrevViewMail_.apply(this, arguments);
+  try {
+    var s = window._r616MailServer, fresh = false;
+    try { fresh = !!(s && s.snap === mailSnapshot()); } catch(e) {}
+    if (!fresh && !window._r616MailChecking && CONFIG.API_URL) r616ScheduleServerCounts_();
+  } catch(e) {}
+  return r;
+};
+
+/* ---------------------------------------------------------------
+   F. 一覧UIの簡素化 (旧アプリの画面に合わせる)
+   ・カード: 名前 (フルネーム + さん) と状況バッジ、職種 · 府県 · 市区町村、
+     応募 / 最も進んだ状況、大きなボタン2つ、送信済みチェック、
+     求職者詳細・電話する。カード上の「SMS未送信」バッジと「別案件」は外す
+     (別案件は求職者詳細の下部から開ける)
+   ・一覧の上: 見出し → 府県 → 作業タブ4つ → 案件から近くの求職者を探す →
+     市区町村 → 検索・絞り込み の旧アプリの順に並べ、補助機能
+     (新着マッチ提案・保存済みセグメント・文面切替・掘り起こし) は
+     「その他の機能」にまとめて畳む (機能は消さない)
+   ・会社名は正式名称のまま (表示文字列は変えない)
+   --------------------------------------------------------------- */
+function r618JobLabel_(a){ return (a && a.job_type) === "kango" ? "看護師" : "介護士"; }
+var r618PrevCardHtml_ = cardHtml;
+cardHtml = function(a){
+  var h = "";
+  try { h = String(r618PrevCardHtml_.apply(this, arguments) || ""); } catch(e) { return ""; }
+  try {
+    if (!/r616card/.test(h)) return h;
+    h = h.replace(/<article class="card /, '<article class="card r618card ');
+    /* 名前: 「姓 様」+小さいフルネーム → フルネーム + さん (旧アプリ) */
+    h = h.replace(/<b style="font-size:17px">[^<]*<\/b><span class="small">[^<]*<\/span>/, '<b class="r618name">' + esc((a && a.name) || "") + " さん</b>");
+    /* 職種 · 府県 · 市区町村 */
+    h = h.replace(/<p class="r616meta">[^<]*<\/p>/, '<p class="r616meta">' + r618JobLabel_(a) + " · " + esc((a && a.prefecture) || "") + " · " + esc((a && a.municipality) || "") + "</p>");
+    /* 区切りを旧アプリの「 ｜ 」に */
+    h = h.replace(/(<p class="r616applied">)応募： ([^<]*?)｜([^<]*)<\/p>/, '$1応募：$2 ｜ $3</p>');
+    h = h.replace(/(<p class="keyline">最も進んだ状況：[^<|｜]*)｜/, "$1 ｜ ");
+    /* SMS送信状態バッジ (未送信/送信済み) を外す: 送信済みチェックで分かるため */
+    h = h.replace(/\s*<span class="badge (?:ok|warn)">SMS(?:未送信|送信済み)<\/span>/g, "");
+    h = h.replace(/<div>\s*<\/div>/g, "");
+    /* 別案件ボタンは求職者詳細の下部へ (カードからは外す) */
+    h = h.replace(/<button onclick="openAltCases\('[^']*'\)">別案件<\/button>/, "");
+    /* 送信済みチェックの文言: 未チェックは「送信後にチェック」 */
+    if (!(a && a.sms_sent)) h = h.replace(/(<input type="checkbox"[^>]*onchange="markSms\([^>]*>)送信済み/, "$1送信後にチェック");
+  } catch(e) {}
+  return h;
+};
+/* 送信済みチェックの文言をチェック操作に追従させる */
+try {
+  document.addEventListener("change", function(ev){
+    var t = ev.target;
+    if (!t || t.type !== "checkbox" || !/markSms\(/.test(t.getAttribute("onchange") || "")) return;
+    var lab = t.parentNode;
+    if (!lab) return;
+    for (var i = 0; i < lab.childNodes.length; i++) {
+      var nd = lab.childNodes[i];
+      if (nd.nodeType === 3 && /送信/.test(nd.textContent)) nd.textContent = t.checked ? "送信済み" : "送信後にチェック";
+    }
+  }, true);
+} catch(e) {}
+/* 別案件: サーバーモードでは応募者が一覧キャッシュ側にいるため、
+   見つからないと無言で何も開かなかった。解決してから委譲する */
+if (typeof openAltCases === "function") {
+  var r618PrevAlt_ = openAltCases;
+  openAltCases = function(id){
+    try {
+      if (!applicants.find(function(x){ return x.id === id; })) {
+        var a = r6161FindApplicant_(id);
+        if (a) applicants.push(a);
+        else { try { showToast("応募者データが見つかりません。画面を更新してからもう一度お試しください", "warn"); } catch(e) {} return; }
+      }
+    } catch(e) {}
+    return r618PrevAlt_.apply(this, arguments);
+  };
+}
+/* 一覧上部の並べ替えと「その他の機能」への集約 */
+function r618SimplifyListTop_(){
+  var app = document.getElementById("app");
+  if (!app || (location.hash || "").indexOf("#/list") !== 0) return;
+  if (app.querySelector("#r618More")) return;
+  var kids = [].slice.call(app.children);
+  var find = function(fn){ for (var i = 0; i < kids.length; i++) if (fn(kids[i])) return kids[i]; return null; };
+  var title = find(function(e){ return e.matches && e.matches("h2.oldH"); });
+  var prefs = find(function(e){ return e.classList && e.classList.contains("prefBar"); });
+  var tabs = find(function(e){ return e.classList && e.classList.contains("tabs"); });
+  var listTop = find(function(e){ return e.classList && e.classList.contains("r616listTop"); });
+  var segRow = find(function(e){ return e.classList && e.classList.contains("flex") && /保存済みセグメント/.test(e.textContent || ""); });
+  var tpl = find(function(e){ return e.classList && e.classList.contains("r614tpl"); });
+  var filterBottom = find(function(e){ return e.classList && e.classList.contains("r614filterBottom"); });
+  var anchorAfter = filterBottom || find(function(e){ return e.classList && e.classList.contains("r614filterTop"); });
+  /* 見出し → 府県 → タブ の順 */
+  if (title) app.insertBefore(title, app.firstChild);
+  if (prefs && title) { var pc = document.createElement("div"); pc.className = "card r618prefCard"; title.parentNode.insertBefore(pc, title.nextSibling); pc.appendChild(prefs); }
+  var more = document.createElement("details");
+  more.id = "r618More";
+  more.className = "card r618more";
+  try { if (sessionStorage.getItem("r618MoreOpen") === "1") more.open = true; } catch(e) {}
+  more.addEventListener("toggle", function(){ try { sessionStorage.setItem("r618MoreOpen", more.open ? "1" : "0"); } catch(e) {} });
+  more.innerHTML = "<summary>その他の機能</summary>";
+  var body = document.createElement("div");
+  body.className = "r618moreBody";
+  more.appendChild(body);
+  if (listTop) {
+    /* 「案件から近くの求職者を探す」は下の大ボタンと重複するので、ここでは新着マッチ提案だけ */
+    [].slice.call(listTop.querySelectorAll("button,a")).forEach(function(b){
+      if (/案件から近くの求職者を探す/.test(b.textContent || "")) return;
+      body.appendChild(b);
+    });
+    listTop.remove();
+  }
+  if (tabs) {
+    [].slice.call(tabs.querySelectorAll("button,a")).forEach(function(b){
+      var t = (b.textContent || "").trim();
+      if (/掘り起こし/.test(t)) body.appendChild(b);
+      else if (/^Gmail配信$/.test(t)) b.remove(); /* ヘッダーの「Gmail配信」と重複 */
+    });
+    tabs.classList.add("r618tabs");
+  }
+  if (segRow) body.appendChild(segRow);
+  if (tpl) body.appendChild(tpl);
+  if (body.children.length && anchorAfter && anchorAfter.parentNode) anchorAfter.parentNode.insertBefore(more, anchorAfter.nextSibling);
+}
+var r618PrevViewList_ = viewList;
+viewList = function(){
+  var r = r618PrevViewList_.apply(this, arguments);
+  try { r618SimplifyListTop_(); } catch(e) {}
+  return r;
+};
+</script>
+<style id="r618css">
+/* ===== R618 F: 旧アプリ準拠の一覧 ===== */
+#app article.card.r618card .cardHead b.r618name{font-size:20px !important;font-weight:800;line-height:1.3}
+#app article.card.r618card .statusBadge .badge{background:var(--muted) !important;border:0 !important;color:var(--text) !important;font-weight:600;font-size:12px;padding:3px 9px;border-radius:6px}
+#app article.card.r618card .r616meta{color:var(--sub);font-size:13.5px}
+#app article.card.r618card .r616applied{color:var(--sub);font-size:12.5px}
+#app article.card.r618card .keyline{display:block;font-size:13px}
+#app article.card.r618card .r614main>button.btn.primary,
+#app article.card.r618card .r614main>a.btn.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+#app article.card.r618card .r614main>button.r616recBtn{background:#eff5ff;border-color:#2563eb;color:#1d4ed8}
+@media(prefers-color-scheme:dark){#app article.card.r618card .r614main>button.r616recBtn{background:#1e3a8a55;color:#bfdbfe;border-color:#3b82f6}}
+#app article.card.r618card .r614actions>button,#app article.card.r618card .r616actions>button{flex:1 1 0 !important;background:var(--surface)}
+#app article.card.r618card .r616actions>a.btn[href^="tel:"],#app article.card.r618card .r614actions>a.btn[href^="tel:"]{flex:1 1 0 !important}
+/* 一覧の上 */
+#app h2.oldH{margin:2px 0 8px}
+#app .r618prefCard{padding:10px;margin:6px 0 8px}
+#app .r618prefCard .prefBar{margin:0}
+#app .tabs.r618tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;overflow:visible;padding:0;margin:6px 0}
+#app .tabs.r618tabs button{border-radius:10px !important;min-height:48px;padding:6px 4px;font-size:14px;white-space:nowrap}
+#app details.r618more{padding:4px 12px;margin:6px 0}
+#app details.r618more>summary{min-height:44px;font-size:14px;color:var(--sub)}
+#app .r618moreBody{display:flex;flex-wrap:wrap;gap:8px;padding:4px 0 10px}
+#app .r618moreBody>button,#app .r618moreBody>a{min-height:44px;font-size:14px}
+#app .r618moreBody>div.flex,#app .r618moreBody>details{flex:1 1 100%;margin:0}
 </style>
 
 <style id="r617compact">

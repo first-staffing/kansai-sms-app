@@ -97,27 +97,41 @@ function mailfixEnsureContext_(deliveryId, token) {
   return '回答フォームの情報が受け口に届いていないため送信を止めました (フォームが開けないメールを送らないため)';
 }
 
+/** C. 受け口へ送る文脈を90件ずつに分ける (受け口は1回100件まで。超えると全件拒否される) */
+var mailfixPrevChunk_ = relayChunkContextsByBytes_;
+relayChunkContextsByBytes_ = function (list, maxBytes) {
+  var ch = mailfixPrevChunk_.apply(this, arguments) || [];
+  var out = [];
+  ch.forEach(function (c) { for (var i = 0; i < c.length; i += 90) out.push(c.slice(i, i + 90)); });
+  return out;
+};
+function mailfixPushDeliveryContexts_(deliveryId) { return relayPushContextsForDelivery_(deliveryId); }
+
 /**
- * C. 配信の文脈を100件ずつに分けて受け口へ送る。
- * 既存の relayPushContextsForDelivery_ は「配信ID」単位でまとめて送るため、
- * 受け口の上限 (100件) を超える配信で全部拒否されていた。
- * ここでは delivery_recipients を100人ずつの「仮の配信ビュー」に分けず、
- * 既存関数が使う文脈の組み立て (relayBuildContextsForDelivery_ があればそれ) を使って
- * 自前で100件ずつ送る。組み立て関数が無い場合は既存関数をそのまま呼ぶ。
+ * F. 送信キューの「取り合い」を止める (二重送信の本当の原因)
+ * 送信の途中で書き込み用のロックが外れ、画面からの送信と5分おきの自動送信が
+ * 同じ行を同時に送っていた。行を「送信中」にする直前に、シートの今の状態を
+ * ユーザーロックの中で読み直し、送信待ち/失敗 以外なら取らない。
  */
-function mailfixPushDeliveryContexts_(deliveryId) {
-  if (typeof relayBuildContextsForDelivery_ === 'function' && typeof relayPushContextList_ === 'function') {
-    var list = relayBuildContextsForDelivery_(deliveryId) || [];
-    var out = { pushed: 0, chunks: 0, errors: [] };
-    for (var i = 0; i < list.length; i += 100) {
-      var r = relayPushContextList_(list.slice(i, i + 100));
-      out.chunks++;
-      if (r && r.ok === false) out.errors.push(r.error || 'push_failed'); else out.pushed += Math.min(100, list.length - i);
-    }
-    return out;
+var mailfixPrevUpdate_ = updateRowByPk_;
+updateRowByPk_ = function (tableName, pk, patch) {
+  if (tableName === 'send_queue' && patch && patch.status === 'sending') {
+    var ul = LockService.getUserLock();
+    ul.waitLock(20000);
+    try {
+      var sh = sheet_('send_queue');
+      var hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+      var stCol = hdr.indexOf('status') + 1, idCol = hdr.indexOf('queue_id') + 1;
+      var last = sh.getLastRow();
+      var cell = last >= 2 ? sh.getRange(2, idCol, last - 1, 1).createTextFinder(String(pk)).matchEntireCell(true).findNext() : null;
+      if (!cell) throw new Error('queue row not found');
+      var cur = String(sh.getRange(cell.getRow(), stCol).getValue());
+      if (cur !== 'waiting' && cur !== 'failed') throw new Error('二重送信の防止: 別の送信処理が先に取りました (' + cur + ')');
+      return mailfixPrevUpdate_.apply(this, arguments);
+    } finally { ul.releaseLock(); }
   }
-  return relayPushContextsForDelivery_(deliveryId);
-}
+  return mailfixPrevUpdate_.apply(this, arguments);
+};
 
 /** D. 配信の結果 (キューの状態・失敗理由・Gmail送信済みとの照合) */
 function mailRunReport(deliveryId) {
@@ -153,7 +167,7 @@ function repushRecentMailContexts(days) {
   var since = Date.now() - days * 86400000;
   var dels = readTable_('deliveries').rows.filter(function (d) {
     var t = Date.parse(cellDateIso_(d.created_at) || '') || 0;
-    return t >= since && str_(d.channel || 'gmail') !== 'sms';
+    return t >= since && (Number(d.target_count) || 0) > 1 && !/^D[TP]/.test(str_(d.delivery_id));
   });
   var rec = readTable_('delivery_recipients').rows;
   var out = { deliveries: 0, checked: 0, missing: 0, repushed: 0, still_missing: 0 };

@@ -12219,6 +12219,33 @@ if (window.R627_DIRECT !== false) {
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script>
+/* R629 (9.1.2) 2026-11-24  中継 (KV) の1日の書き込み上限対策
+   フォームの先回り作成 (R620) を「いま画面に見えている人と、すぐ下の1画面分」だけにする
+   (旧: 画面の上1画面〜下4画面)。送らない人の分の KV 書き込みを減らす。
+   押した瞬間に開く速さは、見えている人については維持する。GAS 直結後に戻す。 */
+window.APP_VERSION_LABEL = "v9.1.2";
+r620NextTarget_ = function(){
+  var S = window._r620State;
+  var vh = window.innerHeight || 800;
+  var cards = [].slice.call(document.querySelectorAll("#app article.card[data-anchor]"));
+  var list = [];
+  cards.forEach(function(c){
+    var r = c.getBoundingClientRect();
+    if (r.bottom > 0 && r.top < vh * 2) list.push({ c: c, k: r.top });
+  });
+  list.sort(function(x, y){ return x.k - y.k; });
+  for (var i = 0; i < list.length; i++) {
+    var id = (list[i].c.getAttribute("data-anchor") || "").replace(/^app:/, "");
+    if (!id || S.inflight[id]) continue;
+    var a = r620NeedsWork_(id);
+    if (a) return a;
+  }
+  return null;
+};
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

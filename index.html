@@ -12121,6 +12121,104 @@ setInterval(function(){
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script>
+/* ================================================================
+   R627 (9.1.1) 2026-11-24  中継ページ (sms.html) を通さず、SMSを直接開く
+   ユーザー指示: 「いちいちここ通さないで欲しい」
+   - これまで枠 (Apps Script) の中からは sms: を開けない前提で中継ページを
+     挟んでいた。開けなかったのは (1) リンクが枠の中だけを移動する指定で、
+     (2) タップの後に通信を待ってから開こうとしていたため。
+   - 準備済みの人: 「初回SMS」ボタンを、画面全体で sms: を開く本物のリンク
+     (target=_top) に差し替える。タップ1回で、その場でメッセージ画面が開く
+   - 準備前の人: タップ後に本文を作り、ボタンを「SMSを開く」(同じく本物の
+     リンク) に変える。もう1回のタップで開く。中継ページは使わない
+   - 起動ページの事前作成 (issueSmsLaunch) はやめる (サーバー呼び出しも減る)
+   戻すとき: window.R627_DIRECT = false (このブロックより前で置く)
+   ================================================================ */
+window._r627 = "9.1.1";
+window.APP_VERSION_LABEL = "v9.1.1";
+if (window.R627_DIRECT !== false) {
+  /* 中継ページを使わない */
+  rTopEnabled_ = function(){ return false; };
+  r626UseLaunch_ = function(){ return false; };
+  /* 枠の中では、画面全体で開く指定にする (枠の中だけの移動は iPhone で止められる) */
+  var r627Target_ = function(){ try { return r617InFrame_() ? "_top" : "_self"; } catch(e) { return "_top"; } };
+  var r627PrevShowAnchor_ = r6151ShowSmsAnchor_;
+  r6151ShowSmsAnchor_ = function(btn, href){
+    var an = r627PrevShowAnchor_.apply(this, arguments);
+    try { if (an) { an.setAttribute("target", r627Target_()); an.textContent = "SMSを開く"; } } catch(e) {}
+    return an;
+  };
+  /* 枠の中で「開けない」として止めていた経路も、リンクを出す方へ */
+  try { window._r627OrigInFrameFail = true; } catch(e) {}
+
+  /* 準備済みの人のボタンを、本物のリンクに差し替える */
+  function r627LinkFor_(id){
+    var r = r626Fresh_(id);
+    return (r && r.href) ? r : null;
+  }
+  function r627Swap_(){
+    try {
+      if ((location.hash || "").indexOf("#/list") !== 0) return;
+      var btns = document.querySelectorAll('#app article.card button[onclick*="openSmsDirect615("]');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var m = (b.getAttribute("onclick") || "").match(/openSmsDirect615\('([^']*)'/);
+        if (!m) continue;
+        var id = m[1];
+        var r = r627LinkFor_(id);
+        var an = b.parentNode && b.parentNode.querySelector("a.r627sms");
+        if (!r) { if (an && an.getAttribute("data-id") === id) { an.remove(); b.style.display = ""; } continue; }
+        if (window._r617Sms && window._r617Sms[id] && window._r617Sms[id].phase === "busy") continue;
+        if (!an) {
+          an = document.createElement("a");
+          an.className = b.className + " r627sms";
+          an.setAttribute("role", "button");
+          an.textContent = (b.textContent || "初回SMS").trim() || "初回SMS";
+          an.addEventListener("click", function(ev){
+            var aid = this.getAttribute("data-id");
+            var rr = r626Fresh_(aid);
+            try { if (rr) r617SaveBody_(aid, rr.phone, rr.body); } catch(e) {}
+            try { (window._r627Opened = window._r627Opened || {})[aid] = Date.now(); } catch(e) {}
+          });
+          b.parentNode.insertBefore(an, b);
+        }
+        an.setAttribute("data-id", id);
+        if (an.getAttribute("href") !== r.href) an.setAttribute("href", r.href);
+        an.setAttribute("target", r627Target_());
+        b.style.display = "none";
+      }
+    } catch(e) {}
+  }
+  setInterval(r627Swap_, 500);
+  var r627PrevViewList_ = viewList;
+  viewList = function(){ var x = r627PrevViewList_.apply(this, arguments); try { r627Swap_(); } catch(e) {} return x; };
+
+  /* ボタンのまま押された (差し替え前) 場合: 準備済みなら同じ操作の中で直接開く */
+  var r627PrevOpen_ = openSmsDirect615;
+  openSmsDirect615 = function(id, btn){
+    id = String(id || "");
+    var r = r627LinkFor_(id);
+    if (r) {
+      try { r617SaveBody_(id, r.phone, r.body); } catch(e) {}
+      try {
+        var an = document.createElement("a");
+        an.href = r.href; an.target = r627Target_(); an.style.display = "none";
+        document.body.appendChild(an); an.click();
+        setTimeout(function(){ try { an.remove(); } catch(e) {} }, 2000);
+        /* 止められた場合に備え、カードに本物のリンクも出しておく */
+        window._r617Sms[id] = { phase: "legacy", url: r.href, at: Date.now(), tok: {} };
+        r617Paint_(id);
+        return;
+      } catch(e) {}
+    }
+    return r627PrevOpen_.apply(this, arguments);
+  };
+  try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } catch(e) {}
+}
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

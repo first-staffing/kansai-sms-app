@@ -11567,6 +11567,284 @@ r614BodyWithUrl_ = function(body, url){
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script>
+/* ================================================================
+   R624 (9.0.2) 2026-11-24
+   1. 一覧の描き直しで画面が飛ぶ・上に戻るのを、仕組みで止める
+      - どの理由の描き直し (route) でも、直前に「画面の一番上に見えているカードと
+        その画面上の位置」を記録し、描き直し後に同じカードを同じ位置へ戻す
+      - 表示件数 (さらに表示で増やした分) も描き直しの前後で保つ
+      - フォーム発行の完了ごとの一覧描き直しは止める (ボタンは状態で追従する)
+   2. CSV 取り込みの直後に、新しく入った応募者を一覧と名簿へすぐ反映する
+      (先頭ページだけを読み足し、全件の取り直しを待たない)。表示されれば
+      事前発行 (R620) がその人のフォームをすぐ準備する
+   ================================================================ */
+window._r624 = "9.0.2";
+window.APP_VERSION_LABEL = "v9.0.2";
+
+/* ---------- 0a. 本当の根本原因: カードに content-visibility:auto (高さの予約なし) が
+   付いていて、描き直した直後は画面外のカードの高さが 0 になる → ページが一瞬
+   短くなり、スクロール位置が上に押し戻される (下の方の人を押すとトップへ戻る)。
+   一覧のカードでは使わない ---------- */
+(function(){
+  try {
+    var st = document.createElement("style");
+    st.id = "r624nojump";
+    st.textContent = "#app .card,#app article.card{content-visibility:visible!important;contain:none!important}";
+    (document.head || document.documentElement).appendChild(st);
+  } catch(e) {}
+})();
+
+/* ---------- 0. もう一つの原因: 描き直しのたびにタブを中央へ寄せる scrollIntoView が
+   ページ全体を縦にもスクロールさせ (一番上のタブ位置へ飛ぶ)、そのあと複数の
+   位置戻し処理が食い違って、下の方のカードからトップへ戻っていた。
+   タブ (横に並ぶボタン) は横方向だけ動かし、ページは縦に動かさない ---------- */
+(function(){
+  var orig = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function(opt){
+    try {
+      var bar = this.closest && this.closest(".tabs, .r616tabs, [role=tablist]");
+      if (bar) {
+        var p = this.parentElement;
+        while (p && p !== document.body && !(p.scrollWidth > p.clientWidth + 1)) p = p.parentElement;
+        if (p && p !== document.body) {
+          var pr = p.getBoundingClientRect(), r = this.getBoundingClientRect();
+          p.scrollLeft += (r.left - pr.left) - (p.clientWidth - r.width) / 2;
+        }
+        return;
+      }
+    } catch(e) {}
+    return orig.apply(this, arguments);
+  };
+})();
+
+/* ---------- 1. 位置を保つ描き直し ---------- */
+function r624ListAnchor_(){
+  try {
+    if ((location.hash || "").indexOf("#/list") !== 0) return null;
+    var cards = document.querySelectorAll("#app article.card[data-anchor]");
+    var headH = 0;
+    try { var st = document.querySelector(".stickyTop"); if (st) headH = st.getBoundingClientRect().bottom; } catch(e) {}
+    for (var i = 0; i < cards.length; i++) {
+      var r = cards[i].getBoundingClientRect();
+      if (r.bottom > headH + 8) {
+        return { id: cards[i].getAttribute("data-anchor"), top: r.top, y: window.scrollY || 0, visible: (typeof state !== "undefined" ? state.visible : null), n: cards.length };
+      }
+    }
+    return { id: null, top: 0, y: window.scrollY || 0, visible: (typeof state !== "undefined" ? state.visible : null), n: cards.length };
+  } catch(e) { return null; }
+}
+function r624RestoreAnchor_(a){
+  if (!a) return;
+  try {
+    if ((location.hash || "").indexOf("#/list") !== 0) return;
+    if (a.id) {
+      var el = null;
+      var cards = document.querySelectorAll("#app article.card[data-anchor]");
+      for (var i = 0; i < cards.length; i++) { if (cards[i].getAttribute("data-anchor") === a.id) { el = cards[i]; break; } }
+      if (el) {
+        var dy = el.getBoundingClientRect().top - a.top;
+        if (Math.abs(dy) > 1) window.scrollTo(0, Math.max(0, (window.scrollY || 0) + dy));
+        return;
+      }
+    }
+    /* 同じカードが無い (絞り込みで外れた等) ときは、元のスクロール位置に戻す */
+    if (Math.abs((window.scrollY || 0) - a.y) > 1) window.scrollTo(0, a.y);
+  } catch(e) {}
+}
+window._r624LastGood = null;
+var r624PrevRoute_ = route;
+route = function(){
+  var a = r624ListAnchor_();
+  /* 読み込み中でカードが無い瞬間は、直前の正しい位置 (30秒以内) を使う */
+  try {
+    if (a && a.id) window._r624LastGood = { a: a, at: Date.now() };
+    else if (a && window._r624LastGood && Date.now() - window._r624LastGood.at < 30000) a = window._r624LastGood.a;
+  } catch(e) {}
+  /* さらに表示で増やした件数を描き直しで失わない */
+  try { if (a && a.visible != null && typeof state !== "undefined" && state.visible < a.visible) state.visible = a.visible; } catch(e) {}
+  var r = r624PrevRoute_.apply(this, arguments);
+  r624RestoreAnchor_(a);
+  /* 非同期で中身が届いて高さが変わる場合にもう一度合わせる */
+  if (a) { try { requestAnimationFrame(function(){ r624RestoreAnchor_(a); }); } catch(e) {} }
+  return r;
+};
+/* フォーム発行の完了ごとの描き直しを止める: issueFormInvite の完了処理は
+   route() を呼ぶが、一覧表示中は不要 (ボタンの表示は SMS の状態管理で追従)。
+   発行の完了処理が走っている間だけ、一覧の描き直しを見送る */
+window._r624MuteRouteUntil = 0;
+var r624PrevRoute2_ = route;
+route = function(){
+  try {
+    if (Date.now() < window._r624MuteRouteUntil && (location.hash || "").indexOf("#/list") === 0) return;
+  } catch(e) {}
+  return r624PrevRoute2_.apply(this, arguments);
+};
+if (typeof r6153RecordIssueOutcome_ === "function") {
+  var r624PrevRecord_ = r6153RecordIssueOutcome_;
+  r6153RecordIssueOutcome_ = function(op){
+    /* 発行結果が届いた直後 (issueFormInvite の完了処理が route を呼ぶ間) だけ見送る */
+    try { if (op && op.type === "issueFormToken") window._r624MuteRouteUntil = Date.now() + 50; } catch(e) {}
+    return r624PrevRecord_.apply(this, arguments);
+  };
+}
+
+/* ---------- 2. CSV 取り込み直後の読み足し ---------- */
+function r624TopUp_(){
+  try {
+    if (!window._r6ServerMode || typeof r616RosterReady_ !== "function" || !r616RosterReady_()) return Promise.resolve(0);
+  } catch(e) { return Promise.resolve(0); }
+  var roster = window._r616Roster, area = state.area;
+  var byId = {};
+  roster.items.forEach(function(a, i){ byId[a.id] = i; });
+  var added = [], updated = 0;
+  var step = function(p){
+    return r617FetchRosterPage_(area, p, 200).then(function(res){
+      var raw = (res && Array.isArray(res.items)) ? res.items : [];
+      var newHere = 0;
+      raw.forEach(function(it){
+        var a = null; try { a = serverApplicantToLocal(it); } catch(e) {}
+        if (!a || !a.id) return;
+        if (byId[a.id] == null) { byId[a.id] = -1; added.push(a); newHere++; }
+        else if (byId[a.id] >= 0) { roster.items[byId[a.id]] = a; updated++; }
+      });
+      if (newHere > 0 && raw.length === 200 && p < 10) return step(p + 1);
+    });
+  };
+  return step(1).then(function(){
+    if (added.length && window._r616Roster === roster) {
+      roster.items = added.concat(roster.items);
+      try { r616SeedListCache_(); } catch(e) {}
+      try { if ((location.hash || "").indexOf("#/list") === 0) route(); } catch(e) {}
+    }
+    return added.length;
+  }).catch(function(){ return 0; });
+}
+if (typeof commitImport === "function") {
+  var r624PrevCommit_ = commitImport;
+  commitImport = function(){
+    var r = r624PrevCommit_.apply(this, arguments);
+    /* サーバー側の取り込みは順次進むので、しばらく先頭を読み足し続ける (最大10分) */
+    try {
+      var started = Date.now(), quiet = 0;
+      var tick = function(){
+        if (Date.now() - started > 10 * 60000) return;
+        r624TopUp_().then(function(n){
+          var running = 0;
+          try { running = (window._r6ImportStatus && window._r6ImportStatus.totals && window._r6ImportStatus.totals.running) || 0; } catch(e) {}
+          quiet = n ? 0 : quiet + 1;
+          if (running || quiet < 3 || importCommitting) setTimeout(tick, 8000);
+        });
+      };
+      setTimeout(tick, 3000);
+    } catch(e) {}
+    return r;
+  };
+}
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
+<script>
+/* ================================================================
+   R625 (9.0.2) 2026-11-24  初回SMS (圧縮版) の文面を丁寧で見やすく
+   - 今の圧縮版が初期文面のまま (誰も編集していない) 場合だけ、新しい文面に
+     置き換え、サーバーのテンプレートにも1回だけ保存する (updateTemplate)。
+     編集済みの文面は上書きしない
+   - 320字を超える場合 (古い長いフォームURL等) は、項目名を後ろから減らし、
+     次に「お仕事の条件は…」の行を外す。リンクは必ず残す
+   ================================================================ */
+window._r625 = "9.0.2";
+var R625_FIRST_COMPACT = [
+  "{宛名}様",
+  "",
+  "この度はご登録いただき、誠にありがとうございます。",
+  "ファーストスタッフィングでございます。",
+  "",
+  "{宛名}様のお近くで、ご希望に合いそうなお仕事が見つかりましたのでご案内いたします。",
+  "下記のフォームから、気になるお仕事をお選びいただけます。",
+  "{フォームURL}",
+  "",
+  "お仕事の条件はお電話で丁寧にすり合わせ、ご納得いただいたうえで職場見学へ進みます。",
+  "",
+  "よろしければ、{不足項目名}など、分かる範囲でご返信ください（未定の項目は「相談」で大丈夫です）。"
+].join("\n");
+function r625Norm_(t){ return String(t || "").replace(/\s+/g, ""); }
+function r625IsOldCompact_(t){
+  try { return r625Norm_(t) === r625Norm_(SMS_FIRST_COMPACT_DEFAULT); } catch(e) { return false; }
+}
+/* 本文を組み立てる時点: 初期文面のままなら新しい文面で作る (保存前でも効く) */
+var r625PrevFirstBody_ = r614FirstBody_;
+r614FirstBody_ = function(a){
+  var st = r625PrevFirstBody_.apply(this, arguments);
+  try {
+    if (st && st.tpl && st.tpl.id === "registration_compact" && r625IsOldCompact_(st.tpl.body)) {
+      st = { tpl: st.tpl, body: personalize(R625_FIRST_COMPACT, a).replace("{不足ヒヤリング}", missingHearing(a)) };
+    }
+  } catch(e) {}
+  return st;
+};
+/* 320字に収める (新しい文面用) */
+function r625Fit_(body, url){
+  var lim = (typeof SMS_LIMITS !== "undefined" && SMS_LIMITS.first_compact) || 320;
+  var size = function(t){ try { return smsSize(t).len; } catch(e) { return String(t || "").length; } };
+  var lines = String(body || "").split("\n");
+  var idx = -1;
+  for (var i = 0; i < lines.length; i++) if (lines[i].indexOf("よろしければ、") === 0) { idx = i; break; }
+  /* 不足項目が無い (「よろしければ、など、」) ときはその行ごと外す */
+  if (idx >= 0 && /^よろしければ、など、/.test(lines[idx])) { lines.splice(idx, 1); if (lines.length && lines[lines.length - 1] === "") lines.pop(); idx = -1; }
+  var join = function(){ return lines.join("\n").replace(/\n{3,}/g, "\n\n").replace(/\n+$/, ""); };
+  if (size(join()) <= lim) return join();
+  if (idx >= 0) {
+    var m = lines[idx].match(/^(よろしければ、)(.+?)(など、分かる範囲でご返信ください.*)$/);
+    if (m) {
+      var names = m[2].split("・");
+      while (names.length > 1 && size(join()) > lim) { names.pop(); lines[idx] = m[1] + names.join("・") + m[3]; }
+    }
+  }
+  if (size(join()) <= lim) return join();
+  lines = lines.filter(function(l){ return l.indexOf("お仕事の条件はお電話で") < 0; });
+  if (size(join()) <= lim) return join();
+  lines = lines.filter(function(l){ return l.indexOf("よろしければ、") < 0; });
+  return join();
+}
+var r625PrevBodyWithUrl_ = r614BodyWithUrl_;
+r614BodyWithUrl_ = function(body, url){
+  try {
+    if (String(body || "").indexOf("ご希望に合いそうなお仕事") >= 0) {
+      var b = String(body);
+      if (url && b.indexOf(url) < 0) b = b.replace(/\n下記のフォームから、気になるお仕事をお選びいただけます。\n?/, "\n下記のフォームから、気になるお仕事をお選びいただけます。\n" + url + "\n");
+      return r625Fit_(b, url);
+    }
+  } catch(e) {}
+  return r625PrevBodyWithUrl_.apply(this, arguments);
+};
+/* r617 の 320字確認は圧縮版テンプレのとき旧来の字数調整を使うため、新文面では
+   上の調整済み本文がそのまま通る (超えた場合は理由を出して止まる) */
+
+/* サーバーのテンプレートを1回だけ新しい文面へ (初期文面のままの場合のみ) */
+function r625MaybePersist_(){
+  try {
+    if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return;
+    if (!r625IsOldCompact_(templates.sms_first_compact)) return;
+    if (window._r625Persisting) return;
+    window._r625Persisting = true;
+    apiCall({ action: "updateTemplate", kind: "sms_first_compact", body: R625_FIRST_COMPACT }).then(function(){
+      templates.sms_first_compact = R625_FIRST_COMPACT;
+      try { var cm = smsModes.find(function(m){ return m.id === "registration_compact"; }); if (cm) cm.body = R625_FIRST_COMPACT; } catch(e) {}
+      try { LS.set("templates", templates); LS.set("smsModes", smsModes); } catch(e) {}
+    }).catch(function(){ window._r625Persisting = false; });
+  } catch(e) {}
+}
+/* テンプレート同期 (起動時の getTemplates) が終わってから判定する */
+setTimeout(function tick(){
+  try {
+    if (window._r6ServerMode && window._r625Tries == null) window._r625Tries = 0;
+    if (window._r6ServerMode) { window._r625Tries++; if (window._r625Tries >= 2) { r625MaybePersist_(); return; } }
+  } catch(e) {}
+  setTimeout(tick, 5000);
+}, 8000);
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

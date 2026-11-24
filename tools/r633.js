@@ -208,8 +208,10 @@ function r633Go_(kind){
       state.mode = "first"; state.visible = 20;
       location.hash = "#/list";
     } else if (kind === "special") {
-      state.mode = "special"; state.visible = 20;
+      /* 案件逆引き配信: 旧アプリと同じく、案件を選ぶ画面から始める */
+      state.mode = "reverse"; state.visible = 20;
       location.hash = "#/list";
+      setTimeout(function(){ try { if (typeof openCaseSearch === "function") openCaseSearch(); } catch(e) {} }, 300);
     } else if (kind === "import") location.hash = "#/import";
     else if (kind === "mail") location.hash = "#/mail";
     setTimeout(function(){ try { route(); } catch(e) {} }, 0);
@@ -221,7 +223,7 @@ function r633Menu_(){
     ["form", "📋", "案件フォーム配信", "初回SMSに、おすすめ案件を選べる回答フォームを付けて送る"],
     ["survey", "📝", "アンケートフォーム", "初回SMSに30秒アンケート（Googleフォーム）を付けて送る。フォーム作成がないので最速"],
     ["mail", "✉️", "Gmail送信", "条件で絞ってGmailで案件を一斉配信する"],
-    ["special", "🎯", "案件逆引き配信（文面）", "案件の住所から近くの求職者を探し、自由な文面でSMSを送る"]
+    ["special", "🎯", "案件逆引き配信（文面）", "案件を選んで、近くの求職者へ求人詳細の文面でSMSを送る"]
   ];
   var cur = window._r633Mode === "survey" ? "survey" : "form";
   return '<h2 class="r633h">何をしますか？</h2><div class="r633menu">' + items.map(function(it){

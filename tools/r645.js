@@ -61,11 +61,41 @@ viewMail = function(){
         det.appendChild(sm); det.appendChild(box);
         labels[i].textContent = "市区町村（都道府県を選ぶと、その府県だけに絞って表示します）";
       }
+      if (!(typeof r616RosterReady_ === "function" && r616RosterReady_())) {
+        var note = document.createElement("p");
+        note.id = "r645MuniNote"; note.className = "small";
+        note.textContent = "名簿を読み込み中のため、市区町村はまだ一部だけです（読み込みが終わると自動で全部出ます）";
+        labels[i].parentNode.insertBefore(note, labels[i].nextSibling);
+        r645WatchRoster_();
+      }
       break;
     }
   } catch(e) {}
   return out;
 };
+/* 名簿がそろったら、画面を描き直さずに市区町村チップだけ差し替える (画面が動かないように) */
+function r645WatchRoster_(){
+  if (window._r645RosterTimer) return;
+  window._r645RosterTimer = setInterval(function(){
+    if ((location.hash || "").indexOf("#/mail") !== 0) { clearInterval(window._r645RosterTimer); window._r645RosterTimer = null; return; }
+    if (!(typeof r616RosterReady_ === "function" && r616RosterReady_())) return;
+    clearInterval(window._r645RosterTimer); window._r645RosterTimer = null;
+    try {
+      var note = document.getElementById("r645MuniNote"); if (note) note.remove();
+      var munis = mailMunisForPrefs(MF.prefs);
+      var det = document.getElementById("r645MuniDet");
+      var box = det ? det.querySelector(".flex") : null;
+      if (!box) {
+        var labels = document.querySelectorAll("#app label");
+        for (var i = 0; i < labels.length; i++) if ((labels[i].textContent || "").indexOf("市区町村（") === 0) { box = labels[i].nextElementSibling; break; }
+      }
+      if (!box || !box.classList || !box.classList.contains("flex")) return;
+      box.innerHTML = munis.map(function(m){ return '<button aria-pressed="' + (MF.munis.indexOf(m) >= 0) + '" onclick="toggleMailMuni(\'' + esc(m) + '\')">' + esc(m) + '</button>'; }).join("");
+      var sm = det ? det.querySelector("summary") : null;
+      if (sm) sm.textContent = "市区町村から選ぶ（" + munis.length + "件・府県ごとに並んでいます）";
+    } catch(e) {}
+  }, 2000);
+}
 /* 3: 確認中の経過秒数 */
 (function(){
   var prevText = r616MailCountText_;

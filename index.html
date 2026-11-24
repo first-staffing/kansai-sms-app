@@ -13802,11 +13802,41 @@ viewMail = function(){
         det.appendChild(sm); det.appendChild(box);
         labels[i].textContent = "市区町村（都道府県を選ぶと、その府県だけに絞って表示します）";
       }
+      if (!(typeof r616RosterReady_ === "function" && r616RosterReady_())) {
+        var note = document.createElement("p");
+        note.id = "r645MuniNote"; note.className = "small";
+        note.textContent = "名簿を読み込み中のため、市区町村はまだ一部だけです（読み込みが終わると自動で全部出ます）";
+        labels[i].parentNode.insertBefore(note, labels[i].nextSibling);
+        r645WatchRoster_();
+      }
       break;
     }
   } catch(e) {}
   return out;
 };
+/* 名簿がそろったら、画面を描き直さずに市区町村チップだけ差し替える (画面が動かないように) */
+function r645WatchRoster_(){
+  if (window._r645RosterTimer) return;
+  window._r645RosterTimer = setInterval(function(){
+    if ((location.hash || "").indexOf("#/mail") !== 0) { clearInterval(window._r645RosterTimer); window._r645RosterTimer = null; return; }
+    if (!(typeof r616RosterReady_ === "function" && r616RosterReady_())) return;
+    clearInterval(window._r645RosterTimer); window._r645RosterTimer = null;
+    try {
+      var note = document.getElementById("r645MuniNote"); if (note) note.remove();
+      var munis = mailMunisForPrefs(MF.prefs);
+      var det = document.getElementById("r645MuniDet");
+      var box = det ? det.querySelector(".flex") : null;
+      if (!box) {
+        var labels = document.querySelectorAll("#app label");
+        for (var i = 0; i < labels.length; i++) if ((labels[i].textContent || "").indexOf("市区町村（") === 0) { box = labels[i].nextElementSibling; break; }
+      }
+      if (!box || !box.classList || !box.classList.contains("flex")) return;
+      box.innerHTML = munis.map(function(m){ return '<button aria-pressed="' + (MF.munis.indexOf(m) >= 0) + '" onclick="toggleMailMuni(\'' + esc(m) + '\')">' + esc(m) + '</button>'; }).join("");
+      var sm = det ? det.querySelector("summary") : null;
+      if (sm) sm.textContent = "市区町村から選ぶ（" + munis.length + "件・府県ごとに並んでいます）";
+    } catch(e) {}
+  }, 2000);
+}
 /* 3: 確認中の経過秒数 */
 (function(){
   var prevText = r616MailCountText_;
@@ -13832,6 +13862,67 @@ viewMail = function(){
   }, 1000);
 })();
 window.APP_VERSION_LABEL = "v9.3.13";
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
+<script>
+/* ================================================================
+   R646 (9.3.14) 2026-11-25  Gmail 画面の市区町村が一部しか出ない不具合
+   原因: 一覧を「端末に読み込み済みの一部の応募者」から作っていた (京都府・兵庫県で8件など)。
+   直し: サーバーから地域の全求職者の 府県→市区町村 (人数つき) を1回もらって使う (6時間覚える)。
+         届いたら、Gmail 画面のときだけ1回描き直す。
+   ================================================================ */
+window._r646 = "9.3.14";
+(function(){
+  function key(){ return "r646Facets_" + (state.area || "kansai"); }
+  function load(){
+    try { var j = JSON.parse(localStorage.getItem(key()) || "null"); if (j && Date.now() - j.at < 6 * 3600000) return j.facets; } catch(e) {}
+    return null;
+  }
+  window._r646Facets = load();
+  var fetching = false;
+  function fetchFacets(){
+    if (fetching) return; fetching = true;
+    Promise.resolve(apiCall({ action: "getMuniFacets", area: state.area || "kansai" })).then(function(res){
+      fetching = false;
+      if (!res || !res.facets) return;
+      var had = !!window._r646Facets;
+      window._r646Facets = res.facets;
+      try { localStorage.setItem(key(), JSON.stringify({ at: Date.now(), facets: res.facets })); } catch(e) {}
+      if (!had && (location.hash || "").indexOf("#/mail") === 0) { try { route(); } catch(e) {} }
+    }).catch(function(){ fetching = false; });
+  }
+  setTimeout(fetchFacets, 1500);
+  var prevPrefs = mailPrefs, prevMunis = mailMunisForPrefs;
+  mailPrefs = function(pool){
+    var F = window._r646Facets;
+    if (pool || !F) return prevPrefs.apply(this, arguments);
+    return Object.keys(F).sort(function(a, b){
+      var ia = R645_PREF_ORDER.indexOf(a), ib = R645_PREF_ORDER.indexOf(b);
+      if (ia < 0) ia = 99; if (ib < 0) ib = 99;
+      return ia - ib || a.localeCompare(b, "ja");
+    });
+  };
+  mailMunisForPrefs = function(prefs, pool){
+    var F = window._r646Facets;
+    if (pool || !F) return prevMunis.apply(this, arguments);
+    var ps = (prefs && prefs.length) ? prefs : (MF.pref ? [MF.pref] : []);
+    var out = [];
+    mailPrefs().forEach(function(p){
+      if (ps.length && ps.indexOf(p) < 0) return;
+      Object.keys(F[p] || {}).sort(function(a, b){ return a.localeCompare(b, "ja"); }).forEach(function(m){ if (out.indexOf(m) < 0) out.push(m); });
+    });
+    return out;
+  };
+  /* 一覧がサーバー由来なら「名簿を読み込み中」の注記は出さない */
+  var prevView = viewMail;
+  viewMail = function(){
+    var out = prevView.apply(this, arguments);
+    try { if (window._r646Facets) { var n = document.getElementById("r645MuniNote"); if (n) n.remove(); } else fetchFacets(); } catch(e) {}
+    return out;
+  };
+})();
+window.APP_VERSION_LABEL = "v9.3.14";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 

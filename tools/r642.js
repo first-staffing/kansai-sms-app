@@ -19,7 +19,8 @@ window._r642 = "9.3.9";
     while (s.length < n) s += A62.charAt(Math.floor(Math.random() * 62));
     return s;
   }
-  function getTpl(){ try { return localStorage.getItem(LS_TPL) || ""; } catch(e) { return ""; } }
+  var TPL0 = "https://first-staffing.github.io/kansai-sms-app/f?t={T}"; /* 2026-11-24 サーバー (formUrlForToken_) の形を確認済み */
+  function getTpl(){ try { return localStorage.getItem(LS_TPL) || TPL0; } catch(e) { return TPL0; } }
   function learn(url, token){
     try {
       url = String(url || ""); token = String(token || "");

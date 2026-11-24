@@ -9778,6 +9778,13 @@ function openSmsDirect615(id, btn){
   });
 }
 
+function r617InFrame_(){
+  try { if (typeof gasRunAvailable === "function" && gasRunAvailable()) return true; } catch(e) {}
+  try { return window.top !== window.self; } catch(e) { return true; }
+}
+function r617SaveBody_(id, phone, body){
+  try { (window._r621Bodies = window._r621Bodies || {})[id] = { phone: String(phone || ""), body: String(body || ""), at: Date.now() }; } catch(e) {}
+}
 function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
   var S = window._r617Sms;
   var mine = function(){ return S[id] && S[id].tok === token; };
@@ -9871,14 +9878,19 @@ function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
           try { window._rTopLastLaunchUrl = lurl; } catch(e) {}
           showAnchor("launch", lurl);
         } else {
-          finishLegacy();
+          /* Apps Script の枠内では sms: を直接開けない (iPhone)。代替のアンカーは
+             押しても開かないので出さず、理由を表示する */
+          if (r617InFrame_()) { r617SaveBody_(id, phone, body); fail("起動ページを作れませんでした（サーバーから起動トークンが返りませんでした）"); }
+          else finishLegacy();
         }
       })
       .catch(function(err){
         if (done) return;
         var msg = "";
         try { msg = String((err && err.message) || err || ""); } catch(e) {}
+        try { (window._r621Log = window._r621Log || []).push({ at: new Date().toISOString(), action: "issueSmsLaunch", error: msg }); } catch(e) {}
         if (rTopIsValidationError_(msg)) { fail(msg); return; }
+        if (r617InFrame_()) { r617SaveBody_(id, phone, body); fail("起動ページを作れませんでした（理由: " + (msg || "不明") + "）"); return; }
         finishLegacy();
       });
   };
@@ -11127,6 +11139,73 @@ if (typeof serverResponseToLocal === "function") {
   };
 }
 </script>
+
+<script>
+/* ================================================================
+   R621 (6.18.2) 2026-11-24
+   1. 起動ページ作成 (issueSmsLaunch) の失敗理由を画面に出す。Apps Script の
+      枠内では従来の代替 (sms: を直接開くアンカー「SMS作成を開く」) は
+      iPhone で開かないため出さない (r617 側で対応)。代わりに、理由と
+      「本文をコピー」「番号をコピー」を出して手作業で送れるようにする
+   2. バージョンをヘッダーに表示する
+   ================================================================ */
+window._r621 = "6.18.2";
+window.APP_VERSION_LABEL = "v6.18.2";
+/* エラー表示を長めに残し、コピー用のボタンを添える */
+R617_SMS_ERROR_TTL_MS = 60000;
+var r621PrevCardError_ = r615CardError_;
+r615CardError_ = function(btn, msg){
+  r621PrevCardError_.apply(this, arguments);
+  try {
+    var m = (btn && btn.getAttribute && (btn.getAttribute("onclick") || "").match(/^openSmsDirect615\('([^']*)'/)) || null;
+    var id = m && m[1];
+    var saved = id && window._r621Bodies && window._r621Bodies[id];
+    var el = btn && btn.parentNode && btn.parentNode.querySelector(".r615err");
+    if (!el) return;
+    el.style.flex = "1 1 100%";
+    if (saved && !el.querySelector("button")) {
+      var mk = function(label, text){
+        var b = document.createElement("button");
+        b.type = "button"; b.className = "r621copy"; b.textContent = label;
+        b.onclick = function(){
+          var done = function(){ b.textContent = "コピーしました"; setTimeout(function(){ b.textContent = label; }, 2000); };
+          try { navigator.clipboard.writeText(text).then(done, function(){ prompt("コピーしてください", text); }); } catch(e) { prompt("コピーしてください", text); }
+        };
+        return b;
+      };
+      var wrap = document.createElement("span");
+      wrap.className = "r621copyRow";
+      wrap.appendChild(mk("本文をコピー", saved.body));
+      wrap.appendChild(mk("番号をコピー", saved.phone));
+      el.appendChild(wrap);
+    }
+  } catch(e) {}
+};
+/* ヘッダーにバージョン */
+function r621PaintVersion_(){
+  try {
+    var hb = document.querySelector("header b");
+    if (!hb) return;
+    var v = document.getElementById("r621Ver");
+    if (!v) {
+      v = document.createElement("span");
+      v.id = "r621Ver";
+      v.className = "r621ver";
+      hb.appendChild(v);
+    }
+    v.textContent = " " + window.APP_VERSION_LABEL;
+  } catch(e) {}
+}
+var r621PrevRoute_ = route;
+route = function(){ var r = r621PrevRoute_.apply(this, arguments); r621PaintVersion_(); return r; };
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+<style id="r621css">
+header b .r621ver{font-size:11px;font-weight:600;opacity:.8;margin-left:4px;white-space:nowrap}
+.r615err{display:block;line-height:1.5;margin-top:4px}
+.r621copyRow{display:flex;gap:6px;margin-top:6px}
+.r621copyRow .r621copy{flex:1;min-height:40px;font-size:13px;padding:6px 8px;color:var(--text);font-weight:600}
+</style>
 
 <style id="r617compact">
 /* ================================================================

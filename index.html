@@ -9535,6 +9535,737 @@ renderImportPreviewServer = function(res, file){
 };
 </script>
 
+<script>
+/* ================================================================
+   R617 (6.17.1) 修正: 2026-11-24
+   A. 「初回SMS」をタップしても無反応になる不具合
+   B. 一覧のロスター (名簿の端末内全件) が実機でそろわない不具合
+   方式は従来ラウンドと同じ: 既存ブロックは編集せず、末尾で再定義・ラップする。
+   サーバー (Apps Script) との通信仕様 (action 名・引数・応答の読み方) は変えない。
+   ================================================================ */
+window._r617 = "6.17.1";
+
+/* ---------------------------------------------------------------
+   A-1. 1秒ごとの全画面描き直しループを止める (無反応の主因)
+   r616ScheduleCountsRepaint_ は「件数の読み込みが終わったら1回だけ
+   描き直す」補助だが、viewList の度に予約され、予約時点で読み込みが
+   終わっていても 1 秒後に route() → viewList → 再予約 となり、
+   一覧表示中は 1 秒ごとに #app が丸ごと作り直されていた。
+   その結果、タップした「初回SMS」ボタンは 1 秒以内に画面から外され、
+   以降の「発行中…」表示・起動ページへのアンカー・エラー表示は
+   すべて画面外の古いボタンに対して行われ、利用者には何も見えなかった。
+   → 予約時点で読み込み中のときだけ予約する (本来の「1回だけ」)。
+   --------------------------------------------------------------- */
+var r617PrevScheduleRepaint_ = r616ScheduleCountsRepaint_;
+r616ScheduleCountsRepaint_ = function(){
+  var loading = false;
+  try { loading = (typeof r611CountsLoading_ === "function") && r611CountsLoading_(); } catch(e) { loading = false; }
+  if (!loading) return;
+  return r617PrevScheduleRepaint_.apply(this, arguments);
+};
+/* ループが担っていた「サーバー集計が届いたら件数表示を更新する」役割は、
+   集計が実際に変わったときに 1 回だけ描き直す形で引き継ぐ */
+var _r617SummarySig = "";
+var _r617RepaintTm = null;
+function r617RequestListRepaint_(){
+  if (_r617RepaintTm) return;
+  _r617RepaintTm = setTimeout(function(){
+    _r617RepaintTm = null;
+    try { if ((location.hash || "").indexOf("#/list") === 0) route(); } catch(e) {}
+  }, 250);
+}
+if (typeof fetchApplicantSummaryR6_ === "function") {
+  var r617PrevFetchSummary_ = fetchApplicantSummaryR6_;
+  fetchApplicantSummaryR6_ = function(){
+    return r617PrevFetchSummary_.apply(this, arguments).then(function(res){
+      try {
+        var sm = window._r6ApplicantSummary;
+        var sig = sm ? JSON.stringify([sm.total, sm.sent, sm.sms_target, sm.areas || null]) : "";
+        if (sig && sig !== _r617SummarySig) {
+          _r617SummarySig = sig;
+          r617RequestListRepaint_();
+        }
+      } catch(e) {}
+      return res;
+    });
+  };
+}
+
+/* ---------------------------------------------------------------
+   A-2. SMS の進行表示を「応募者ID」で持つ (描き直しに強くする)
+   どんな理由で一覧が描き直されても、進行中/起動アンカー/エラーの
+   状態を新しいボタンへ描き直す。無言で終わる経路を残さない。
+   --------------------------------------------------------------- */
+window._r617Sms = window._r617Sms || {};
+var R617_SMS_WATCHDOG_MS = 90000;   /* これを超えて結果が出なければ理由を出して止める */
+var R617_SMS_LAUNCH_TTL_MS = 9 * 60000; /* 起動トークンは10分・ワンタイム */
+var R617_SMS_ERROR_TTL_MS = 10000;
+function r617SmsBtnSelector_(id){ return "openSmsDirect615('" + String(id) + "'"; }
+function r617LiveBtn_(id){
+  try {
+    var key = r617SmsBtnSelector_(id);
+    var list = document.querySelectorAll("button[onclick]");
+    for (var i = 0; i < list.length; i++) {
+      var oc = list[i].getAttribute("onclick") || "";
+      if (oc.indexOf(key) === 0 && list[i].isConnected) return list[i];
+    }
+  } catch(e) {}
+  return null;
+}
+function r617Toast_(msg){
+  try { showToast(msg, "warn"); } catch(e) { try { alert(msg); } catch(_) {} }
+}
+function r617ShowLaunchOn_(b, url){
+  var anchor = null;
+  try { r615SetBusy_(b, false); } catch(e) {}
+  try { anchor = rTopShowLaunchAnchor_(b, url); } catch(e) { anchor = null; }
+  if (anchor) {
+    anchor.textContent = "SMSを開く";
+    anchor.setAttribute("data-r617id", b.getAttribute("onclick") || "");
+    if (!anchor._r617Bound) {
+      anchor._r617Bound = true;
+      anchor.addEventListener("click", function(ev){
+        if (!ev || !ev.isTrusted) return; /* 自動クリックの試行では消さない */
+        /* 実タップ後は起動ページへ移る。戻ってきたときに使用済みトークンの
+           アンカーが残らないよう、少し後で状態を消す */
+        var idm = (anchor.getAttribute("data-r617id") || "").match(/openSmsDirect615\('([^']*)'/);
+        if (idm) setTimeout(function(){ try { delete window._r617Sms[idm[1]]; } catch(e) {} }, 3000);
+      });
+    }
+  }
+  return anchor;
+}
+function r617Paint_(id){
+  var s = window._r617Sms[id];
+  if (!s) return null;
+  var now = Date.now();
+  if ((s.phase === "launch" || s.phase === "legacy") && now - s.at > R617_SMS_LAUNCH_TTL_MS) { delete window._r617Sms[id]; return null; }
+  if (s.phase === "error" && now - s.at > R617_SMS_ERROR_TTL_MS) { delete window._r617Sms[id]; return null; }
+  var b = r617LiveBtn_(id);
+  if (!b) { r617Dock_(id, s); return null; }
+  try { var dk = document.getElementById("r617SmsDock"); if (dk && dk.getAttribute("data-id") === id) dk.remove(); } catch(e) {}
+  try {
+    if (s.phase === "busy") {
+      if (b.getAttribute("data-r615busy") === "1") { if (s.label) b.textContent = s.label; }
+      else r615SetBusy_(b, true, s.label || "発行中…");
+    } else if (s.phase === "launch") {
+      r617ShowLaunchOn_(b, s.url);
+    } else if (s.phase === "legacy") {
+      r615SetBusy_(b, false);
+      r6151ShowSmsAnchor_(b, s.url);
+    } else if (s.phase === "error") {
+      try { rTopRemoveLaunchAnchor_(b); } catch(e) {}
+      try { r6151RemoveSmsAnchor_(b); } catch(e) {}
+      r615SetBusy_(b, false);
+      var old = b.parentNode && b.parentNode.querySelector(".r615err");
+      if (!old || old.textContent !== s.msg) r615CardError_(b, s.msg);
+    }
+  } catch(e) {}
+  return b;
+}
+/* カードが画面に無いとき (一覧の取り直し中・絞り込みで外れた等) は、
+   画面下に起動リンクを出す (iframe 内ではスクリプトからの遷移が止められる
+   ことがあるため、必ず実タップできるリンクを残す) */
+function r617Dock_(id, s){
+  var dock = document.getElementById("r617SmsDock");
+  if (!s || (s.phase !== "launch" && s.phase !== "legacy")) {
+    if (dock && dock.getAttribute("data-id") === id) dock.remove();
+    return null;
+  }
+  if (!dock) {
+    dock = document.createElement("div");
+    dock.id = "r617SmsDock";
+    dock.className = "r617smsDock";
+    document.body.appendChild(dock);
+  }
+  dock.setAttribute("data-id", id);
+  var nm = "";
+  try { var ap = r6161FindApplicant_(id); nm = ap ? (ap.name || "") : ""; } catch(e) {}
+  dock.innerHTML = '<span class="r617dockTxt">' + esc(nm ? nm + " さんの" : "") + 'SMSの準備ができました</span>'
+    + '<a class="btn primary" ' + (s.phase === "launch" ? 'target="_top" ' : "") + 'href="' + esc(s.url) + '">SMSを開く</a>'
+    + '<button type="button" aria-label="閉じる">×</button>';
+  var x = dock.querySelector("button");
+  if (x) x.onclick = function(){ try { delete window._r617Sms[id]; } catch(e) {} dock.remove(); };
+  var a = dock.querySelector("a");
+  if (a) a.addEventListener("click", function(ev){ if (ev && ev.isTrusted) setTimeout(function(){ try { delete window._r617Sms[id]; dock.remove(); } catch(e) {} }, 3000); });
+  return a;
+}
+function r617PaintAllSms_(){
+  try { Object.keys(window._r617Sms).forEach(function(id){ r617Paint_(id); }); } catch(e) {}
+}
+var r617PrevRoute_ = route;
+route = function(){
+  var r = r617PrevRoute_.apply(this, arguments);
+  try { r617PaintAllSms_(); } catch(e) {}
+  return r;
+};
+
+/* ---------------------------------------------------------------
+   A-3. openSmsDirect615 の最終定義
+   本体の流れ (番号取得 → フォームURL発行待ち → 本文完成 → issueSmsLaunch →
+   起動ページ sms.html へのトップレベルアンカー / 非検証エラー時は従来の
+   sms: アンカー) は 6.16.1 最終定義と同じ。変えたのは次の点だけ:
+   ・ボタン操作はすべて「その時点で画面にある同じ応募者のボタン」に行う
+   ・応募者がどのプールにも無いときは getApplicant で引いてから進む
+     (無言の return を廃止)。それでも無ければ理由を表示する
+   ・二度押しは「処理中です」を表示して受け付けない (無言にしない)
+   ・全体の見張り (90秒) と、フォーム発行待ちの上限を 15秒 → 45秒 へ
+   ・ボタン自体が画面に無いときは、結果をトーストで知らせる
+   --------------------------------------------------------------- */
+function openSmsDirect615(id, btn){
+  id = String(id || "");
+  var S = window._r617Sms;
+  var cur = S[id];
+  if (cur && cur.phase === "busy" && Date.now() - cur.at < R617_SMS_WATCHDOG_MS + 5000) {
+    r617Paint_(id);
+    var lb = r617LiveBtn_(id) || btn;
+    try { r615CardError_(lb, "処理中です。表示が変わるまでお待ちください"); } catch(e) {}
+    return;
+  }
+  if (cur && cur.phase === "launch" && Date.now() - cur.at < R617_SMS_LAUNCH_TTL_MS) {
+    /* 起動アンカーは出ているはず (描き直しで消えていたら出し直す) */
+    var lb2 = r617Paint_(id);
+    if (!lb2) r617Toast_("SMSの起動ページを準備済みです。カードの「SMSを開く」をタップしてください");
+    return;
+  }
+  var token = {};
+  var setBusy = function(label){
+    S[id] = { phase: "busy", label: label, at: (S[id] && S[id].phase === "busy" && S[id].tok === token) ? S[id].at : Date.now(), tok: token };
+    var b = r617Paint_(id);
+    if (!b && btn && btn.isConnected) { try { r615SetBusy_(btn, true, label); } catch(e) {} }
+  };
+  var mine = function(){ return S[id] && S[id].tok === token; };
+  setBusy("発行中…");
+
+  var watchdog = null;
+  var core = null;
+  var failOuter = function(msg){
+    if (!mine()) return;
+    if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+    S[id] = { phase: "error", msg: msg, at: Date.now(), tok: token };
+    var b = r617Paint_(id);
+    if (!b) r617Toast_("初回SMS: " + msg);
+  };
+  watchdog = setTimeout(function(){
+    if (!mine() || S[id].phase !== "busy") return;
+    if (core && core.abort) { try { core.abort(); } catch(e) {} }
+    failOuter("サーバーの応答がありません。通信状況を確認して、もう一度タップしてください");
+  }, R617_SMS_WATCHDOG_MS);
+
+  var a = null;
+  try { a = r6161FindApplicant_(id); } catch(e) { a = null; }
+  if (a) { core = r617SmsCore_(id, a, token, setBusy, failOuter, function(){ if (watchdog) { clearTimeout(watchdog); watchdog = null; } }); return; }
+
+  /* どのプールにもいない (一覧の再取得中・キャッシュ入れ替え直後など):
+     サーバーから引いて進む */
+  var canFetch = false;
+  try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+  if (!canFetch) { failOuter("応募者データが見つかりません。画面を更新してからもう一度タップしてください"); return; }
+  setBusy("応募者を確認中…");
+  apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+    if (!mine()) return;
+    var det = (res && res.applicant) || null;
+    var la = null;
+    try { la = det ? serverApplicantToLocal(det) : null; } catch(e) { la = null; }
+    if (!la) { failOuter("応募者が見つかりませんでした（削除・統合された可能性があります）"); return; }
+    if (det.phone != null) la.phone = String(det.phone || "");
+    if (det.email != null) la.email = String(det.email || "");
+    core = r617SmsCore_(id, la, token, setBusy, failOuter, function(){ if (watchdog) { clearTimeout(watchdog); watchdog = null; } });
+  }).catch(function(err){
+    var m = ""; try { m = String((err && err.message) || err || ""); } catch(e) {}
+    failOuter("応募者を確認できませんでした" + (m ? "（" + m + "）" : ""));
+  });
+}
+
+function r617SmsCore_(id, a, token, setBusy, failOuter, clearWatchdog){
+  var S = window._r617Sms;
+  var mine = function(){ return S[id] && S[id].tok === token; };
+  var done = false;
+  var issueRecId = null;
+  var issueWaiter = null;
+  var launchStarted = false;
+  var timer = null;
+  var stopWait = function(){
+    if (issueWaiter) { try { r6153UnwaitIssue_(id, issueWaiter); } catch(e) {} issueWaiter = null; }
+    if (timer) { clearInterval(timer); timer = null; }
+  };
+  var fail = function(msg){
+    if (done) return; done = true;
+    stopWait();
+    failOuter(msg);
+  };
+  var showAnchor = function(kind, url){
+    clearWatchdog();
+    if (!mine()) return;
+    S[id] = { phase: kind, url: url, at: Date.now(), tok: token };
+    var b = r617Paint_(id);
+    var anchor = null;
+    try { if (b && b.parentNode) anchor = b.parentNode.querySelector(kind === "launch" ? "a.rtopSms" : "a.r6151sms"); } catch(e) {}
+    if (!anchor) { try { anchor = r617Dock_(id, S[id]); } catch(e) { anchor = null; } }
+    if (anchor) {
+      /* 自動遷移を試みる。iframe 内でユーザー操作扱いにならず止められた
+         場合も、アンカーが画面に残るので実タップで進める */
+      try { anchor.click(); } catch(e) {}
+    } else if (kind === "launch") {
+      try { window.top.location.href = url; } catch(e) {
+        r617Toast_("SMSの起動ページを開けませんでした。もう一度タップしてください");
+      }
+    } else {
+      try { r615NavigateSms_(url); } catch(e) {}
+    }
+  };
+  var finish = function(phone, urlOverride){
+    if (done || launchStarted) return;
+    var st = { tpl: null, body: "" };
+    try { st = r614FirstBody_(a); } catch(e) {}
+    var url = "";
+    try { url = urlOverride || formUrlFor(a); } catch(e) {}
+    var body = "";
+    try { body = r614BodyWithUrl_(st.body, url); } catch(e) { body = st.body; }
+    var href = "";
+    try { href = smsLink(phone, body); } catch(e) {}
+    if (!href || href.charAt(0) === "#") {
+      var meta = null;
+      try { meta = window._smsLinkMeta && window._smsLinkMeta["#sms-blocked"]; } catch(e) {}
+      fail(meta && meta.reason ? meta.reason : "文面を確認してください");
+      return;
+    }
+    var finishLegacy = function(){
+      if (done) return;
+      done = true;
+      stopWait();
+      try { window._r6151LastSmsHref = href; } catch(e) {}
+      showAnchor("legacy", href);
+    };
+    var canApi = false;
+    try { canApi = !!(window._r6ServerMode && typeof apiCall === "function"); } catch(e) {}
+    if (!rTopEnabled_() || !canApi) { finishLegacy(); return; }
+    launchStarted = true;
+    setBusy("起動ページを準備中…");
+    apiCall({ action: "issueSmsLaunch", applicant_id: id, phone: phone, body: body })
+      .then(function(res){
+        if (done) return;
+        if (res && res.launch_token) {
+          done = true;
+          stopWait();
+          var lurl = rTopLaunchUrl_(res.launch_token);
+          try { window._rTopLastLaunchUrl = lurl; } catch(e) {}
+          showAnchor("launch", lurl);
+        } else {
+          finishLegacy();
+        }
+      })
+      .catch(function(err){
+        if (done) return;
+        var msg = "";
+        try { msg = String((err && err.message) || err || ""); } catch(e) {}
+        if (rTopIsValidationError_(msg)) { fail(msg); return; }
+        finishLegacy();
+      });
+  };
+  var attach = true;
+  try { attach = (typeof state === "undefined" || state.attachFormSms !== false); } catch(e) {}
+  var phoneState = "wait";
+  var phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+  if (phoneVal) phoneState = "ok";
+  var urlState = attach ? "wait" : "ok";
+  var issuedUrl = "";
+  var issueFailMsg = "";
+  var check = function(){
+    if (done) return;
+    if (phoneState === "ng") { fail("電話番号が登録されていないためSMSを作れません"); return; }
+    if (urlState === "ng") {
+      if (issueFailMsg) { try { r6153PurgeIssueRecord_(issueRecId); } catch(e) {} }
+      fail(issueFailMsg || "フォームURLの発行に時間がかかっています。もう一度タップしてください");
+      return;
+    }
+    if (phoneState === "ok" && urlState === "ok") finish(phoneVal, issuedUrl);
+  };
+  if (attach) {
+    var u0 = "";
+    try { u0 = formUrlFor(a); } catch(e) {}
+    if (u0) { urlState = "ok"; }
+    else {
+      var issueStart = Date.now();
+      try { delete window._r6153IssueOutcome[a.id]; } catch(e) {}
+      var dRec = null, issueErr = false;
+      try { dRec = issueFormInvite(a, "sms", null); } catch(e) { issueErr = true; }
+      if (issueErr) { fail("フォーム発行に失敗しました"); return { abort: function(){} }; }
+      issueRecId = (dRec && dRec.id) || null;
+      var u1 = "";
+      try { u1 = formUrlFor(a); } catch(e) {}
+      if (u1) { urlState = "ok"; }
+      else {
+        issueWaiter = r6153WaitIssue_(a.id, issueStart, function(rec){
+          if (done) return;
+          if (rec.state === "failed") {
+            issueFailMsg = r6153IssueFailMessage_(rec.error);
+            urlState = "ng";
+            check();
+          } else if (rec.state === "ok" && rec.url) {
+            issuedUrl = rec.url;
+            urlState = "ok";
+            check();
+          }
+        });
+        var maxPoll = 180; /* 250ms × 180 = 45秒 (旧: 15秒。実サーバーの応答時間で打ち切られていた) */
+        try { if (typeof window._r615IssueMaxPolls === "number" && window._r615IssueMaxPolls > 0) maxPoll = window._r615IssueMaxPolls; } catch(e) {}
+        var n = 0;
+        timer = setInterval(function(){
+          if (done) { clearInterval(timer); timer = null; return; }
+          n++;
+          var u = "";
+          try { u = formUrlFor(a); } catch(e) {}
+          if (u) { clearInterval(timer); timer = null; urlState = "ok"; check(); return; }
+          var rec2 = null;
+          try { rec2 = window._r6153IssueOutcome[a.id]; } catch(e) {}
+          if (rec2 && rec2.at >= issueStart - 1000) {
+            if (rec2.state === "failed") {
+              clearInterval(timer); timer = null;
+              issueFailMsg = r6153IssueFailMessage_(rec2.error);
+              urlState = "ng";
+              check();
+              return;
+            }
+            if (rec2.state === "ok" && rec2.url) {
+              clearInterval(timer); timer = null;
+              issuedUrl = rec2.url;
+              urlState = "ok";
+              check();
+              return;
+            }
+          }
+          if (n > maxPoll) { clearInterval(timer); timer = null; urlState = "ng"; check(); }
+        }, 250);
+      }
+    }
+  }
+  if (phoneState === "wait") {
+    var canFetch = false;
+    try { canFetch = !!(window._r6ServerMode && typeof CONFIG !== "undefined" && CONFIG.API_URL && typeof apiCall === "function"); } catch(e) {}
+    if (!canFetch) { phoneState = "ng"; check(); }
+    else {
+      setBusy("番号を確認中…");
+      apiCall({ action: "getApplicant", applicant_id: id }).then(function(res){
+        if (done) return;
+        var det = (res && res.applicant) || null;
+        if (det) {
+          if (det.phone != null) a.phone = String(det.phone || "");
+          if (det.email != null) a.email = String(det.email || "");
+        }
+        phoneVal = String(a.phone || "").replace(/[^0-9]/g, "");
+        phoneState = phoneVal ? "ok" : "ng";
+        if (phoneState === "ok" && !launchStarted) setBusy("発行中…");
+        check();
+      }).catch(function(){ fail("電話番号を確認できませんでした"); });
+    }
+  }
+  check();
+  return { abort: function(){ done = true; stopWait(); } };
+}
+try { if (window.__APP_LOGIC__) { window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } } catch(e) {}
+
+/* ---------------------------------------------------------------
+   B. ロスター (エリア全件の名簿) の取得を作り直す
+   旧実装の弱点:
+    ・200件ずつを1本ずつ順番に取得 (8,700件で約44往復の直列) → 数分かかり、
+      その間に件数が動くと「やり直し」→ 2回で諦め
+    ・完成条件が「重複除去後の件数 ≥ total」。サーバーの total が同一IDの
+      重複行を数えていると永久に満たせない
+    ・1ページでも失敗すると最初からやり直し。応答が返らない呼び出しは
+      永久に「取得中」のまま (タイムアウトなし)
+    ・1分の待機後の再試行は「一覧の描き直し」頼み (=1秒ループ頼み)
+   新しい取得:
+    ・1ページ目でサーバーの実際のページ長を確かめ、残りを3本並列で取得
+    ・各ページは60秒で打ち切り、最大4回まで間隔を空けて再試行
+    ・取得中に件数が増えた分は末尾ページと先頭ページの読み足しで拾う
+    ・件数が足りなければもう1巡。追加が0件なら「サーバーが返せる全件」と
+      判断して確定 (差は _r616Roster.gap に記録)
+    ・失敗しても取得済みページは保持し、15秒→30秒→1分→2分→5分の間隔で
+      取得できなかったページから自動で再開。前面復帰・起動時は待たずに再開
+    ・取得中も一覧は従来のサーバーページ方式で操作でき、完成した時点で
+      1回だけ描き直して端末内モードへ切り替わる
+   --------------------------------------------------------------- */
+var R617_ROSTER = {
+  pageSize: 200, conc: 3, callTimeoutMs: 60000, pageTries: 4, maxPasses: 5,
+  backoff: [15000, 30000, 60000, 120000, 300000],
+  refreshMinGapMs: 2 * 60000, staleMs: 10 * 60000, resumeMaxAgeMs: 15 * 60000
+};
+window._r617Roster = window._r617Roster || { gen: 0, running: false, area: null, fails: 0, nextRetryAt: 0, timer: null, partial: null, progress: null, lastError: "", lastLandAt: 0 };
+function r617Timeout_(p, ms){
+  return new Promise(function(resolve, reject){
+    var t = setTimeout(function(){ reject(new Error("timeout")); }, ms);
+    p.then(function(v){ clearTimeout(t); resolve(v); }, function(e){ clearTimeout(t); reject(e); });
+  });
+}
+function r617Sleep_(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+function r617FetchRosterPage_(area, page, size){
+  var tries = 0;
+  var go = function(){
+    return r617Timeout_(apiCall({ action: "searchApplicants", filter: { area: area }, page: page, page_size: size }), R617_ROSTER.callTimeoutMs)
+      .catch(function(e){
+        tries++;
+        if (tries >= R617_ROSTER.pageTries) throw e;
+        return r617Sleep_(1500 * Math.pow(2, tries - 1)).then(go);
+      });
+  };
+  return go();
+}
+function r617SummaryTotal_(area){
+  try {
+    var sm = window._r6ApplicantSummary;
+    if (sm && sm.areas && sm.areas[area] && typeof sm.areas[area].total === "number") return sm.areas[area].total;
+    if (sm && sm.area === area && typeof sm.total === "number") return sm.total;
+  } catch(e) {}
+  return null;
+}
+function r617PaintRosterState_(){
+  try {
+    var el = document.getElementById("r617RosterState");
+    var lt = document.getElementById("listTotal");
+    if (!window._r6ServerMode || !lt || !lt.parentNode) { if (el) el.remove(); return; }
+    var R = window._r617Roster, txt = "";
+    if (r616RosterReady_()) {
+      txt = "端末内";
+      if ((lt.textContent || "").indexOf("（サーバー検索）") >= 0) lt.textContent = lt.textContent.replace("（サーバー検索）", "");
+    }
+    else if (R.running && R.progress) txt = "名簿を同期中 " + R.progress.have + "/" + (R.progress.total == null ? "…" : R.progress.total);
+    else if (R.running) txt = "名簿を同期中…";
+    else if (R.fails > 0) txt = "名簿の同期を再試行待ち";
+    if (!txt) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("span");
+      el.id = "r617RosterState";
+      el.className = "small";
+      el.style.marginLeft = "6px";
+      lt.parentNode.appendChild(el);
+    }
+    el.textContent = "（" + txt + "）";
+  } catch(e) {}
+}
+function r617ScheduleRosterRetry_(){
+  var R = window._r617Roster;
+  if (R.timer) { clearTimeout(R.timer); R.timer = null; }
+  var delay = Math.max(1000, R.nextRetryAt - Date.now());
+  R.timer = setTimeout(function(){
+    R.timer = null;
+    try {
+      if (document.hidden) return; /* 背面では待つ (前面復帰で再開する) */
+      r616WarmRoster_(false);
+    } catch(e) {}
+  }, delay + 50);
+}
+/* 1巡: 1ページ目 → 残りページ並列 → 末尾の読み足し → 先頭の読み足し */
+function r617SweepOnce_(area, Sx, gen){
+  var R = window._r617Roster;
+  var alive = function(){ return R.gen === gen; };
+  var merge = function(res){
+    var raw = (res && Array.isArray(res.items)) ? res.items : [];
+    if (res && typeof res.total === "number") Sx.total = res.total;
+    var added = 0;
+    raw.forEach(function(it){
+      var a = null;
+      try { a = serverApplicantToLocal(it); } catch(e) { a = null; }
+      if (!a || !a.id) return;
+      if (!Sx.map[a.id]) { Sx.order.push(a.id); added++; }
+      Sx.map[a.id] = a;
+    });
+    Sx.rows += raw.length;
+    R.progress = { have: Sx.order.length, total: Sx.total };
+    r617PaintRosterState_();
+    return { n: raw.length, added: added };
+  };
+  var first = Sx.pagesDone[1] ? Promise.resolve() : r617FetchRosterPage_(area, 1, Sx.size || R617_ROSTER.pageSize).then(function(res){
+    if (!alive()) throw new Error("cancelled");
+    var m = merge(res);
+    if (!Sx.size) {
+      /* サーバーが page_size を上限で切っている場合は、そのページ長で数える */
+      Sx.size = (m.n > 0 && m.n < R617_ROSTER.pageSize && Sx.total != null && Sx.total > m.n) ? m.n : R617_ROSTER.pageSize;
+    }
+    Sx.pagesDone[1] = true;
+  });
+  return first.then(function(){
+    var size = Sx.size || R617_ROSTER.pageSize;
+    var N = Math.max(1, Math.ceil((Sx.total || 0) / size));
+    var queue = [];
+    for (var p = 2; p <= N; p++) if (!Sx.pagesDone[p]) queue.push(p);
+    var worker = function(){
+      if (!alive()) return Promise.reject(new Error("cancelled"));
+      var p = queue.shift();
+      if (p == null) return Promise.resolve();
+      return r617FetchRosterPage_(area, p, size).then(function(res){
+        if (!alive()) throw new Error("cancelled");
+        merge(res);
+        Sx.pagesDone[p] = true;
+        return worker();
+      });
+    };
+    var ws = [];
+    for (var k = 0; k < R617_ROSTER.conc; k++) ws.push(worker());
+    return Promise.all(ws).then(function(){ return N; });
+  }).then(function(N){
+    /* 末尾: 取得中に件数が増えた分 (total が N ページを超えたら読み足す) */
+    var size = Sx.size || R617_ROSTER.pageSize;
+    var tail = function(p, guard){
+      if (!alive()) return Promise.reject(new Error("cancelled"));
+      if (guard <= 0 || (p - 1) * size >= (Sx.total || 0)) return Promise.resolve();
+      return r617FetchRosterPage_(area, p, size).then(function(res){
+        var m = merge(res); Sx.pagesDone[p] = true;
+        if (m.n < size) return;
+        return tail(p + 1, guard - 1);
+      });
+    };
+    return tail(N + 1, 20);
+  }).then(function(){
+    /* 先頭: 新着が先頭に入る並び (応募日の新しい順) なら、ずれて漏れた分を拾う */
+    var size = Sx.size || R617_ROSTER.pageSize;
+    var head = function(p, guard){
+      if (!alive()) return Promise.reject(new Error("cancelled"));
+      if (guard <= 0 || Sx.order.length >= (Sx.total || 0)) return Promise.resolve();
+      return r617FetchRosterPage_(area, p, size).then(function(res){
+        var m = merge(res);
+        if (m.added > 0 && m.n === size) return head(p + 1, guard - 1);
+      });
+    };
+    return head(1, 10);
+  });
+}
+function r617RunRoster_(area, gen){
+  var R = window._r617Roster;
+  var Sx = R.partial;
+  if (!Sx || Sx.area !== area || Date.now() - Sx.startedAt > R617_ROSTER.resumeMaxAgeMs) {
+    Sx = { area: area, map: {}, order: [], pagesDone: {}, size: null, total: null, rows: 0, startedAt: Date.now(), passes: 0 };
+  }
+  R.partial = Sx;
+  var pass = function(){
+    var before = Sx.order.length;
+    return r617SweepOnce_(area, Sx, gen).then(function(){
+      if (R.gen !== gen) throw new Error("cancelled");
+      Sx.passes++;
+      var addedThisPass = Sx.order.length - before;
+      var complete = Sx.total != null && Sx.order.length >= Sx.total;
+      /* もう1巡しても1件も増えない = サーバーがこの条件で返せる全件 */
+      var exhausted = Sx.passes >= 2 && addedThisPass === 0;
+      if (complete || exhausted || Sx.passes >= R617_ROSTER.maxPasses) return true;
+      Sx.pagesDone = {}; /* 次の巡回は全ページを読み直して漏れを拾う */
+      return pass();
+    });
+  };
+  return pass().then(function(){
+    var items = Sx.order.map(function(id){ return Sx.map[id]; });
+    if (!items.length) throw new Error("empty");
+    var gap = (Sx.total != null) ? Math.max(0, Sx.total - items.length) : 0;
+    window._r616Roster = {
+      area: area, items: items, at: Date.now(),
+      serverTotalAtLand: r617SummaryTotal_(area),
+      searchTotalAtLand: Sx.total, gap: gap, rowsSeen: Sx.rows, passes: Sx.passes, via: "r617"
+    };
+    R.partial = null; R.fails = 0; R.nextRetryAt = 0; R.lastError = ""; R.lastLandAt = Date.now();
+    if (gap > 0) {
+      /* 差が残った場合も、時間をおいて自動で取り直す */
+      R.nextRetryAt = 0;
+      setTimeout(function(){ try { if (!document.hidden) r616WarmRoster_(true); } catch(e) {} }, R617_ROSTER.refreshMinGapMs + 1000);
+    }
+  });
+}
+r616WarmRoster_ = function(force){
+  if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return;
+  var R = window._r617Roster;
+  var area = state.area;
+  if (R.running && R.area === area) return;
+  if (R.running && R.area !== area) { R.gen++; R.running = false; window._r616RosterLoading = false; }
+  var ready = r616RosterReady_();
+  var stale = ready && (Date.now() - (window._r616Roster.at || 0) > R617_ROSTER.staleMs);
+  if (!force && ready && !stale) return;
+  if (ready && Date.now() - R.lastLandAt < R617_ROSTER.refreshMinGapMs) return;
+  if (!force && R.area === area && R.nextRetryAt > Date.now()) return;
+  if (R.timer) { clearTimeout(R.timer); R.timer = null; }
+  var gen = ++R.gen;
+  R.running = true; R.area = area; R.progress = null;
+  window._r616RosterLoading = true;
+  r617PaintRosterState_();
+  r617RunRoster_(area, gen).then(function(){
+    if (R.gen !== gen) return;
+    R.running = false; window._r616RosterLoading = false;
+    window._r616RosterFailedArea = null; window._r616RosterFailedAt = 0;
+    r617PaintRosterState_();
+    if (state.area === area) r617RequestListRepaint_();
+  }).catch(function(e){
+    if (R.gen !== gen) return;
+    R.running = false; window._r616RosterLoading = false;
+    var m = ""; try { m = String((e && e.message) || e || ""); } catch(_) {}
+    if (m === "cancelled") return;
+    R.fails++;
+    R.lastError = m;
+    R.nextRetryAt = Date.now() + R617_ROSTER.backoff[Math.min(R.fails - 1, R617_ROSTER.backoff.length - 1)];
+    window._r616RosterFailedArea = area; window._r616RosterFailedAt = Date.now();
+    r617PaintRosterState_();
+    r617ScheduleRosterRetry_();
+  });
+};
+/* 同期: 件数の比較はサーバー集計どうし (着地時の集計総数 ↔ 現在の集計総数) で行う。
+   旧実装はロスター件数 (検索で返る件数) と集計総数を比べていたため、
+   定義の差 (重複行・テスト等) があると 1〜2 分ごとに全件を読み直していた */
+r616SyncNow_ = function(reason){
+  if (!window._r6ServerMode || typeof apiCall !== "function" || !CONFIG.API_URL) return Promise.resolve(false);
+  if (_r616SyncBusy) return Promise.resolve(false);
+  if (Date.now() - _r616LastSyncAt < R616_SYNC_MIN_GAP_MS) return Promise.resolve(false);
+  _r616SyncBusy = true;
+  var done = function(){ _r616SyncBusy = false; _r616LastSyncAt = Date.now(); };
+  var R = window._r617Roster;
+  /* 起動時・前面復帰時は再試行の待ちを解除する (次に開いたときに必ず回復する) */
+  if (reason === "open" || reason === "foreground" || reason === "focus") {
+    if (!r616RosterReady_()) { R.nextRetryAt = 0; try { r616WarmRoster_(false); } catch(e) {} }
+  }
+  var p = (typeof fetchApplicantSummaryR6_ === "function") ? fetchApplicantSummaryR6_() : Promise.resolve(null);
+  return p.then(function(){
+    try {
+      var serverTotal = r617SummaryTotal_(state.area);
+      var prev = _r616LastServerTotal;
+      if (serverTotal != null) _r616LastServerTotal = serverTotal;
+      if (r616RosterReady_()) {
+        var roster = window._r616Roster;
+        if (roster.serverTotalAtLand == null && serverTotal != null) roster.serverTotalAtLand = serverTotal;
+        var changed = serverTotal != null && roster.serverTotalAtLand != null && serverTotal !== roster.serverTotalAtLand;
+        var stale = Date.now() - (roster.at || 0) > R617_ROSTER.staleMs;
+        if (changed || stale) r616WarmRoster_(true); /* 裏で取り直し。完成まで今の名簿で動く */
+      } else {
+        if (serverTotal != null && prev != null && serverTotal !== prev && window._r6ListCache) {
+          /* ページ方式のキャッシュは次の描画で取り直す (表示中のデータは消さない) */
+          window._r6ListCache.key = "";
+        }
+        r616WarmRoster_(false);
+      }
+    } catch(e) {}
+    done();
+    return true;
+  }).catch(function(){ done(); return false; });
+};
+/* 一覧の描画ごとに、名簿の状態 (端末内 / 同期中 n/N / 再試行待ち) を件数行に添える */
+var r617PrevViewList_ = viewList;
+viewList = function(){
+  var r = r617PrevViewList_.apply(this, arguments);
+  try { r617PaintRosterState_(); } catch(e) {}
+  return r;
+};
+/* サーバーモードに入ったら一覧を開く前でも名簿の取得を始める */
+if (typeof activateServerModeR6_ === "function") {
+  var r617PrevActivate_ = activateServerModeR6_;
+  activateServerModeR6_ = function(){
+    var p = r617PrevActivate_.apply(this, arguments);
+    try { setTimeout(function(){ try { r616WarmRoster_(false); if (typeof r616StartSyncWatch_ === "function") r616StartSyncWatch_(); } catch(e) {} }, 0); } catch(e) {}
+    return p;
+  };
+}
+try { window.addEventListener("online", function(){ try { window._r617Roster.nextRetryAt = 0; r616WarmRoster_(false); } catch(e) {} }); } catch(e) {}
+</script>
+<style id="r617smsDockCss">
+.r617smsDock{position:fixed;left:8px;right:8px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:80;display:flex;gap:8px;align-items:center;background:var(--surface);border:2px solid var(--accent);border-radius:12px;padding:8px 10px;box-shadow:0 6px 20px #00000033}
+.r617smsDock .r617dockTxt{flex:1;font-size:13px;font-weight:700;line-height:1.35}
+.r617smsDock a.btn{min-height:48px;padding:8px 16px;font-size:15px;white-space:nowrap}
+.r617smsDock button{min-height:44px;min-width:44px;padding:4px 10px;font-size:18px}
+</style>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

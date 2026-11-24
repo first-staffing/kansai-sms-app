@@ -64,6 +64,8 @@ function r633Body_(a){
 function r633Phone_(a){
   var phone = String(a.phone || "").replace(/[^0-9]/g, "");
   if (!phone) { try { var c = window._r618Phone && window._r618Phone[a.id]; if (c && c.val) phone = c.val; } catch(e) {} }
+  /* 端末の名簿 (ロスター) にあればそれを使う (サーバーに問い合わせない) */
+  if (!phone) { try { var ro = window._r616Roster && window._r616Roster.items; if (ro) { for (var i = 0; i < ro.length; i++) if (ro[i] && ro[i].id === a.id) { phone = String(ro[i].phone || "").replace(/[^0-9]/g, ""); break; } } } catch(e) {} }
   return phone;
 }
 function r633Find_(id){ try { return applicants.find(function(x){ return x.id === id; }) || null; } catch(e) { return null; } }

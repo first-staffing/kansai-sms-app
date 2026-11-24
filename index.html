@@ -9535,4 +9535,55 @@ renderImportPreviewServer = function(res, file){
 };
 </script>
 
+<style id="r617compact">
+/* ================================================================
+   R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)
+   旧アプリのカード構成を正として、余白・行間・縦幅を詰める。
+   JavaScript・カードHTMLの生成処理・SMS関数には一切触れない。
+   ================================================================ */
+/* --- カード外枠: 余白とカード間隔を詰める --- */
+#app article.card.r616card{padding:10px 12px;margin:6px 0;border-radius:12px}
+/* --- 1行目: 名前(大きさ維持) + ステータスバッジ --- */
+#app .r616card .cardHead{gap:4px 8px;align-items:center;flex-wrap:wrap;margin:0}
+#app .r616card .cardHead b{font-size:20px !important;line-height:1.3}
+#app .r616card .cardHead .small{font-size:12px;line-height:1.3}
+#app .r616card .cardHead .badge{margin:0}
+/* --- 職種・地域 / 応募 / 最も進んだ状況: 行間と段落余白を詰める --- */
+#app .r616card p{margin:0}
+#app .r616card .r616meta{font-size:14px;line-height:1.4;margin:4px 0 0}
+#app .r616card .r616applied{font-size:12.5px;line-height:1.4;margin:1px 0 0}
+#app .r616card .keyline{font-size:13px;font-weight:700;line-height:1.4;margin:2px 0 0;display:inline}
+/* SMS送信状態バッジは「最も進んだ状況」の行末に並べる (独立行をなくす) */
+#app .r616card .keyline + div:not(.flex){display:inline-block;margin-left:6px;vertical-align:middle}
+#app .r616card .keyline + div:not(.flex) .badge{margin:0;padding:1px 8px;font-size:11.5px}
+/* --- 主ボタン行: 初回SMS / おすすめ案件を見る の横並びを維持 (48px) --- */
+#app .r616card .r614main,#app .r616card .r616main{gap:6px 8px !important;margin-top:8px !important}
+#app .r616card .r614main>button.btn.primary,
+#app .r616card .r616main>button.btn.primary,
+#app .r616card .r614main>a.btn.primary,
+#app .r616card .r616main>a.btn.primary,
+#app .r616card .r614main>.btn:disabled,
+#app .r616card .r616main>.btn:disabled,
+#app .r616card .r614main>button.r616recBtn,
+#app .r616card .r616main>button.r616recBtn{flex:1 1 42% !important;min-height:48px !important;padding:8px 10px;font-size:15px;font-weight:800}
+#app .r616card .r614main>button.r616recBtn,
+#app .r616card .r616main>button.r616recBtn{color:var(--accent);border-color:var(--accent);background:var(--chip)}
+/* 送信済みチェック: 行の高さを詰める (チェック自体の大きさは維持) */
+#app .r616card .r614main>label,#app .r616card .r616main>label{flex:1 1 100% !important;min-height:36px !important;margin:0;padding:0 2px;gap:8px !important;font-size:14px}
+#app .r616card .r614main>label input[type="checkbox"],#app .r616card .r616main>label input[type="checkbox"]{width:24px;height:24px;min-height:24px;margin:0}
+/* --- 下段: 求職者詳細 / 別案件 / 電話する (補助ボタンなので44pxに) --- */
+#app .r616card .r614actions,#app .r616card .r616actions{gap:6px !important;margin-top:4px !important;flex-wrap:wrap}
+#app .r616card .r614actions>button,#app .r616card .r614actions>.btn,
+#app .r616card .r616actions>button,#app .r616card .r616actions>.btn{flex:1 1 28% !important;min-width:0;min-height:44px !important;padding:6px 8px;font-size:14px;white-space:nowrap;background:var(--muted)}
+#app .r616card .r616actions>a.btn[href^="tel:"],#app .r616card .r614actions>a.btn[href^="tel:"]{background:var(--ok-bg);color:var(--ok);border-color:#bfe0cc}
+@media(prefers-color-scheme:dark){#app .r616card .r616actions>a.btn[href^="tel:"],#app .r616card .r614actions>a.btn[href^="tel:"]{color:#86efac;border-color:var(--border)}}
+/* --- 返信バッジ等の行 (ある場合) も余白を詰める --- */
+#app .r616card .badge{margin:1px 2px 1px 0}
+/* --- 一覧の件数行: 余白を詰める --- */
+#app p.small:has(#listTotal){margin:6px 0 2px}
+@media (max-width:640px){
+  #app article.card.r616card{padding:9px 10px;margin:5px 0}
+}
+</style>
+
 </body></html>

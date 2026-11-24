@@ -9,8 +9,14 @@
      もう一度押してもらう (自動で開けた場合はそのまま開く)。
    - 逆引きのSMSには回答フォームを付けない (一覧の「タップ時にフォーム発行」を通さない)。
    ================================================================ */
-window._r643 = "9.3.10";
+window._r643 = "9.3.11";
 window._r643Asked = window._r643Asked || {};
+/* 枠 (Apps Script) の中では、画面全体で開く指定 (_top) でないと iPhone が止める (R627 と同じ) */
+function r643Target_(){ try { return r617InFrame_() ? "_top" : "_self"; } catch(e) { return "_top"; } }
+function r643Go_(href){
+  try { if (r617InFrame_()) { window.top.location.href = href; return; } } catch(e) {}
+  location.href = href;
+}
 function r643Href_(aid, cid){
   var a = r641Find_(aid);
   var c = null; try { c = CASES.find(function(x){ return x.id === cid; }); } catch(e) {}
@@ -31,6 +37,7 @@ function r643Upgrade_(){
       var a = document.createElement("a");
       a.className = "btn primary r643rev";
       a.setAttribute("href", href);
+      a.setAttribute("target", r643Target_());
       a.textContent = bs[i].getAttribute("data-r643tapped") ? "SMSを開く（もう一度タップ）" : "この案件のSMSを直接開く";
       bs[i].parentNode.replaceChild(a, bs[i]);
     }
@@ -61,7 +68,7 @@ function r643FetchPhones_(ids){
 /* 押されたとき: 番号があれば今すぐ開く。無ければまとめて取りに行き、ボタンを本物のリンクに変える */
 r641OpenRevSms = function(aid, cid, btn){
   var href = r643Href_(aid, cid);
-  if (href) { try { r615NavigateSms_(href); } catch(e) { location.href = href; } return; }
+  if (href) { r643Go_(href); return; }
   if (btn) { btn.textContent = "番号を確認中…"; btn.setAttribute("data-r643tapped", "1"); }
   delete window._r643Asked[aid];
   r643FetchPhones_([aid]).then(function(){
@@ -73,7 +80,7 @@ r641OpenRevSms = function(aid, cid, btn){
 var r643PrevResults_ = reverseResults;
 reverseResults = function(cid){
   var out = r643PrevResults_.apply(this, arguments);
-  try { out = out.replace(/<a class="btn primary" href="sms:/g, '<a class="btn primary r643rev" href="sms:'); } catch(e0) {}
+  try { out = out.replace(/<a class="btn primary" href="sms:/g, '<a class="btn primary r643rev" target="' + r643Target_() + '" href="sms:'); } catch(e0) {}
   try {
     var cache = window._r7Reverse;
     if (cache && cache.items && cache.items.length) {
@@ -93,6 +100,6 @@ try {
     } catch(e) {}
   }, true);
 } catch(e) {}
-window.APP_VERSION_LABEL = "v9.3.10";
+window.APP_VERSION_LABEL = "v9.3.11";
 try { r621PaintVersion_(); } catch(e) {}
 </script>

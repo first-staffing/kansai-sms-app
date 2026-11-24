@@ -12246,6 +12246,15 @@ r620NextTarget_ = function(){
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script>
+/* R630 (9.1.3) 2026-11-24  フォームの先回り作成 (R620) を完全に止める
+   KV の1日の書き込み上限対策。フォームは「初回SMS」を押したときだけ作る。
+   戻すときは window.R620_PREISSUE = true をこのブロックより前に置く。 */
+if (window.R620_PREISSUE !== true) window.R620_PREISSUE = false;
+window.APP_VERSION_LABEL = "v9.1.3";
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
 <style id="r617compact">
 /* ================================================================
    R617 応募者一覧カードのコンパクト化 (UIのみ / CSSだけで実施)

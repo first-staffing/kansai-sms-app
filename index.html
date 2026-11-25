@@ -14076,7 +14076,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.22";
+window.APP_VERSION_LABEL = "v9.3.23";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14129,6 +14129,43 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   window.viewFormRelayError_=viewFormRelayError_;
   /* すでに失敗表示になっていたら、ここから待ち直す */
   if((location.hash||"").indexOf("#/form")===0&&window._relayCtxFailedToken&&window._relayCtxFailedToken===relayToken()){waitOrFail()}
+}catch(e){}})();</script>
+<script id="r653rec8">/* r653 (2026-11-26 ユーザー指示「案件は最大8件まで」「案件は直近3か月以内に出たものだけ」「SMSも」):
+ フォーム・メール・SMS のおすすめを最大8件に。おすすめに使う案件は取得日 (acquired) が90日以内のものだけ (サーバー 9.32 と同じ規則)。 */
+(function(){try{
+  var N=8, DAYS=90;
+  try{R622_FORM_CASES=N}catch(e){}
+  try{MF.recCount=N}catch(e){}
+  window.r653Fresh_=function(c){
+    var t=Date.parse(String(c&&c.acquired||"").slice(0,10));
+    if(!t)return true; /* 日付の分からない端末側の案件は外さない (サーバー側で日付を見て選んでいる) */
+    return Date.now()-t<=DAYS*86400000;
+  };
+  if(typeof rankCasesForApplicant==="function"){
+    var pr=rankCasesForApplicant;
+    rankCasesForApplicant=function(applicant,cases){
+      var args=Array.prototype.slice.call(arguments);
+      args[1]=(cases||CASES||[]).filter(window.r653Fresh_);
+      return pr.apply(this,args);
+    };
+    window.rankCasesForApplicant=rankCasesForApplicant;
+  }
+  if(typeof r619FallbackCases_==="function"){
+    var pf=r619FallbackCases_;
+    r619FallbackCases_=function(applicant,n){
+      return (pf.call(this,applicant,(n||3)*3)||[]).filter(function(x){return window.r653Fresh_(x&&(x.case||x.c||x))}).slice(0,n||3);
+    };
+  }
+  if(typeof formCasesFor==="function"){
+    var pc=formCasesFor;
+    formCasesFor=function(a,h){
+      var ctx=window._relayCtx;
+      if(ctx&&typeof relayEnabled==="function"&&relayEnabled()&&Array.isArray(ctx.recommended_cases)&&ctx.recommended_cases.length){
+        return ctx.recommended_cases.map(relayCaseToLocal).slice(0,N);
+      }
+      return pc.apply(this,arguments);
+    };
+  }
 }catch(e){}})();</script>
 <script id="r652busy">/* r652 (2026-11-26 「反応が遅い」): サーバーとのやり取り中は、0.4秒たったら画面上部に「通信中…」を出す。
  押したのに何も起きていないように見える時間を無くす (処理そのものは変えない)。 */

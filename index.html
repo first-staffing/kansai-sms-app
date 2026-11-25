@@ -14038,7 +14038,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.20";
+window.APP_VERSION_LABEL = "v9.3.21";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14091,6 +14091,22 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   window.viewFormRelayError_=viewFormRelayError_;
   /* すでに失敗表示になっていたら、ここから待ち直す */
   if((location.hash||"").indexOf("#/form")===0&&window._relayCtxFailedToken&&window._relayCtxFailedToken===relayToken()){waitOrFail()}
+}catch(e){}})();</script>
+<script id="r651nocase">/* r651 (2026-11-25 フォームを固める): 紹介できる案件が0件のフォームでは「気になる案件」を必須にしない。
+ 従来は案件が無いと選びようがなく、送信ボタンを押しても「気になる案件を1つ以上選んでください」で止まり、回答できなかった。 */
+(function(){try{
+  if(typeof formAnsweredSteps_!=="function")return;
+  var prev=formAnsweredSteps_;
+  formAnsweredSteps_=function(){
+    var r=prev.apply(this,arguments);
+    try{
+      if(r&&!r.caseDone&&!document.querySelector(".fCase")){
+        r.caseDone=true; r.done=(r.caseDone?1:0)+(r.phoneDone?1:0);
+      }
+    }catch(e){}
+    return r;
+  };
+  window.formAnsweredSteps_=formAnsweredSteps_;
 }catch(e){}})();</script>
 <style id="r617compact">
 /* ================================================================

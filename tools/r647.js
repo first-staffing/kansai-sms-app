@@ -47,7 +47,7 @@ window._r647Items = [];
 function r647Chip_(it, label){
   var i = window._r647Items.length; window._r647Items.push(it);
   var on = it.raws.some(function(r){ return MF.munis.indexOf(r) >= 0; });
-  return '<button class="r647chip" aria-pressed="' + on + '" onclick="r647Toggle(' + i + ')">' + esc(label)
+  return '<button class="r647chip" aria-pressed="' + on + '" onclick="r647Toggle(' + i + ')">' + (on ? '✓ ' : '') + esc(label)
     + (it.count >= 10 ? '<small>' + it.count + '</small>' : '') + '</button>';
 }
 function r647Toggle(i){
@@ -74,7 +74,10 @@ function r647Html_(){
   st.textContent = ".r647pref{margin:10px 0 14px}.r647head{font-weight:700;font-size:15px;padding:6px 0;border-bottom:1px solid var(--border,#e5e7eb);margin-bottom:6px}"
     + ".r647head small{font-weight:400;color:#64748b;margin-left:4px}.r647row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}"
     + ".r647city{font-size:12px;font-weight:700;color:#1e3a5f;background:#eef2f7;border-radius:6px;padding:4px 8px;margin-right:2px}"
-    + ".r647chip{min-height:38px;padding:6px 10px}.r647chip small{font-size:10px;color:#64748b;margin-left:4px}.r647chip[aria-pressed=true] small{color:inherit}";
+    + ".r647chip{min-height:38px;padding:6px 10px}.r647chip small{font-size:10px;color:#64748b;margin-left:4px}"
+    + ".r647chip[aria-pressed=true]{background:#1e3a5f!important;color:#fff!important;border-color:#1e3a5f!important;font-weight:700}.r647chip[aria-pressed=true] small{color:#cbd5e1}"
+    + "#app .card button[onclick^='toggleMailPref'][aria-pressed=true]{background:#1e3a5f!important;color:#fff!important;border-color:#1e3a5f!important;font-weight:700}"
+    + ".r647sel{margin:6px 0 2px;padding:8px 10px;background:#eef2f7;border-radius:8px;font-size:13px}";
   document.head.appendChild(st);
 })();
 var r647PrevView_ = viewMail;
@@ -94,12 +97,19 @@ viewMail = function(){
       div.id = "r647Munis";
       div.innerHTML = r647Html_();
       box.parentNode.replaceChild(div, box);
+      var picked = window._r647Items.filter(function(it){ return it.raws.some(function(r){ return MF.munis.indexOf(r) >= 0; }); }).map(function(it){ return it.name; });
+      if (picked.length) {
+        var sel = document.createElement("div"); sel.className = "r647sel";
+        sel.innerHTML = "<b>選択中の市区町村 " + picked.length + "件</b>：" + esc(picked.join("、"));
+        var holder = document.getElementById("r645MuniDet") || div;
+        holder.parentNode.insertBefore(sel, holder);
+      }
       var sm = document.querySelector("#r645MuniDet summary");
       if (sm) sm.textContent = "市区町村から選ぶ（" + window._r647Items.length + "件・府県ごとに並んでいます）";
     }
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.15";
+window.APP_VERSION_LABEL = "v9.3.16";
 try { r621PaintVersion_(); } catch(e) {}
 </script>

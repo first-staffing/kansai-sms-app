@@ -14038,7 +14038,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.18";
+window.APP_VERSION_LABEL = "v9.3.19";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14057,7 +14057,7 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
     function again(){
       var st=window._relayCtxError&&window._relayCtxError.status;
       if(Date.now()-start>90000)return Promise.resolve(null);
-      if(st&&st!==404&&st!==0&&st<500)return Promise.resolve(null);
+      if(st===400||st===410)return Promise.resolve(null); /* 無効・期限切れははっきりしているので待たない。「見つからない」は200で返ることもあるため、それ以外は取り直す */
       note();
       return new Promise(function(r){setTimeout(r,5000)}).then(attempt);
     }

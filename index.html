@@ -13629,7 +13629,7 @@ window._r644 = "9.3.12";
     var head = "";
     if (r.phase === "creating") head = "送信を開始しました。配信を作成しています…（そのままお待ちください）";
     else if (r.phase === "sending") head = "送信中 " + Math.min(done + 1, total || done + 1) + "件目／全" + (total || "?") + "件";
-    else if (r.phase === "server") head = "サーバーで順に送信中（画面を閉じても進みます）";
+    else if (r.phase === "server") head = "バックグラウンドで送信中（画面を閉じても止まりません）";
     else if (r.phase === "done") head = "送信完了";
     else if (r.phase === "stopped") head = "送信が止まっています";
     else if (r.phase === "failed") head = "送信できませんでした";
@@ -13641,6 +13641,13 @@ window._r644 = "9.3.12";
       html += '<div>送信済み <b>' + (r.sent || 0) + '</b>件 ・ 失敗 <b>' + (r.failed || 0) + '</b>件 ・ 送信対象外 ' + (r.excl || 0) + '件 ・ 残り <b>' + remain + '</b>件</div>';
     }
     if (r.note) html += '<div class="small" style="margin-top:4px">' + esc(r.note) + '</div>';
+    if (r.phase === "server" || r.phase === "sending") {
+      var now = Date.now(), lp = r.lastProgressAt || r.at || now, ago = Math.round((now - lp) / 1000);
+      var live = ago < 150 ? '<span style="color:#16a34a">● 動いています</span>（最後に進んだのは ' + (ago < 60 ? ago + '秒前' : Math.round(ago / 60) + '分前') + '）'
+        : '<span style="color:#b45309">● しばらく進んでいません</span>（' + Math.round(ago / 60) + '分前から。1分おきに自動で再開します）';
+      var eta = (r.rate && remain) ? '・あと約' + Math.max(1, Math.ceil(remain / r.rate)) + '分' : '';
+      html += '<div style="margin-top:6px">' + live + eta + '</div>';
+    }
     if (r.queue) {
       var c = r.queue;
       html += '<div class="small" style="margin-top:4px">サーバーのキュー（あなたの分）: 送信待ち ' + (c.waiting || 0) + ' ・ 送信中 ' + (c.sending || 0) + ' ・ 失敗 ' + (c.failed || 0) + ' ・ 対象外 ' + (c.skipped || 0) + '</div>';
@@ -13649,6 +13656,22 @@ window._r644 = "9.3.12";
     panel().innerHTML = html;
   }
   window.r644Paint = paint;
+  /* 送信中はパネルを閉じても右下に小さな表示を残す (タップでパネルを開く) */
+  function paintPill(){
+    var el = document.getElementById("r652Pill");
+    var active = run && (run.phase === "server" || run.phase === "sending" || run.phase === "creating");
+    if (!active) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("button"); el.id = "r652Pill"; el.type = "button";
+      el.style.cssText = "position:fixed;right:10px;bottom:84px;z-index:9998;background:#1e3a5f;color:#fff;border:0;border-radius:999px;padding:10px 14px;font-size:14px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.25)";
+      el.onclick = function(){ paint(); };
+      document.body.appendChild(el);
+    }
+    var t = run.total || 0, left = run.remaining != null ? run.remaining : t;
+    el.textContent = "📨 送信中 " + Math.max(0, t - left) + "/" + (t || "?") + (run.rate && left ? "・あと約" + Math.max(1, Math.ceil(left / run.rate)) + "分" : "");
+  }
+  window.r652PaintPill = function(){ try { paintPill(); } catch(e) {} };
+  setInterval(function(){ try { paintPill(); if (document.getElementById("r644Panel") && run && (run.phase === "server" || run.phase === "sending")) paint(); } catch(e) {} }, 5000);
 
   /* 1・2: 押した瞬間の反応と二重押し防止 */
   var prevConfirm = confirmSendMail;
@@ -13674,7 +13697,7 @@ window._r644 = "9.3.12";
       else if (!opRes) { if (run.phase === "creating") { run.phase = "failed"; run.note = "配信を作れませんでした（条件が変わったか、通信に失敗しました）"; } }
       else {
         if (res && typeof res.target_count === "number") run.total = res.target_count;
-        if (res && res.idempotent_replay) { run.phase = "done"; run.note = "同じ内容の配信が作成済みだったため、二重には送っていません"; }
+        if (res && res.idempotent_replay) { run.phase = "server"; run.note = "同じ内容の配信はすでに作成済みです（二重には作っていません）。その配信の進み具合を表示します"; setTimeout(checkQueue, 800); }
         else if (res && res.relay_push && (res.relay_push.error || res.relay_push.ok === false)) { run.note = "注意: 回答フォームの情報を受け口へ送れていない可能性があります（" + (res.relay_push.error || "") + "）"; }
         if (run.phase === "creating") run.phase = "sending";
       }
@@ -13721,12 +13744,27 @@ window._r644 = "9.3.12";
         if (left > 0) {
           run = last && last.phase !== "done" ? last : { at: Date.now(), sent: 0, failed: 0, excl: 0, total: 0 };
           run.phase = (window._sendRun && window._sendRun.active) ? "sending" : "server";
+          var now = Date.now();
+          if (run.remaining == null || left < run.remaining) {
+            /* 減った分 = サーバーが送った分。進んだ時刻と速さ (通/分) を覚える */
+            if (run.remaining != null && run.lastProgressAt) {
+              var mins = Math.max(0.25, (now - run.lastProgressAt) / 60000);
+              var r1 = (run.remaining - left) / mins;
+              run.rate = run.rate ? Math.round((run.rate * 0.5 + r1 * 0.5) * 10) / 10 : Math.round(r1 * 10) / 10;
+            }
+            run.lastProgressAt = now;
+          }
           run.queue = c; run.remaining = left;
-          if (!run.total) run.total = left;
-          save(); paint();
-          setTimeout(checkQueue, 15000);
+          run.base = Math.max(run.base || 0, left + (run.sent || 0) + (run.failed || 0) + (run.excl || 0), left);
+          if (!run.total || run.total < run.base) run.total = run.base;
+          run.sent = Math.max(run.sent || 0, run.total - left - (c.failed || 0) - (c.skipped || 0) - (run.excl || 0));
+          run.failed = Math.max(run.failed || 0, c.failed || 0);
+          save(); paint(); paintPill();
+          setTimeout(checkQueue, document.hidden ? 30000 : 8000);
         } else if (last && last.at && Date.now() - last.at < 24 * 3600000 && last.phase !== "done" && last.phase !== "failed") {
           run = last; run.queue = c; run.remaining = 0; run.phase = "done";
+          if (run.total) run.sent = Math.max(run.sent || 0, run.total - (c.failed || 0) - (c.skipped || 0) - (run.excl || 0));
+          paintPill();
           run.note = "前回の送信は終わりました（失敗 " + (c.failed || 0) + "件・送信対象外 " + (c.skipped || 0) + "件はサーバーの記録に残っています）";
           save(); paint();
         }
@@ -14038,7 +14076,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.21";
+window.APP_VERSION_LABEL = "v9.3.22";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14091,6 +14129,25 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   window.viewFormRelayError_=viewFormRelayError_;
   /* すでに失敗表示になっていたら、ここから待ち直す */
   if((location.hash||"").indexOf("#/form")===0&&window._relayCtxFailedToken&&window._relayCtxFailedToken===relayToken()){waitOrFail()}
+}catch(e){}})();</script>
+<script id="r652busy">/* r652 (2026-11-26 「反応が遅い」): サーバーとのやり取り中は、0.4秒たったら画面上部に「通信中…」を出す。
+ 押したのに何も起きていないように見える時間を無くす (処理そのものは変えない)。 */
+(function(){try{
+  if(typeof postJson_!=="function")return;
+  var n=0,timer=null,t0=0;
+  function el(){var e=document.getElementById("r652Busy");if(!e){e=document.createElement("div");e.id="r652Busy";e.style.cssText="position:fixed;left:50%;top:6px;transform:translateX(-50%);z-index:10000;background:rgba(30,58,95,.92);color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;display:none;pointer-events:none";document.body.appendChild(e)}return e}
+  function show(){var e=el();var sec=Math.round((Date.now()-t0)/1000);e.textContent="通信中…"+(sec>=3?"（"+sec+"秒）":"");e.style.display="block"}
+  function tick(){if(n>0){show();timer=setTimeout(tick,1000)}}
+  var prev=postJson_;
+  postJson_=function(req){
+    var quiet=req&&/^(getSendQueueStats|relayPull|ping)/.test(String(req.action||""));
+    if(!quiet){if(n===0){t0=Date.now();clearTimeout(timer);timer=setTimeout(tick,400)}n++}
+    var done=function(){if(quiet)return;n=Math.max(0,n-1);if(n===0){clearTimeout(timer);var e=document.getElementById("r652Busy");if(e)e.style.display="none"}};
+    var out;
+    try{out=prev.apply(this,arguments)}catch(e){done();throw e}
+    if(out&&typeof out.then==="function")out.then(done,done);else done();
+    return out;
+  };
 }catch(e){}})();</script>
 <script id="r651nocase">/* r651 (2026-11-25 フォームを固める): 紹介できる案件が0件のフォームでは「気になる案件」を必須にしない。
  従来は案件が無いと選びようがなく、送信ボタンを押しても「気になる案件を1つ以上選んでください」で止まり、回答できなかった。 */

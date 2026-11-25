@@ -14076,7 +14076,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.23";
+window.APP_VERSION_LABEL = "v9.3.24";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14129,6 +14129,23 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   window.viewFormRelayError_=viewFormRelayError_;
   /* すでに失敗表示になっていたら、ここから待ち直す */
   if((location.hash||"").indexOf("#/form")===0&&window._relayCtxFailedToken&&window._relayCtxFailedToken===relayToken()){waitOrFail()}
+}catch(e){}})();</script>
+<script id="r654noexp">/* r654 (2026-11-26 ユーザー指摘「フォーム回答に経験8年が必ず付いてくる」):
+ 経験年数を入力していないとき、端末内の見本データ (サンプル応募者 A0001 = 経験8年) の値が回答に入っていた。
+ 中継フォームでは、本人がその場で入力した値だけを送る。 */
+(function(){try{
+  if(typeof relayLocalResponseFromDom!=="function")return;
+  var prev=relayLocalResponseFromDom;
+  relayLocalResponseFromDom=function(){
+    var r=prev.apply(this,arguments);
+    try{
+      var el=document.getElementById("fExpYears");
+      var typed=el?String(el.value||"").trim():"";
+      if(!typed){ r.experience=""; r.experience_years=""; }
+    }catch(e){}
+    return r;
+  };
+  window.relayLocalResponseFromDom=relayLocalResponseFromDom;
 }catch(e){}})();</script>
 <script id="r653rec8">/* r653 (2026-11-26 ユーザー指示「案件は最大8件まで」「案件は直近3か月以内に出たものだけ」「SMSも」):
  フォーム・メール・SMS のおすすめを最大8件に。おすすめに使う案件は取得日 (acquired) が90日以内のものだけ (サーバー 9.32 と同じ規則)。 */

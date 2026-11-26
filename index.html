@@ -14285,4 +14285,288 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
 }
 </style>
 
+<script id="r656">/* ================================================================
+   r656 (2026-11-27 ユーザー指示)
+   1. 送信中に画面があちこち動くのを止める（進み具合の表示場所を固定）
+   2. 送信前の確認画面に、求職者の名前と案件を出す
+   3. 確認画面で求職者を外せるようにする（サーバーが対応している場合だけ有効）
+   4. 配信NGリストに入っている人には、Gmail・SMSとも送れないようにする
+   ================================================================ */
+window._r656 = "9.3.26";
+(function(){
+  var esc6 = function(s){ try { return esc(s); } catch(e) { return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]; }); } };
+  var toast6 = function(m, k){ try { showToast(m, k); } catch(e) {} };
+
+  /* ---------- 1. 画面のガタつき対策 ---------- */
+  try {
+    var st = document.createElement("style");
+    st.textContent =
+      "#mailProg{min-height:96px;max-height:160px;overflow:auto;overflow-anchor:none;contain:layout}" +
+      "#r614SendDock{display:none !important}" +
+      "#r644Panel{min-height:118px;max-height:40vh !important}" +
+      "#r652Busy{pointer-events:none}" +
+      "html,body{overflow-anchor:none}" +
+      ".r656list{max-height:46vh;overflow:auto;border:1px solid var(--border,#ddd);border-radius:8px;margin:8px 0}" +
+      ".r656row{display:flex;gap:8px;align-items:flex-start;padding:8px;border-bottom:1px solid var(--border,#eee)}" +
+      ".r656row.out{opacity:.45;background:#fef2f2}" +
+      ".r656row .who{flex:1 1 auto;min-width:0}" +
+      ".r656row .cases{font-size:12.5px;color:#475569;margin-top:2px;line-height:1.5}" +
+      ".r656row button{flex:0 0 auto;min-height:38px;padding:4px 12px}" +
+      ".r656ng{display:inline-block;background:#b91c1c;color:#fff;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:700;margin-left:6px}";
+    document.head.appendChild(st);
+  } catch(e) {}
+  /* 送信中の文言は高さの決まった枠の中だけで書き換える（下の要素が上下しない） */
+  try {
+    if (typeof paintSendProgress === "function") {
+      paintSendProgress = function(html){
+        var mp = document.getElementById("mailProg");
+        if (!mp) return;
+        var y = window.scrollY;
+        mp.innerHTML = html;
+        if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
+      };
+    }
+  } catch(e) {}
+
+  /* ---------- 4. 配信NGリスト（先に読んでおく） ---------- */
+  var NG = { ids: {}, phones: {}, emails: {}, loaded: false, count: 0 };
+  window._r656Ng = NG;
+  var digits = function(s){ return String(s || "").replace(/[^0-9]/g, "").replace(/^81(?=[789]0)/, "0"); };
+  function loadNg(){
+    try {
+      if (!(window._r6ServerMode && CONFIG && CONFIG.API_URL && typeof apiCall === "function")) return;
+      apiCall({ action: "ngList" }).then(function(res){
+        if (!res || typeof res !== "object" || !res.ok_ng) return;
+        NG.ids = {}; NG.phones = {}; NG.emails = {};
+        (res.applicant_ids || []).forEach(function(x){ NG.ids[String(x)] = true; });
+        (res.phones || []).forEach(function(x){ var d = digits(x); if (d) NG.phones[d] = true; });
+        (res.emails || []).forEach(function(x){ var e = String(x || "").trim().toLowerCase(); if (e) NG.emails[e] = true; });
+        NG.loaded = true; NG.count = res.count || 0;
+      }).catch(function(){});
+    } catch(e) {}
+  }
+  window.r656LoadNg = loadNg;
+  setTimeout(loadNg, 1500);
+  setInterval(loadNg, 10 * 60000);
+  function isNgApplicant(a){
+    if (!a) return false;
+    if (NG.ids[String(a.id || a.applicant_id || "")]) return true;
+    var d = digits(a.phone || a.tel);
+    if (d && NG.phones[d]) return true;
+    var em = String(a.email || "").trim().toLowerCase();
+    if (em && NG.emails[em]) return true;
+    return false;
+  }
+  window.r656IsNg = isNgApplicant;
+  function smsHrefIsNg(href){
+    var m = /^sms:([^?&;]*)/i.exec(String(href || ""));
+    if (!m) return false;
+    var d = digits(decodeURIComponent(m[1]));
+    return !!(d && NG.phones[d]);
+  }
+  /* SMS作成画面へ移る直前に止める（主経路） */
+  try {
+    if (typeof r615NavigateSms_ === "function") {
+      var prevNav = r615NavigateSms_;
+      r615NavigateSms_ = function(href){
+        if (smsHrefIsNg(href)) { toast6("この方は配信NGリストに入っているため、SMSを開きませんでした", "bad"); return; }
+        return prevNav.apply(this, arguments);
+      };
+    }
+  } catch(e) {}
+  try {
+    if (typeof openSmsDirect615 === "function") {
+      var prevOpen = openSmsDirect615;
+      openSmsDirect615 = function(id, btn){
+        var a = null;
+        try { a = (applicants || []).find(function(x){ return x.id === id; }); } catch(e) {}
+        if (NG.ids[String(id)] || isNgApplicant(a)) {
+          try { if (btn) { btn.textContent = "配信NGのため送れません"; btn.disabled = true; } } catch(e) {}
+          toast6("この方は配信NGリストに入っているため、SMSを開きませんでした", "bad");
+          return;
+        }
+        return prevOpen.apply(this, arguments);
+      };
+      try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.openSmsDirect615 = openSmsDirect615; } catch(e) {}
+    }
+  } catch(e) {}
+  /* 画面内の sms: リンク（逆引きなど）を押したときも止める */
+  try {
+    document.addEventListener("click", function(ev){
+      try {
+        var t = ev.target, a = null;
+        while (t && t !== document) { if (t.tagName === "A") { a = t; break; } t = t.parentNode; }
+        if (a && smsHrefIsNg(a.getAttribute("href"))) {
+          ev.preventDefault(); ev.stopPropagation();
+          toast6("この方は配信NGリストに入っているため、SMSを開きませんでした", "bad");
+        }
+      } catch(e) {}
+    }, true);
+  } catch(e) {}
+  /* 一覧カードに「配信NG」を表示 */
+  try {
+    if (typeof cardHtml === "function") {
+      var prevCard = cardHtml;
+      cardHtml = function(a){
+        var h = prevCard.apply(this, arguments);
+        try {
+          if (isNgApplicant(a)) {
+            h = String(h).replace(/(<b[^>]*>)/, '<span class="r656ng">配信NG</span>$1');
+          }
+        } catch(e) {}
+        return h;
+      };
+    }
+  } catch(e) {}
+
+  /* ---------- 2・3. 送信前の確認画面: 名前と案件の一覧・外す ---------- */
+  window._r656Excl = window._r656Excl || {};
+  window._r656Prev = null;
+  function curSnap(){ try { return mailSnapshot(); } catch(e) { return ""; } }
+  if (typeof fetchMailPreview === "function") {
+    var prevFetch = fetchMailPreview;
+    fetchMailPreview = function(){
+      var p = prevFetch.apply(this, arguments);
+      try { Promise.resolve(p).then(function(res){ if (res && typeof res === "object") window._r656Prev = res; }, function(){}); } catch(e) {}
+      return p;
+    };
+  }
+  function exclIds(){
+    var out = [];
+    Object.keys(window._r656Excl || {}).forEach(function(k){ if (window._r656Excl[k]) out.push(k); });
+    return out;
+  }
+  window.r656ExclIds = exclIds;
+  function listRows(){
+    var res = window._r656Prev || {};
+    var rows = Array.isArray(res.preview_all) ? res.preview_all : (Array.isArray(res.preview) ? res.preview : []);
+    return rows;
+  }
+  function paintCount(){
+    var res = window._r656Prev || {};
+    var total = (res.target_count != null) ? Number(res.target_count) : listRows().length;
+    var n = exclIds().length;
+    var el = document.getElementById("r656Count");
+    if (el) el.innerHTML = "送信する人数: <b>" + Math.max(0, total - n) + "名</b>" + (n ? "（外した人 " + n + "名）" : "");
+  }
+  window.r656Toggle = function(aid){
+    var res = window._r656Prev || {};
+    if (!res.supports_exclude) { toast6("外す機能はサーバーの更新後に使えます", "warn"); return; }
+    window._r656Excl[aid] = !window._r656Excl[aid];
+    var row = document.getElementById("r656r_" + aid);
+    if (row) {
+      row.classList.toggle("out", !!window._r656Excl[aid]);
+      var b = row.querySelector("button");
+      if (b) b.textContent = window._r656Excl[aid] ? "戻す" : "外す";
+    }
+    paintCount();
+  };
+  window.r656Filter = function(q){
+    q = String(q || "").trim();
+    var box = document.getElementById("r656List"); if (!box) return;
+    [].forEach.call(box.querySelectorAll(".r656row"), function(r){
+      r.style.display = (!q || (r.getAttribute("data-k") || "").indexOf(q) >= 0) ? "" : "none";
+    });
+  };
+  function caseLine(rec){
+    if (!rec) return "";
+    var nm = rec.facility_name || rec.f || rec.title || "";
+    var km = (rec.distance_km != null && rec.distance_km !== "") ? "（" + rec.distance_km + "km）" : (rec.d != null ? "（" + rec.d + "km）" : "");
+    return esc6(nm) + km;
+  }
+  function confirmSection(){
+    var res = window._r656Prev || {};
+    var rows = listRows();
+    if (!rows.length) return '<p class="small">対象者の一覧はサーバーから受け取れませんでした（人数は上のとおりです）。</p>';
+    var all = Array.isArray(res.preview_all);
+    var canEx = !!res.supports_exclude;
+    var h = '<div style="margin-top:10px"><b>送る相手と案件</b>'
+      + '<p id="r656Count" class="small"></p>'
+      + (all ? "" : '<p class="small">※ 先頭' + rows.length + '名だけ表示しています（全員の一覧はサーバー更新後に出ます）。</p>')
+      + (canEx ? '<p class="small">送らない人は「外す」を押してください。外した人には送信されません。</p>' : '<p class="small" style="color:#b45309">「外す」はサーバーの更新後に使えるようになります（今は表示のみ）。</p>')
+      + '<input type="search" placeholder="名前で絞り込む" oninput="r656Filter(this.value)" style="width:100%;min-height:40px;margin-top:4px">'
+      + '<div class="r656list" id="r656List">';
+    rows.forEach(function(r){
+      var aid = String(r.applicant_id || "");
+      var nm = r.name || r.surname || "（名前なし）";
+      var place = [r.prefecture, r.municipality].filter(Boolean).join("");
+      var recs = Array.isArray(r.recommended) ? r.recommended : (Array.isArray(r.recs) ? r.recs : []);
+      var out = !!window._r656Excl[aid];
+      h += '<div class="r656row' + (out ? " out" : "") + '" id="r656r_' + esc6(aid) + '" data-k="' + esc6(nm + " " + place) + '">'
+        + '<div class="who"><b>' + esc6(nm) + '</b>' + (place ? ' <span class="small">' + esc6(place) + '</span>' : "")
+        + '<div class="cases">' + (recs.length ? recs.map(function(c, i){ return (i + 1) + ". " + caseLine(c); }).join("<br>") : "おすすめ案件なし") + '</div></div>'
+        + '<button type="button" ' + (canEx ? "" : "disabled ") + 'onclick="r656Toggle(\'' + esc6(aid) + '\')">' + (out ? "戻す" : "外す") + '</button></div>';
+    });
+    h += '</div></div>';
+    return h;
+  }
+  if (typeof showModal === "function") {
+    var prevShow = showModal;
+    showModal = function(html){
+      try {
+        var s = String(html);
+        if (s.indexOf("<h3>送信前の確認</h3>") >= 0) {
+          if (window._r656ExclSnap !== curSnap()) { window._r656Excl = {}; window._r656ExclSnap = curSnap(); }
+          var i = s.indexOf('<div class="flex"><button class="primary" onclick="confirmSendMail()">');
+          var sec = confirmSection();
+          html = i >= 0 ? s.slice(0, i) + sec + s.slice(i) : s + sec;
+          var r = prevShow.call(this, html);
+          paintCount();
+          return r;
+        }
+      } catch(e) {}
+      return prevShow.apply(this, arguments);
+    };
+  }
+  /* 送信時: 外した人を対象から抜き、サーバーへ渡す */
+  if (typeof confirmSendMail === "function") {
+    var prevConfirm = confirmSendMail;
+    confirmSendMail = function(){
+      var ids = exclIds();
+      if (ids.length) {
+        var res = window._r656Prev || {};
+        if (!res.supports_exclude) {
+          alert("外した人がいますが、サーバーがまだ「外す」に対応していません。安全のため送信しませんでした。");
+          return Promise.resolve(null);
+        }
+        try {
+          var set = {}; ids.forEach(function(k){ set[k] = true; });
+          window._mailTargets = (window._mailTargets || []).filter(function(t){
+            var id = (t.applicant && t.applicant.id) || t.applicant_id || t.id;
+            return !set[String(id)];
+          });
+        } catch(e) {}
+      }
+      return prevConfirm.apply(this, arguments);
+    };
+  }
+  if (typeof enqueue === "function") {
+    var prevEnq = enqueue;
+    enqueue = function(type, payload){
+      try {
+        if (type === "mail_delivery" && payload && !payload.test) {
+          var ids = exclIds();
+          if (ids.length) payload.exclude_ids = ids.slice();
+        }
+      } catch(e) {}
+      return prevEnq.apply(this, arguments);
+    };
+  }
+  if (typeof opToRequests === "function") {
+    var prevOp = opToRequests;
+    opToRequests = function(op){
+      var reqs = prevOp.apply(this, arguments);
+      try {
+        if (op && op.type === "mail_delivery" && Array.isArray(reqs) && op.payload && Array.isArray(op.payload.exclude_ids) && op.payload.exclude_ids.length) {
+          reqs.forEach(function(r){ if (r && r.action === "mailCreateDelivery") r.exclude_ids = op.payload.exclude_ids.slice(); });
+        }
+      } catch(e) {}
+      return reqs;
+    };
+  }
+})();
+window.APP_VERSION_LABEL = "v9.3.26";
+try { r621PaintVersion_(); } catch(e) {}
+</script>
+
 </body></html>

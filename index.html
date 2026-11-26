@@ -14076,7 +14076,7 @@ viewMail = function(){
   } catch(e) {}
   return out;
 };
-window.APP_VERSION_LABEL = "v9.3.24";
+window.APP_VERSION_LABEL = "v9.3.25";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14129,6 +14129,21 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   window.viewFormRelayError_=viewFormRelayError_;
   /* すでに失敗表示になっていたら、ここから待ち直す */
   if((location.hash||"").indexOf("#/form")===0&&window._relayCtxFailedToken&&window._relayCtxFailedToken===relayToken()){waitOrFail()}
+}catch(e){}})();</script>
+<script id="r655fsmail">/* r655 (2026-11-26 ユーザー指示「Gmail送信の画面に FS 以外のクライアント名を出さない」):
+ Gmail の宛先はサーバー側で FS の応募者・FS登録のメールだけに絞っている (9.34)。
+ 画面の「会社（応募元）」の選択肢も他社名を出さず、ファーストスタッフィング固定の表示にする。 */
+(function(){try{
+  try{MF.companies=[]}catch(e){}
+  if(typeof r616MailTopHtml_==="function"){
+    var prev=r616MailTopHtml_;
+    r616MailTopHtml_=function(){
+      var h=prev.apply(this,arguments);
+      try{MF.companies=[]}catch(e){}
+      return String(h).replace(/<label>会社（応募元）<\/label><div class="flex r616cos">[\s\S]*?<\/div>/,
+        '<label>会社（応募元）</label><div class="flex r616cos"><span class="badge">ファーストスタッフィングのみ（Gmailは FS に登録されたメールアドレスだけに送ります）</span></div>');
+    };
+  }
 }catch(e){}})();</script>
 <script id="r654noexp">/* r654 (2026-11-26 ユーザー指摘「フォーム回答に経験8年が必ず付いてくる」):
  経験年数を入力していないとき、端末内の見本データ (サンプル応募者 A0001 = 経験8年) の値が回答に入っていた。

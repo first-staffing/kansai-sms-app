@@ -14211,12 +14211,16 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
 (function(){try{
   if(typeof postJson_!=="function")return;
   var n=0,timer=null,t0=0;
-  function el(){var e=document.getElementById("r652Busy");if(!e){e=document.createElement("div");e.id="r652Busy";e.style.cssText="position:fixed;left:50%;top:6px;transform:translateX(-50%);z-index:10000;background:rgba(30,58,95,.92);color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;display:none;pointer-events:none";document.body.appendChild(e)}return e}
+  window._r652LastAct=0;
+  ["pointerdown","keydown","change"].forEach(function(ev){document.addEventListener(ev,function(){window._r652LastAct=Date.now()},true)});
+  function el(){var e=document.getElementById("r652Busy");if(!e){e=document.createElement("div");e.id="r652Busy";e.style.cssText="position:fixed;left:50%;bottom:calc(86px + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:10000;background:rgba(30,58,95,.92);color:#fff;border-radius:999px;padding:6px 14px;font-size:13px;display:none;pointer-events:none";document.body.appendChild(e)}return e}
   function show(){var e=el();var sec=Math.round((Date.now()-t0)/1000);e.textContent="通信中…"+(sec>=3?"（"+sec+"秒）":"");e.style.display="block"}
   function tick(){if(n>0){show();timer=setTimeout(tick,1000)}}
   var prev=postJson_;
   postJson_=function(req){
-    var quiet=req&&/^(getSendQueueStats|relayPull|ping)/.test(String(req.action||""));
+    /* 4.0.1: 裏で自動に動く通信 (名簿の読み込み・先回りの準備など) では出さない。
+       押した・入力した直後 (2秒以内) に始まった通信と、その続きの通信だけ出す (上のボタンが隠れて押せないのを防ぐ) */
+    var quiet=(req&&/^(getSendQueueStats|relayPull|ping)/.test(String(req.action||"")))||(n===0&&Date.now()-(window._r652LastAct||0)>2000);
     if(!quiet){if(n===0){t0=Date.now();clearTimeout(timer);timer=setTimeout(tick,400)}n++}
     var done=function(){if(quiet)return;n=Math.max(0,n-1);if(n===0){clearTimeout(timer);var e=document.getElementById("r652Busy");if(e)e.style.display="none"}};
     var out;
@@ -14572,7 +14576,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.1";
+window.APP_VERSION_LABEL = "v4.0.2";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15009,7 +15013,13 @@ try { r621PaintVersion_(); } catch(e) {}
       var sb0=r633Body_;
       r633Body_=function(a){
         var t=sb0.apply(this,arguments);
-        try{t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,isFs(a)?INTRO:PLAIN)}catch(e){}
+        try{
+          t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,isFs(a)?INTRO:PLAIN);
+          /* 読みやすく・短く: 宛名のあとに1行あける／「担当エージェント」→「担当者」／名乗りと同じ社名の署名は外す */
+          t=t.replace(/^([^\n]*様)\n(?!\n)/,"$1\n\n");
+          t=t.replace("ご回答後、担当エージェントよりご連絡いたします。","ご回答後、担当者よりご連絡いたします。");
+          if(t.indexOf("株式会社ファーストスタッフィングです。")>=0)t=t.replace(/\n+株式会社ファーストスタッフィング\s*$/,"");
+        }catch(e){}
         return t;
       };
     }
@@ -15038,6 +15048,8 @@ try { r621PaintVersion_(); } catch(e) {}
     if(appEl&&window.MutationObserver)new MutationObserver(kickFs).observe(appEl,{childList:true,subtree:true});
     kickFs();
   }catch(e){}
+  /* 6: Gmailの件名・本文で {市区町村} を使えるようにする (サーバー 4.0 で対応済み) */
+  try{if(typeof KNOWN_TAGS_FRONT!=="undefined"&&KNOWN_TAGS_FRONT.indexOf("{市区町村}")<0)KNOWN_TAGS_FRONT.push("{市区町村}")}catch(e){}
   window.r660={NEW:NEW,migrate:migrate};
 }catch(e){try{console.warn("r660",e)}catch(_){}}})();</script>
 </body></html>

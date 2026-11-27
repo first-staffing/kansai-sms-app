@@ -150,7 +150,7 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
       + (meta ? "<small>" + esc(meta) + "</small>" : "")
       + (c.salary_band_text || c.salary_text ? '<small class="pay">時給 ' + esc(c.salary_band_text || c.salary_text) + "</small>" : "")
       + (c.hours_short_text ? "<small>" + esc(c.hours_short_text) + "</small>" : "")
-      + (c.description ? "<small>" + esc(c.description) + "</small>" : "")
+      /* 案件の備考（「11月・12月に入職できる方」など条件をしぼる書き方）は出さない。時期が合わない人を取りこぼすため (2026-11-27 ユーザー指示) */
       + "</span></button>";
   }
 

@@ -14576,7 +14576,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.3";
+window.APP_VERSION_LABEL = "v4.0.4";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15054,4 +15054,13 @@ try { r621PaintVersion_(); } catch(e) {}
   try{if(typeof KNOWN_TAGS_FRONT!=="undefined"&&KNOWN_TAGS_FRONT.indexOf("{市区町村}")<0)KNOWN_TAGS_FRONT.push("{市区町村}")}catch(e){}
   window.r660={NEW:NEW,migrate:migrate};
 }catch(e){try{console.warn("r660",e)}catch(_){}}})();</script>
+<script id="r661warm">/* 4.0.4 (2026-11-28): 担当者アプリを開いている間、応募者フォームの中継を5分おきに起こしておく。
+ しばらく使われていないと、求職者がリンクを開いたときの最初の読み込みが1〜2秒遅くなるため (無料の範囲・存在しない合言葉で問い合わせるだけ) */
+(function(){try{
+  var GAS="https://script.google.com/macros/s/AKfycbwN6DZ81c5uPRVe7lrH5kg9ikW8zR3JFxKcSUd6TCctWEiuU_0fI1RDGn8fBeyjI2fF/exec";
+  var last=0;
+  var warm=function(){try{if(document.visibilityState!=="visible"||Date.now()-last<240000)return;last=Date.now();fetch(GAS+"?path=form-context&token=warmup0000000000",{method:"GET",mode:"no-cors",credentials:"omit",cache:"no-store"}).catch(function(){})}catch(e){}};
+  setTimeout(warm,20000);setInterval(warm,300000);
+  document.addEventListener("visibilitychange",function(){if(document.visibilityState==="visible")setTimeout(warm,3000)});
+}catch(e){}})();</script>
 </body></html>

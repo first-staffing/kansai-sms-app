@@ -27,8 +27,11 @@ F.get = function () {
   return fetch(F.GAS + "?path=form-context&token=" + encodeURIComponent(F.t), { method: "GET", credentials: "omit" })
     .then(function (r) { return r.json(); });
 };
+F.saved = null;
+try { var sv = JSON.parse(sessionStorage.getItem("fctx:" + F.t) || "null"); if (sv && sv.at && Date.now() - sv.at < 30 * 60000 && sv.j && sv.j.ok) F.saved = sv.j; } catch (e) {}
 if (!/^[A-Za-z0-9_-]{16,100}$/.test(F.t)) { F.legacy(); }
-else { F.first = F.get().then(function (j) { return j; }, function () { return null; }); }
+else if (F.saved) { F.first = Promise.resolve(F.saved); }
+else { F.first = F.get().then(function (j) { try { if (j && j.ok && j.context) sessionStorage.setItem("fctx:" + F.t, JSON.stringify({ at: Date.now(), j: j })); } catch (e) {} return j; }, function () { return null; }); }
 window.addEventListener("error", function () { if (!F.rendered) F.legacy(); });
 </script>
 <style>
@@ -258,6 +261,11 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
     sending = true; var b = $("send"); b.disabled = true; b.textContent = "送信しています…"; $("err").hidden = true;
     var p = payload(), tries = 0;
     (function go() {
+      if (navigator.onLine === false) {
+        b.textContent = "電波が戻ったら自動で送信します…";
+        window.addEventListener("online", function once() { window.removeEventListener("online", once); b.textContent = "送信しています…"; go(); });
+        return;
+      }
       tries++;
       post(p).then(function (j) {
         if (j && j.ok) return done(p);

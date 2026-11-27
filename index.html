@@ -14572,7 +14572,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0";
+window.APP_VERSION_LABEL = "v4.0.1";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14918,4 +14918,126 @@ try { r621PaintVersion_(); } catch(e) {}
     kick();
   }catch(e){}
 }catch(e){try{console.warn("r659",e)}catch(_){}}})();</script>
+<style id="r660css">
+#app .r660fs{display:block;width:100%;min-height:50px;margin:0 0 10px;border-radius:12px;border:2px solid #1d4ed8;background:#fff;color:#1d4ed8;font-size:16px;font-weight:800;cursor:pointer}
+#app .r660fs[aria-pressed="true"]{background:#1d4ed8;color:#fff}
+</style>
+<script id="r660sms">/* 4.0.1 (2026-11-27 ユーザー指示「応募ありがとうございますはいらん。Indeed経由でご登録頂いてますファーストスタッフィングの、という感じで」)
+ 1. 初回SMSの名乗りを「Indeed経由でご登録いただいております、株式会社ファーストスタッフィングです。」にする
+ 2. 不具合の修正: 9.0.2 の「初期文面のままなら丁寧な文面に差し替える」処理が、9.3.31 で入れた新しい文面まで
+    古い初期文面と見なして差し替えていた (新しい文面が実際には使われていなかった)。この差し替えを止める
+ 3. フォームのリンクがまだ出来ていない時点で本文を作っても、あとからリンクが必ず「▼」の行の下に入るようにする */
+(function(){try{
+  var INTRO="Indeed経由でご登録いただいております、株式会社ファーストスタッフィングです。";
+  var MARK="▼気になるお仕事を選ぶだけ（約30秒）";
+  var NEW="{宛名}様\n\n"+INTRO+"\n\n{宛名}様のお近くで、ご希望に合いそうなお仕事が見つかりました。\n\n"+MARK+"\n{フォームURL}\n\n「まずは話だけ聞きたい」も大歓迎です。\nこのSMSに「1」とご返信いただければ、ご都合のよい時間にお電話いたします。";
+  var PLAIN="株式会社ファーストスタッフィングです。";
+  var isFs=function(a){try{return !!(a&&hasFsHistory(a))}catch(e){return false}};
+  var norm=function(t){return String(t||"").replace(/\s+/g,"")};
+  var OLDS=[];
+  try{OLDS.push(norm(SMS_FIRST_COMPACT_DEFAULT))}catch(e){}
+  try{OLDS.push(norm(R625_FIRST_COMPACT))}catch(e){}
+  var isOld=function(t){var n=norm(t);return !!n&&OLDS.indexOf(n)>=0};
+  var fixIntro=function(t){return String(t||"").replace(/株式会社ファーストスタッフィングです。\nご(?:応募|登録)ありがとうございます[！!。]?/g,INTRO)};
+  /* 2 */
+  try{r625IsOldCompact_=function(){return false}}catch(e){}
+  try{SMS_FIRST_COMPACT_DEFAULT=NEW}catch(e){}
+  /* 1: 保存されている文面を新しい名乗りへ (初期文面のまま、または名乗りの2行がそのまま残っている場合だけ) */
+  var migrate=function(persist){
+    try{
+      var ch=[];
+      ["sms_first_compact","sms_first"].forEach(function(k){
+        var t=templates[k];if(!t)return;
+        var n=(k==="sms_first_compact"&&isOld(t))?NEW:fixIntro(t);
+        if(n===t)return;
+        templates[k]=n;ch.push(k);
+        try{var id=(k==="sms_first_compact")?"registration_compact":"registration";var m=smsModes.find(function(x){return x.id===id});if(m&&(norm(m.body)===norm(t)||isOld(m.body)))m.body=n}catch(e){}
+      });
+      try{var mc=smsModes.find(function(x){return x.id==="registration_compact"});if(mc&&isOld(mc.body))mc.body=NEW}catch(e){}
+      if(!ch.length)return;
+      try{LS.set("templates",templates);LS.set("smsModes",smsModes)}catch(e){}
+      if(persist&&window._r6ServerMode&&typeof apiCall==="function"&&CONFIG.API_URL){
+        ch.forEach(function(k){try{apiCall({action:"updateTemplate",kind:k,body:templates[k]}).catch(function(){})}catch(e){}});
+      }
+    }catch(e){}
+  };
+  migrate(false);
+  try{
+    if(typeof applyServerTemplates_==="function"){
+      var ast0=applyServerTemplates_;
+      applyServerTemplates_=function(){var r=ast0.apply(this,arguments);try{migrate(true)}catch(e){}return r};
+      if(window.__APP_LOGIC__&&window.__APP_LOGIC__.applyServerTemplates_)window.__APP_LOGIC__.applyServerTemplates_=applyServerTemplates_;
+    }
+  }catch(e){}
+  /* 本文を組み立てる時点でも同じ直しをかける (保存前・古い端末の控えでも新しい文面になる) */
+  try{
+    if(typeof r614FirstBody_==="function"){
+      var fb0=r614FirstBody_;
+      r614FirstBody_=function(a){
+        var st=fb0.apply(this,arguments);
+        try{
+          if(st&&st.tpl&&st.tpl.id!=="survey"){
+            if(st.tpl.id==="registration_compact"&&isOld(st.tpl.body))st={tpl:st.tpl,body:personalize(NEW,a).replace("{不足ヒヤリング}",missingHearing(a))};
+            else if(st.body)st.body=fixIntro(st.body);
+            /* 「Indeed経由でご登録」はファーストスタッフィングの登録歴がある人だけ。それ以外の人には会社名だけを名乗る */
+            if(st.body&&!isFs(a))st.body=String(st.body).split(INTRO).join(PLAIN);
+          }
+        }catch(e){}
+        return st;
+      };
+    }
+  }catch(e){}
+  /* 3 */
+  try{
+    if(typeof r614BodyWithUrl_==="function"){
+      var bw0=r614BodyWithUrl_;
+      r614BodyWithUrl_=function(body,url){
+        try{
+          var b=String(body||"");
+          if(url&&b.indexOf(url)<0&&b.indexOf(MARK)>=0){
+            var i=b.indexOf(MARK)+MARK.length,rest=b.slice(i).replace(/^\n+/,"");
+            body=b.slice(0,i)+"\n"+url+"\n\n"+rest;
+          }
+        }catch(e){}
+        return bw0.call(this,body,url);
+      };
+    }
+  }catch(e){}
+  /* 4: アンケートフォームのSMSも同じ名乗りにする (「ご応募いただき、ありがとうございます」の行は外す) */
+  try{
+    if(typeof r633Body_==="function"){
+      var sb0=r633Body_;
+      r633Body_=function(a){
+        var t=sb0.apply(this,arguments);
+        try{t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,isFs(a)?INTRO:PLAIN)}catch(e){}
+        return t;
+      };
+    }
+  }catch(e){}
+  /* 5: 一覧（SMS送信・アンケートフォーム送信）の検索欄の上に「ファーストスタッフィング登録者だけ」の大きな切り替えボタン */
+  try{
+    window.r660FsToggle=function(){try{F.fsOnly=!F.fsOnly;state.visible=20;route()}catch(e){}};
+    var appEl=document.getElementById("app"),pendFs=false;
+    var putFs=function(){
+      pendFs=false;
+      try{
+        if(String(location.hash||"").indexOf("#/list")!==0)return;
+        var inp=document.querySelector('#app input[placeholder="氏名・電話番号・地域で検索"]');if(!inp)return;
+        var on=!!F.fsOnly,btn=document.getElementById("r660Fs");
+        if(!btn){
+          btn=document.createElement("button");btn.type="button";btn.id="r660Fs";btn.className="r660fs";
+          btn.setAttribute("onclick","r660FsToggle()");
+          inp.parentNode.insertBefore(btn,inp);
+        }
+        var label=on?"✓ ファーストスタッフィング登録者だけ表示中（タップで全員に戻す）":"ファーストスタッフィング登録者だけ表示する";
+        if(btn.textContent!==label)btn.textContent=label;
+        if(btn.getAttribute("aria-pressed")!==(on?"true":"false"))btn.setAttribute("aria-pressed",on?"true":"false");
+      }catch(e){}
+    };
+    var kickFs=function(){if(pendFs)return;pendFs=true;if(window.requestAnimationFrame)requestAnimationFrame(putFs);else setTimeout(putFs,50)};
+    if(appEl&&window.MutationObserver)new MutationObserver(kickFs).observe(appEl,{childList:true,subtree:true});
+    kickFs();
+  }catch(e){}
+  window.r660={NEW:NEW,migrate:migrate};
+}catch(e){try{console.warn("r660",e)}catch(_){}}})();</script>
 </body></html>

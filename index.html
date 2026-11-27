@@ -14565,8 +14565,69 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v9.3.27";
+window.APP_VERSION_LABEL = "v9.3.28";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
+<script id="r657speed">/* r657 (2026-11-27 ユーザー指示「全体の動きを速く。立ち上げ・検索・UI・リロード」):
+ 1. サマリーの描画を 1フレーム1回にまとめる (通信が返るたびに何度も描き直して画面が揺れていた)
+ 2. 同じ読み取りが同時に飛んだら1回にまとめる・直後の同じ読み取りは手元の結果をすぐ返す
+ 3. 件数のサマリーは前回の値ですぐ表示し、裏で最新に差し替える (リロード・立ち上げが待たない)
+ 4. 書き込み系の操作をしたら、手元に覚えた一覧系の結果は捨てる (古い表示を出さない)
+ 5. 開いている間は4分おきにサーバーを起こしておく (最初の1回が遅くなるのを防ぐ) */
+(function(){try{
+  /* 1 */
+  if(typeof renderSummary==="function"){
+    var rsPrev=renderSummary,rsPend=false;
+    renderSummary=function(){
+      if(rsPend)return;rsPend=true;
+      var run=function(){rsPend=false;try{rsPrev()}catch(e){}};
+      if(window.requestAnimationFrame)requestAnimationFrame(run);else setTimeout(run,16);
+    };
+  }
+  /* 2-4 */
+  var TTL={getApplicantSummary:30000,getResponseSummary:15000,getOperators:300000,getTemplates:120000,ngList:300000,
+    getDigStats:60000,getMuniFacets:600000,getDigTodayList:30000,getDigSegment:30000,searchApplicants:15000,getResponses:10000,
+    searchSpecialCandidates:15000,searchReverseCandidates:15000};
+  var STABLE={getOperators:1,getTemplates:1,getMuniFacets:1,ngList:1};
+  var NOINVAL={ping:1,getApplicant:1,mailPreviewBody:1,mailPreviewTargets:1,getSendQueueStats:1,getImportStatus:1,getCaseSourceKeys:1,getCaseMaster:1,getPhones:1,getApplicantActivity:1,getApplicantSummary:1};
+  var SWR={getApplicantSummary:1,getResponseSummary:1};
+  var mem={},infl={};
+  var clone=function(o){try{return (typeof structuredClone==="function")?structuredClone(o):JSON.parse(JSON.stringify(o))}catch(e){return o}};
+  var lsKey=function(k){return "r657swr:"+k};
+  var lsGet=function(k){try{var v=localStorage.getItem(lsKey(k));return v?JSON.parse(v):null}catch(e){return null}};
+  var lsPut=function(k,v){try{localStorage.setItem(lsKey(k),JSON.stringify({at:Date.now(),res:v}))}catch(e){}};
+  var swrApply=function(a,res){
+    try{
+      if(a==="getApplicantSummary"&&res&&typeof res.total==="number"){window._r6ApplicantSummary=res;renderSummary()}
+    }catch(e){}
+  };
+  window.r657ClearCache=function(all){Object.keys(mem).forEach(function(k){var a=k.split("|")[0];if(all||!STABLE[a])delete mem[k]})};
+  var prev=apiCall;
+  apiCall=function(req){
+    var a=req&&req.action;
+    if(!a||!TTL[a]){
+      if(a&&!NOINVAL[a])window.r657ClearCache(false);
+      return prev.apply(this,arguments);
+    }
+    var k;try{k=a+"|"+JSON.stringify(req)}catch(e){return prev.apply(this,arguments)}
+    var now=Date.now(),m=mem[k];
+    if(m&&now-m.at<TTL[a])return Promise.resolve(clone(m.res));
+    if(infl[k])return infl[k].then(clone);
+    var self=this,args=arguments;
+    var net=prev.apply(self,args).then(function(res){mem[k]={at:Date.now(),res:res};if(SWR[a])lsPut(k,res);delete infl[k];return res},function(e){delete infl[k];throw e});
+    infl[k]=net;
+    if(SWR[a]&&!m){
+      var saved=lsGet(k);
+      if(saved&&saved.res&&now-saved.at<7*864e5){
+        net.then(function(res){swrApply(a,res)},function(){});
+        return Promise.resolve(clone(saved.res));
+      }
+    }
+    return net.then(clone);
+  };
+  if(window.__APP_LOGIC__)window.__APP_LOGIC__.apiCall=apiCall;
+  /* 5 */
+  setInterval(function(){try{if(document.visibilityState==="visible")prev({action:"ping"}).catch(function(){})}catch(e){}},240000);
+}catch(e){try{console.warn("r657",e)}catch(_){}}})();</script>
 </body></html>

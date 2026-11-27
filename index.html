@@ -1026,7 +1026,7 @@ const localCount=(window._mailTargets||[]).length;const opC=operators.find(o=>o.
 const showConfirm=function(serverRes){const info=buildMailConfirmInfo(serverRes,localCount,senderLabel,subjectC,MF.mode,scheduledC);window._mailConfirmInfo=info;showModal(`<h3>送信前の確認</h3><p class="kv">対象人数: ${info.count}名（${esc(info.countSource)}）\n送信者: ${esc(info.sender)}\n件名: ${esc(info.subject)}\n配信モード: ${esc(info.modeLabel)}${info.scheduledAt?`\n予約日時: ${esc(info.scheduledAt)}`:""}</p><div class="flex"><button class="primary" onclick="confirmSendMail()">この内容で送信する</button><button onclick="cancelMailConfirm()">戻る</button></div>`);return info};
 if(!CONFIG.API_URL){showConfirm(null);return Promise.resolve(null)}
 return fetchMailPreview().then(function(res){showConfirm(res);return res}).catch(function(e){window._mailConfirmInfo=null;showModal('<h3>送信前の確認ができませんでした</h3><p>サーバーで対象者の確認ができなかったため、まだ送信できません。電波の状態を確かめて、もう一度お試しください。</p><div class="flex"><button class="primary" onclick="closeModal();sendMail()">もう一度確認する</button><button onclick="cancelMailConfirm()">戻る</button></div>');return null})}
-function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(typeof res.target_count==="number"){d.count=res.target_count;d.server_target_count=res.target_count;if(typeof res.matched_count==="number")d.server_matched_count=res.matched_count;if(res.excluded!=null)d.server_excluded=res.excluded}if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${(typeof res.target_count==="number"?res.target_count:t.length)}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
+function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>受け付けました。配信を作成しています（10〜20秒）。他の画面に移っても大丈夫です。進み具合は右下に出ます。</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(typeof res.target_count==="number"){d.count=res.target_count;d.server_target_count=res.target_count;if(typeof res.matched_count==="number")d.server_matched_count=res.matched_count;if(res.excluded!=null)d.server_excluded=res.excluded}if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${(typeof res.target_count==="number"?res.target_count:t.length)}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
 /* ===== R3 方式変更: 画面からのバッチ送信 (施設メール配信と同じ方式) =====
    配信作成後、この画面が sendNextBatch を繰り返し呼んで自分のキューを送り切る。
    実行はアクセスユーザーとして走るため、その人の Gmail から送られ送信済みに残る。
@@ -13633,7 +13633,7 @@ window._r644 = "9.3.12";
     var r = run, total = r.total || 0, done = (r.sent || 0) + (r.failed || 0) + (r.excl || 0);
     var remain = (r.remaining != null) ? r.remaining : Math.max(0, total - done);
     var head = "";
-    if (r.phase === "creating") head = "送信を開始しました。配信を作成しています…（そのままお待ちください）";
+    if (r.phase === "creating") head = "配信を作成しています（10〜20秒）。他の画面に移っても大丈夫です。できたらお知らせします";
     else if (r.phase === "sending") head = "送信中 " + Math.min(done + 1, total || done + 1) + "件目／全" + (total || "?") + "件";
     else if (r.phase === "server") head = "バックグラウンドで送信中（画面を閉じても止まりません）";
     else if (r.phase === "done") head = "送信完了";
@@ -13674,6 +13674,7 @@ window._r644 = "9.3.12";
       document.body.appendChild(el);
     }
     var t = run.total || 0, left = run.remaining != null ? run.remaining : t;
+    if (run.phase === "creating") { var sec = Math.round((Date.now() - (run.at || Date.now())) / 1000); el.textContent = "📨 配信を作成中…" + (sec >= 3 ? "（" + sec + "秒）" : ""); return; }
     el.textContent = "📨 送信中 " + Math.max(0, t - left) + "/" + (t || "?") + (run.rate && left ? "・あと約" + Math.max(1, Math.ceil(left / run.rate)) + "分" : "");
   }
   window.r652PaintPill = function(){ try { paintPill(); } catch(e) {} };
@@ -13692,8 +13693,9 @@ window._r644 = "9.3.12";
       if (!window.confirm("10分以内に別の配信を送信しています。同じ人に二重に届くおそれがあります。それでも新しく送信しますか？")) return Promise.resolve(null);
     }
     run = { phase: "creating", at: Date.now(), sent: 0, failed: 0, excl: 0, total: (window._mailTargets || []).length };
-    save(); paint();
-    try { showToast("送信を開始しました"); } catch(e) {}
+    save(); paint(); try { paintPill(); } catch(e) {}
+    try { if (!window._r662Tick) window._r662Tick = setInterval(function(){ try { if (run && run.phase === "creating") paintPill(); else { clearInterval(window._r662Tick); window._r662Tick = null; } } catch(e) {} }, 1000); } catch(e) {}
+    try { showToast("受け付けました。配信を作成しています（他の作業をしていて大丈夫です）"); } catch(e) {}
     var p;
     try { p = prevConfirm.apply(this, arguments); } catch(e) { run.phase = "failed"; run.note = String(e && e.message || e); save(); paint(); throw e; }
     Promise.resolve(p).then(function(opRes){
@@ -13705,9 +13707,9 @@ window._r644 = "9.3.12";
         if (res && typeof res.target_count === "number") run.total = res.target_count;
         if (res && res.idempotent_replay) { run.phase = "server"; run.note = "同じ内容の配信はすでに作成済みです（二重には作っていません）。その配信の進み具合を表示します"; setTimeout(checkQueue, 800); }
         else if (res && res.relay_push && (res.relay_push.error || res.relay_push.ok === false)) { run.note = "注意: 回答フォームの情報を受け口へ送れていない可能性があります（" + (res.relay_push.error || "") + "）"; }
-        if (run.phase === "creating") run.phase = "sending";
+        if (run.phase === "creating") { run.phase = "sending"; try { showToast("配信を作成しました。" + (run.total ? run.total + "件の" : "") + "送信を始めます"); } catch(e) {} }
       }
-      save(); paint();
+      save(); paint(); try { paintPill(); } catch(e) {}
     });
     return p;
   };
@@ -14220,7 +14222,7 @@ smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u800
   postJson_=function(req){
     /* 4.0.1: 裏で自動に動く通信 (名簿の読み込み・先回りの準備など) では出さない。
        押した・入力した直後 (2秒以内) に始まった通信と、その続きの通信だけ出す (上のボタンが隠れて押せないのを防ぐ) */
-    var quiet=(req&&/^(getSendQueueStats|relayPull|ping)/.test(String(req.action||"")))||(n===0&&Date.now()-(window._r652LastAct||0)>2000);
+    var quiet=(req&&/^(getSendQueueStats|relayPull|ping|mailCreateDelivery|sendNextBatch)/.test(String(req.action||"")))||(n===0&&Date.now()-(window._r652LastAct||0)>2000);
     if(!quiet){if(n===0){t0=Date.now();clearTimeout(timer);timer=setTimeout(tick,400)}n++}
     var done=function(){if(quiet)return;n=Math.max(0,n-1);if(n===0){clearTimeout(timer);var e=document.getElementById("r652Busy");if(e)e.style.display="none"}};
     var out;
@@ -14576,7 +14578,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.4";
+window.APP_VERSION_LABEL = "v4.0.5";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 

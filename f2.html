@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="format-detection" content="telephone=no">
+<title>回答フォーム</title>
+<link rel="preconnect" href="https://script.google.com">
+<link rel="preconnect" href="https://script.googleusercontent.com">
+<!--
+  応募者向けの回答フォーム（軽い専用ページ）。4.0 (2026-11-27)
+  SMS のリンク …/kansai-sms-app/f?t=<トークン> で開く。担当者アプリ本体 (index.html) は読み込まない。
+  フォームの中身は中継 (GAS) から取得し、回答も中継へ送る。項目名・形は従来フォームと同じ。
+  うまく開けないとき (中身がまだ届いていない・古いリンク・想定外のエラー) は、従来のフォーム
+  …/#/form?token=<トークン>&legacy=1 へ自動で切り替える。
+-->
+<script>
+/* 中身の取得は、画面の準備より先に始める */
+var F = { GAS: "https://script.google.com/macros/s/AKfycbwN6DZ81c5uPRVe7lrH5kg9ikW8zR3JFxKcSUd6TCctWEiuU_0fI1RDGn8fBeyjI2fF/exec", t: "", rendered: false, sent: false };
+try { F.t = (new URLSearchParams(location.search).get("t") || "").trim(); } catch (e) {}
+F.legacy = function () {
+  if (F.sent) return;
+  location.replace("./#/form" + (F.t ? "?token=" + encodeURIComponent(F.t) + "&legacy=1" : ""));
+};
+F.get = function () {
+  return fetch(F.GAS + "?path=form-context&token=" + encodeURIComponent(F.t), { method: "GET", credentials: "omit" })
+    .then(function (r) { return r.json(); });
+};
+if (!/^[A-Za-z0-9_-]{16,100}$/.test(F.t)) { F.legacy(); }
+else { F.first = F.get().then(function (j) { return j; }, function () { return null; }); }
+window.addEventListener("error", function () { if (!F.rendered) F.legacy(); });
+</script>
+<style>
+:root{--main:#1e3a8a;--soft:#eef2fb;--ink:#17202b;--sub:#5b6676;--line:#d9dfe8;--bg:#f3f5f9;--ok:#0a7d4f;--warn:#b45309}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.7 -apple-system,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",Meiryo,sans-serif}
+main{max-width:560px;margin:0 auto;padding:14px 12px 120px}
+.card{background:#fff;border-radius:16px;padding:18px 16px;margin:0 0 12px;border:1px solid var(--line)}
+h1{font-size:21px;line-height:1.4;margin:0 0 6px;font-weight:800}
+h2{font-size:17px;margin:0 0 4px;font-weight:800}
+.lead{margin:0;color:var(--sub);font-size:14.5px}
+.sub{margin:0 0 10px;color:var(--sub);font-size:13.5px}
+.from{margin:10px 0 0;font-size:12.5px;color:var(--sub)}
+.case{display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;font:inherit;color:inherit;background:#fff;border:2px solid var(--line);border-radius:14px;padding:13px 12px;margin:0 0 9px;cursor:pointer;min-height:64px}
+.case[aria-pressed=true]{border-color:var(--main);background:var(--soft)}
+.tick{flex:none;width:26px;height:26px;border-radius:50%;border:2px solid var(--line);display:grid;place-items:center;color:transparent;font-weight:800;font-size:15px;margin-top:2px}
+.case[aria-pressed=true] .tick{background:var(--main);border-color:var(--main);color:#fff}
+.case b{display:block;font-size:16px;line-height:1.45}
+.case small{display:block;color:var(--sub);font-size:13px;line-height:1.55;margin-top:2px}
+.case .pay{color:var(--ink);font-weight:700;font-size:14px}
+.new{display:inline-block;font-size:11px;font-weight:700;color:var(--warn);border:1px solid var(--warn);border-radius:6px;padding:0 5px;margin-left:6px;vertical-align:2px}
+.ghost{font:inherit;font-size:14.5px;font-weight:700;color:var(--main);background:#fff;border:1.5px solid var(--main);border-radius:999px;min-height:44px;padding:8px 18px;cursor:pointer}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+label.t{display:block;font-size:14px;font-weight:700;margin:14px 0 6px}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{font:inherit;font-size:14.5px;color:var(--ink);background:#fff;border:1.5px solid var(--line);border-radius:999px;min-height:44px;padding:8px 14px;cursor:pointer}
+.chip[aria-pressed=true]{background:var(--main);border-color:var(--main);color:#fff;font-weight:700}
+.chip.big{min-height:50px;font-weight:700;border-color:var(--main);color:var(--main)}
+.chip.big[aria-pressed=true]{color:#fff}
+.note{font-size:12.5px;color:var(--warn);margin:6px 0 0;min-height:1em}
+textarea{width:100%;font:inherit;font-size:16px;border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;min-height:84px;background:#fff;color:var(--ink)}
+.flow{background:var(--soft);border-radius:12px;padding:12px 14px;font-size:13.5px;color:#28364d}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.96);border-top:1px solid var(--line);padding:10px 12px calc(10px + env(safe-area-inset-bottom))}
+.barIn{max-width:560px;margin:0 auto}
+.prog{font-size:12.5px;color:var(--sub);margin:0 0 6px;text-align:center}
+.send{width:100%;font:inherit;font-size:17px;font-weight:800;color:#fff;background:var(--main);border:0;border-radius:14px;min-height:54px;cursor:pointer}
+.send:disabled{opacity:.6}
+.err{color:#b42318;font-size:14px;margin:0 0 6px;text-align:center}
+.opt{margin:18px 0 0;text-align:center;font-size:12.5px;color:var(--sub)}
+.link{font:inherit;font-size:12.5px;color:var(--sub);background:none;border:0;text-decoration:underline;cursor:pointer;min-height:44px;padding:8px}
+.done h1{color:var(--ok)}
+dl{margin:12px 0 0;font-size:14.5px}dt{color:var(--sub);font-size:12.5px;margin-top:8px}dd{margin:0;font-weight:700}
+.skel{height:64px;border-radius:14px;background:linear-gradient(90deg,#e9edf3,#f5f7fa,#e9edf3);background-size:200% 100%;animation:sk 1.2s linear infinite;margin:0 0 9px}
+@keyframes sk{to{background-position:-200% 0}}
+button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-offset:2px}
+@media(prefers-reduced-motion:reduce){.skel{animation:none}}
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="card"><h1>お仕事のご案内</h1><p class="lead" id="wait">あなた専用のフォームを開いています…</p></div>
+  <div class="card"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
+</main>
+<script>
+(function () {
+  "use strict";
+  if (!F.first) return;
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+  var WD = "日月火水木金土";
+  var BAND = { morning: "午前（9〜12時）", daytime: "昼（12〜15時）", evening: "夕方（15〜18時）", night: "夜（18〜21時）" };
+  var BANDS = ["morning", "daytime", "evening", "night"];
+  var TIMING = { immediate: "すぐにでも", this_month: "今月中", next_month: "来月", consult: "相談したい" };
+  var S = { cases: [], tour: [], tourUndecided: false, callDates: [], callBands: [], anytime: false, days: "", timing: "", free: "", more: false };
+  var ctx = null, submitId = "", sending = false;
+
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function ymd(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+  function dayList(from, n) {
+    var out = [], b = new Date();
+    for (var i = from; i < from + n; i++) {
+      var d = new Date(b.getFullYear(), b.getMonth(), b.getDate() + i);
+      out.push([ymd(d), (i === 0 ? "今日 " : i === 1 ? "明日 " : "") + (d.getMonth() + 1) + "/" + d.getDate() + "（" + WD[d.getDay()] + "）"]);
+    }
+    return out;
+  }
+  function dateLabel(s) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); if (!m) return s; var d = new Date(+m[1], +m[2] - 1, +m[3]); return (+m[2]) + "/" + (+m[3]) + "（" + WD[d.getDay()] + "）"; }
+  /* 宛名: 営業メモや記号を外して名字だけにする（従来フォームと同じ考え方） */
+  function nameOf(c) {
+    var s = String(c.surname || c.name || "");
+    s = s.split(/[\/／\\＼(（\[［<＜|｜,，、:：;；#＃@＠※★☆◎●○◆■□→⇒~〜]/)[0];
+    s = s.replace(/^[\s*\-・_.]+/, "").replace(/^[A-Za-zＡ-Ｚａ-ｚ]{1,3}[_＿]/, "").trim();
+    s = s.split(/[\s　]+/)[0].replace(/(様|さん)$/, "");
+    return s || "ご登録者";
+  }
+  function callText() {
+    var o = [];
+    var d = S.callDates.slice().sort().map(dateLabel);
+    var b = BANDS.filter(function (x) { return S.callBands.indexOf(x) >= 0; }).map(function (x) { return BAND[x]; });
+    if (d.length) o.push(d.join("・"));
+    if (b.length) o.push(b.join("・"));
+    if (S.anytime) o.push("いつでも可");
+    return o.join(" ");
+  }
+  function saveDraft() { try { sessionStorage.setItem("fdraft:" + F.t, JSON.stringify(S)); } catch (e) {} }
+  function loadDraft() {
+    try {
+      var d = JSON.parse(sessionStorage.getItem("fdraft:" + F.t) || "null"); if (!d) return;
+      var ids = {}; ctx.recommended_cases.forEach(function (c) { ids[c.case_id] = 1; });
+      S.cases = (d.cases || []).filter(function (x) { return ids[x]; });
+      ["tour", "callDates", "callBands"].forEach(function (k) { if (Array.isArray(d[k])) S[k] = d[k].slice(0, 5); });
+      S.tourUndecided = !!d.tourUndecided; S.anytime = !!d.anytime; S.more = !!d.more;
+      S.days = String(d.days || ""); S.timing = String(d.timing || ""); S.free = String(d.free || "");
+    } catch (e) {}
+  }
+  function chip(group, val, label, cls) { return '<button type="button" class="chip' + (cls ? " " + cls : "") + '" data-g="' + group + '" data-v="' + esc(val) + '" aria-pressed="false">' + esc(label) + "</button>"; }
+
+  function caseHtml(c, i) {
+    var dist = (c.distance_km != null && c.distance_km !== "") ? "約" + Number(c.distance_km).toFixed(1) + "km" : "";
+    var meta = [c.municipality, c.service_type, dist].filter(Boolean).join("／");
+    var fresh = false; try { fresh = c.updated_at_src && (Date.now() - Date.parse(c.updated_at_src)) < 7 * 864e5; } catch (e) {}
+    return '<button type="button" class="case" data-cid="' + esc(c.case_id) + '" aria-pressed="false"' + (i >= 3 ? ' data-more="1"' : "") + ">"
+      + '<span class="tick">✓</span><span><b>' + esc(c.facility_name || "お仕事") + (fresh ? '<span class="new">新着</span>' : "") + "</b>"
+      + (meta ? "<small>" + esc(meta) + "</small>" : "")
+      + (c.salary_band_text || c.salary_text ? '<small class="pay">時給 ' + esc(c.salary_band_text || c.salary_text) + "</small>" : "")
+      + (c.description ? "<small>" + esc(c.description) + "</small>" : "")
+      + "</span></button>";
+  }
+
+  function render() {
+    var cases = ctx.recommended_cases, n = cases.length, who = nameOf(ctx);
+    var h = '<div class="card"><h1>' + esc(who) + "様へ<br>お近くのお仕事 " + n + "件</h1>"
+      + '<p class="lead">気になるお仕事をタップで選んでください。約30秒で終わります。</p>'
+      + (ctx.sender_name ? '<p class="from">担当：' + esc(ctx.sender_name) + "</p>" : "") + "</div>";
+    h += '<div class="card"><h2>1. 気になるお仕事</h2><p class="sub">いくつ選んでも大丈夫です。勤務時間はご希望に合わせて相談できます。</p><div id="cases">'
+      + cases.map(caseHtml).join("") + '</div><div class="row">'
+      + (n > 3 ? '<button type="button" class="ghost" id="more">ほか' + (n - 3) + "件も見る</button>" : "")
+      + '<button type="button" class="ghost" id="all">全部気になる</button></div>'
+      + (cases[0] && cases[0].salary_note ? '<p class="sub" style="margin:10px 0 0">' + esc(cases[0].salary_note) + "</p>" : "") + "</div>";
+    h += '<div class="card"><h2>2. お電話できる日時</h2><p class="sub">担当からお電話して、条件をご相談します。</p>'
+      + '<div class="chips">' + chip("anytime", "1", "いつでも大丈夫", "big") + "</div>"
+      + '<label class="t">日にち（5日まで）</label><div class="chips">' + dayList(0, 10).map(function (x) { return chip("callDates", x[0], x[1]); }).join("") + "</div>"
+      + '<p class="note" id="nCall"></p>'
+      + '<label class="t">時間帯</label><div class="chips">' + BANDS.map(function (b) { return chip("callBands", b, BAND[b]); }).join("") + "</div></div>";
+    h += '<div class="card"><h2>3. ご希望（分かる所だけ）</h2>'
+      + '<label class="t">見学したい日（あれば・3日まで）</label><div class="chips">' + dayList(1, 14).map(function (x) { return chip("tour", x[0], x[1]); }).join("") + chip("tourUndecided", "1", "未定・相談したい") + "</div>"
+      + '<p class="note" id="nTour"></p>'
+      + '<label class="t">週の希望日数</label><div class="chips">' + ["週1日", "週2日", "週3日", "週4日", "週5日", "相談したい"].map(function (v) { return chip("days", v, v); }).join("") + "</div>"
+      + '<label class="t">働き始めたい時期</label><div class="chips">' + Object.keys(TIMING).map(function (k) { return chip("timing", k, TIMING[k]); }).join("") + "</div>"
+      + '<label class="t" for="free">ご要望など（あれば）</label><textarea id="free" placeholder="例：土日休みがいい、車通勤したい など"></textarea></div>';
+    h += '<div class="flow"><b>このあとの流れ</b><br>担当からお電話 → 条件のご相談 → 職場見学。送信しても、すぐに何かが決まるわけではありません。</div>'
+      + '<p class="opt">ご案内が不要な方は <button type="button" class="link" id="optBtn">配信停止を希望する</button><span id="optMsg"></span></p>';
+    $("app").innerHTML = h;
+    var bar = document.createElement("div"); bar.className = "bar";
+    bar.innerHTML = '<div class="barIn"><p class="err" id="err" hidden></p><p class="prog" id="prog"></p><button type="button" class="send" id="send">送信する</button></div>';
+    document.body.appendChild(bar);
+    $("free").value = S.free;
+    $("free").addEventListener("input", function () { S.free = this.value; saveDraft(); });
+    $("app").addEventListener("click", onClick);
+    $("send").addEventListener("click", submit);
+    F.rendered = true; paint();
+  }
+
+  function paint() {
+    document.querySelectorAll(".case").forEach(function (b) {
+      b.setAttribute("aria-pressed", S.cases.indexOf(b.getAttribute("data-cid")) >= 0 ? "true" : "false");
+      if (b.getAttribute("data-more")) b.hidden = !S.more;
+    });
+    var m = $("more"); if (m) m.hidden = S.more;
+    document.querySelectorAll(".chip").forEach(function (b) {
+      var g = b.getAttribute("data-g"), v = b.getAttribute("data-v"), on = false;
+      if (g === "anytime") on = S.anytime; else if (g === "tourUndecided") on = S.tourUndecided;
+      else if (Array.isArray(S[g])) on = S[g].indexOf(v) >= 0; else on = S[g] === v;
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    var c = S.cases.length, p = !!(S.anytime || S.callDates.length || S.callBands.length);
+    $("prog").textContent = (c && p) ? "あとは送信するだけです" : (!c && !p) ? "「気になるお仕事」と「お電話できる日時」を選んでください" : !c ? "あと「気になるお仕事」を選ぶだけです" : "あと「お電話できる日時」を選ぶだけです";
+  }
+
+  function toggle(arr, v, max, noteId, msg) {
+    var i = arr.indexOf(v);
+    if (i >= 0) { arr.splice(i, 1); if (noteId) $(noteId).textContent = ""; return; }
+    if (arr.length >= max) { if (noteId) $(noteId).textContent = msg; return; }
+    arr.push(v); arr.sort(); if (noteId) $(noteId).textContent = "";
+  }
+  function onClick(e) {
+    var t = e.target.closest ? e.target.closest("button") : null; if (!t) return;
+    if (t.classList.contains("case")) { toggle(S.cases, t.getAttribute("data-cid"), 20); }
+    else if (t.id === "more") { S.more = true; }
+    else if (t.id === "all") { S.more = true; S.cases = ctx.recommended_cases.map(function (c) { return c.case_id; }); }
+    else if (t.id === "optBtn") { return optout(); }
+    else if (t.classList.contains("chip")) {
+      var g = t.getAttribute("data-g"), v = t.getAttribute("data-v");
+      if (g === "anytime") S.anytime = !S.anytime;
+      else if (g === "tourUndecided") { S.tourUndecided = !S.tourUndecided; if (S.tourUndecided) S.tour = []; }
+      else if (g === "tour") { toggle(S.tour, v, 3, "nTour", "見学したい日は3日まで選べます。"); if (S.tour.length) S.tourUndecided = false; }
+      else if (g === "callDates") toggle(S.callDates, v, 5, "nCall", "日にちは5日まで選べます。");
+      else if (g === "callBands") toggle(S.callBands, v, 4);
+      else S[g] = (S[g] === v ? "" : v);
+    } else return;
+    $("err").hidden = true; saveDraft(); paint();
+  }
+
+  function payload() {
+    var free = String(S.free || "").trim();
+    if (S.tourUndecided) free = (free ? free + "\n" : "") + "（見学の日にちは未定・相談したい）";
+    if (!submitId) submitId = "SUB-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    return {
+      path: "submit", token: F.t,
+      intent: (S.tour.length || S.tourUndecided) ? "tour" : "detail",
+      experience: "", interview_desired_date: "", desired_start_date: "",
+      desired_tour_date: S.tour.slice().sort().join(","),
+      selected_case_ids: S.cases.slice(),
+      experience_years: "", qualifications: [],
+      phone_consult_datetime: callText(),
+      phone_dates: S.callDates.slice().sort(), phone_bands: BANDS.filter(function (b) { return S.callBands.indexOf(b) >= 0; }), phone_anytime: !!S.anytime,
+      experience_band: "", experience_detail: "", desired_rate_band: "",
+      optout: false, contact_time_slots: "", free_text: free, submit_id: submitId,
+      desired_time_slots: [], desired_days_per_week: String(S.days || ""), start_timing_code: String(S.timing || "")
+    };
+  }
+  function post(obj) {
+    return fetch(F.GAS, { method: "POST", credentials: "omit", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(obj) })
+      .then(function (r) { return r.json(); });
+  }
+  function fail(msg) { sending = false; var b = $("send"); b.disabled = false; b.textContent = "もう一度送信する"; var e = $("err"); e.textContent = msg; e.hidden = false; }
+  function submit() {
+    if (sending) return;
+    var has = S.cases.length || S.anytime || S.callDates.length || S.callBands.length || S.tour.length || S.tourUndecided || S.days || S.timing || String(S.free || "").trim();
+    if (!has) { var e = $("err"); e.textContent = "気になるお仕事を1つ選んでください。"; e.hidden = false; try { $("cases").scrollIntoView({ behavior: "smooth", block: "start" }); } catch (x) {} return; }
+    sending = true; var b = $("send"); b.disabled = true; b.textContent = "送信しています…"; $("err").hidden = true;
+    var p = payload(), tries = 0;
+    (function go() {
+      tries++;
+      post(p).then(function (j) {
+        if (j && j.ok) return done(p);
+        if (j && /expired/.test(String(j.error))) return fail("このリンクは有効期限が切れています。お手数ですが、担当までご連絡ください。");
+        if (tries < 2) return setTimeout(go, 1500);
+        fail("送信できませんでした。電波のよい所で、もう一度お試しください。");
+      }, function () {
+        if (tries < 2) return setTimeout(go, 1500);
+        fail("送信できませんでした。電波のよい所で、もう一度お試しください。");
+      });
+    })();
+  }
+  function done(p) {
+    F.sent = true; sending = false;
+    try { sessionStorage.removeItem("fdraft:" + F.t); } catch (e) {}
+    var names = ctx.recommended_cases.filter(function (c) { return p.selected_case_ids.indexOf(c.case_id) >= 0; }).map(function (c) { return c.facility_name; });
+    var rows = [];
+    if (names.length) rows.push(["気になるお仕事", names.join("、")]);
+    if (p.phone_consult_datetime) rows.push(["お電話できる日時", p.phone_consult_datetime]);
+    if (p.desired_tour_date) rows.push(["見学したい日", p.desired_tour_date.split(",").map(dateLabel).join("・")]);
+    else if (S.tourUndecided) rows.push(["見学したい日", "未定・相談したい"]);
+    if (p.desired_days_per_week) rows.push(["週の希望日数", p.desired_days_per_week]);
+    if (p.start_timing_code) rows.push(["働き始めたい時期", TIMING[p.start_timing_code] || p.start_timing_code]);
+    var bar = document.querySelector(".bar"); if (bar) bar.remove();
+    $("app").innerHTML = '<div class="card done"><h1>送信しました</h1><p class="lead">ありがとうございます。' + (p.phone_consult_datetime ? "ご希望の日時に合わせて、" : "近日中に、") + "担当からお電話いたします。</p>"
+      + (ctx.sender_name ? '<p class="from">担当：' + esc(ctx.sender_name) + "</p>" : "")
+      + (rows.length ? "<dl>" + rows.map(function (r) { return "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>"; }).join("") + "</dl>" : "") + "</div>"
+      + '<div class="flow"><b>このあとの流れ</b><br>担当からお電話 → 条件のご相談 → 職場見学。知らない番号からの着信があれば、担当からのお電話です。</div>';
+    try { window.scrollTo(0, 0); } catch (e) {}
+  }
+  var optStep = 0;
+  function optout() {
+    var b = $("optBtn"), m = $("optMsg");
+    if (optStep === 0) { optStep = 1; b.textContent = "本当に停止する（もう一度押す）"; return; }
+    if (optStep !== 1) return;
+    optStep = 2; b.disabled = true; b.textContent = "手続き中…";
+    post({ path: "optout", token: F.t }).then(function (j) {
+      if (j && j.ok) { F.sent = true; b.hidden = true; m.textContent = "配信停止を受け付けました。今後のご案内は止まります。"; }
+      else { optStep = 1; b.disabled = false; b.textContent = "もう一度試す"; m.textContent = " うまくいきませんでした。"; }
+    }, function () { optStep = 1; b.disabled = false; b.textContent = "もう一度試す"; m.textContent = " うまくいきませんでした。"; });
+  }
+  function stop(msg) {
+    F.rendered = true;
+    $("app").innerHTML = '<div class="card"><h1>フォームを開けませんでした</h1><p class="lead">' + esc(msg) + "</p></div>";
+  }
+  /* 中身の取得: 見つからないときは少し待って取り直し、それでも無ければ従来フォームへ */
+  var tries = 0;
+  function handle(j) {
+    tries++;
+    if (j && j.ok && j.context) {
+      ctx = j.context;
+      if (ctx.sender_unknown || !Array.isArray(ctx.recommended_cases) || !ctx.recommended_cases.length) return F.legacy();
+      loadDraft();
+      try { render(); } catch (e) { F.legacy(); }
+      return;
+    }
+    var err = j ? String(j.error || "") : "";
+    if (/expired/.test(err)) return stop("このリンクは有効期限が切れています。お手数ですが、担当までご連絡ください。");
+    if (/invalid_token/.test(err)) return F.legacy();
+    if (tries >= 3) return F.legacy();
+    var w = $("wait"); if (w) w.textContent = "あなた専用のフォームを準備しています。このまま少しお待ちください…";
+    setTimeout(function () { F.get().then(handle, function () { handle(null); }); }, 2500);
+  }
+  F.first.then(handle);
+})();
+</script>
+<noscript><p style="padding:20px">このページを開くには、ブラウザの設定で JavaScript を有効にしてください。</p></noscript>
+</body>
+</html>

@@ -614,7 +614,7 @@ let CASES=[
 /* ===== 状態・テンプレ・送信者 (DATA_MODEL §9) ===== */
 let state={area:LS.get("area","kansai"),mode:"first",visible:20,recSort:"score",followTab:"unsent",specialSent:LS.get("specialSent",{}),campaigns:LS.get("campaigns",[{id:"SP1",name:"サンプル特需：東淀川エリア介護スタッフ急募",body:"お世話になっております。ファーストスタッフィングです。今回、ご希望条件に近い案件がございましたので、ご案内させていただきます。\n■施設名：［施設名］\n■住所：［郵便番号・住所］\n■勤務時間：07:00〜16:00／08:30〜17:30／09:00〜17:00 など（例示です。曜日固定・時間固定・夜勤専従など、ご希望に沿って相談可能です）\n■時給：1,450〜1,800円（介護の標準帯です）\n※時給は資格・経験・勤務日数などによって異なります\nおすすめポイント3つ\n1. 詳細希望 2. 見学希望 3. 別案件希望\nご検討のうえ、ご返信いただけますと幸いです。",address:"大阪府大阪市東淀川区上新庄",lat:34.742,lon:135.535,radius:10,job_type:"kaigo"}]),responses:LS.get("responses",[{id:"R001",applicant_id:"A0005",sender:"t-sugimoto@kikari.co.jp",sender_name:"杉本卓也",intent:"見学希望",experience:"看護12年",start:"2026-12-01",tour:"2026-11-27",phone_consult:"平日午前（自由入力サンプル）",free:"よろしくお願いします（サンプル）",handled:false,status:"unhandled",source_channel:"mail",at:"2026-11-21T09:00",isNew:true},{id:"R002",applicant_id:"A0003",sender:"",sender_name:"横山渥士",intent:"詳細希望",experience:"看護12年",start:"",tour:"",phone_consult:"",free:"（サンプル）",handled:false,status:"unhandled",source_channel:"sms",at:"2026-11-21T08:10",isNew:true},{id:"R003",applicant_id:"A0006",sender:"",sender_name:"石原謙",intent:"別案件希望",experience:"介護6年",start:"",tour:"",phone_consult:"",free:"（サンプル）",handled:true,handled_by:"菅沼光輝",status:"handled",status_by:"菅沼光輝",status_at:"2026-11-20T17:40",source_channel:"mail",at:"2026-11-20T17:40",isNew:false},{id:"R004",applicant_id:"A0002",sender:"",sender_name:"",sender_unknown:true,intent:"詳細希望",experience:"介護1年",start:"",tour:"",phone_consult:"2026-11-22 午前中",free:"汎用URLから届いた回答（サンプル）",handled:false,status:"unhandled",source_channel:"generic_url",at:"2026-11-18T10:00",isNew:true},{id:"R005",applicant_id:"A0001",sender:"t-sugimoto@kikari.co.jp",sender_name:"杉本卓也",intent:"見学希望",experience:"介護8年",start:"",tour:"",interview:"2026-11-24",phone_consult:"2026-11-21 14時ごろ",free:"本日お電話希望（サンプル）",handled:false,status:"in_progress",status_by:"杉本卓也",status_at:"2026-11-21T09:30",source_channel:"sms",at:"2026-11-21T07:50",isNew:true}]),imports:LS.get("imports",[]),deliveries:LS.get("deliveries",[])};
 state.includeFormCase=LS.get("includeFormCase",true);state.attachFormSms=LS.get("attachFormSms",true);state.attachFormMail=LS.get("attachFormMail",true);state.reverseRadius=5;state.reverseCond="";
-let templates=LS.get("templates",{sms_first:"{宛名}様\n\nご登録ありがとうございます。\nファーストスタッフィングです！\n\n{不足ヒヤリング}\n\n直近でお近くに案件が出たところです。\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\n\nご回答は下記のフォームからも可能です。\n{フォームURL}",sms_first_compact:"{宛名}様\nご登録ありがとうございます。ファーストスタッフィングです！\n直近でお近くに案件が出たところです。フォームからご回答いただけます。\n{フォームURL}\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\nよければ、{不足項目名}も分かる項目だけで返信ください（未定は「相談」でOKです）。\nお電話できる日時：○月○日 ○時〜○時ごろ ※候補をいくつか教えていただけると幸いです。",sms_follow:"{宛名}様\n\n株式会社ファーストスタッフィングです。\n先日ご案内したお仕事探しについて、その後のご状況はいかがでしょうか？\n\n1. 今すぐ相談したい\n2. 先の時期で考えている\n3. 今回は見送り\n\n番号だけでもご返信いただけます。\n1. 2. の場合、お電話できる日時と勤務開始の希望日も教えていただけると幸いです。",reply_detail:"{宛名}様\nご返信ありがとうございます。詳しい条件をご案内いたします。今回の求人で特に確認されたい点はございますか？勤務時間・週回数・お仕事内容など、気になる点をお知らせください。条件が合いそうでしたら、職場見学の日程もご相談できます。",reply_tour:"{宛名}様\nご返信ありがとうございます。職場見学のご希望、ありがとうございます。先方へ確認いたしますので、以下を教えてください。\n1. 見学可能な日時（第1〜第3希望）\n2. 勤務開始できる時期\n3. ご希望の週回数・勤務時間",reply_other:"{宛名}様\nご返信ありがとうございます。別の求人をお探しいたしますので、以下のご希望を教えてください。\n1. ご希望エリア・通勤可能な範囲\n2. ご希望の週回数・勤務時間\n3. 勤務開始できる時期\n4. 今回の求人で合わなかった条件",mail_subject:"【派遣求人】お近くのお仕事をご案内します",mail_body:"{宛名}様\n\n株式会社ファーストスタッフィングです。\nご登録いただいた内容をもとに、お近くのお仕事をご案内します。\n\n{おすすめ案件}"});
+let templates=LS.get("templates",{sms_first:"{宛名}様\n\nご登録いただいておりますファーストスタッフィングの{担当者}です。\nご登録ありがとうございます。\n\n{不足ヒヤリング}\n\n直近でお近くに案件が出たところです。\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\n\nご回答は下記のフォームからも可能です。\n{フォームURL}",sms_first_compact:"{宛名}様\nご登録いただいておりますファーストスタッフィングの{担当者}です。\nご登録ありがとうございます。\n直近でお近くに案件が出たところです。フォームからご回答いただけます。\n{フォームURL}\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\nよければ、{不足項目名}も分かる項目だけで返信ください（未定は「相談」でOKです）。\nお電話できる日時：○月○日 ○時〜○時ごろ ※候補をいくつか教えていただけると幸いです。",sms_follow:"{宛名}様\n\n株式会社ファーストスタッフィングです。\n先日ご案内したお仕事探しについて、その後のご状況はいかがでしょうか？\n\n1. 今すぐ相談したい\n2. 先の時期で考えている\n3. 今回は見送り\n\n番号だけでもご返信いただけます。\n1. 2. の場合、お電話できる日時と勤務開始の希望日も教えていただけると幸いです。",reply_detail:"{宛名}様\nご返信ありがとうございます。詳しい条件をご案内いたします。今回の求人で特に確認されたい点はございますか？勤務時間・週回数・お仕事内容など、気になる点をお知らせください。条件が合いそうでしたら、職場見学の日程もご相談できます。",reply_tour:"{宛名}様\nご返信ありがとうございます。職場見学のご希望、ありがとうございます。先方へ確認いたしますので、以下を教えてください。\n1. 見学可能な日時（第1〜第3希望）\n2. 勤務開始できる時期\n3. ご希望の週回数・勤務時間",reply_other:"{宛名}様\nご返信ありがとうございます。別の求人をお探しいたしますので、以下のご希望を教えてください。\n1. ご希望エリア・通勤可能な範囲\n2. ご希望の週回数・勤務時間\n3. 勤務開始できる時期\n4. 今回の求人で合わなかった条件",mail_subject:"【派遣求人】お近くのお仕事をご案内します",mail_body:"{宛名}様\n\n株式会社ファーストスタッフィングです。\nご登録いただいた内容をもとに、お近くのお仕事をご案内します。\n\n{おすすめ案件}"});
 let smsModes=LS.get("smsModes",[{id:"registration",title:"登録案内",body:templates.sms_first}]); let smsModeId="registration_compact";
 let operators=LS.get("operators",[{name:"杉本卓也",email:"t-sugimoto@kikari.co.jp",display:"株式会社ファーストスタッフィング 杉本卓也",company:"株式会社ファーストスタッフィング",phone:"",linked:true,signature:"株式会社ファーストスタッフィング\n杉本卓也",reply_to:""},{name:"横山渥士",email:"",display:"株式会社ファーストスタッフィング 横山渥士",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n横山渥士",reply_to:""},{name:"石原謙",email:"",display:"株式会社ファーストスタッフィング 石原謙",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n石原謙",reply_to:""},{name:"菅沼光輝",email:"",display:"株式会社ファーストスタッフィング 菅沼光輝",company:"株式会社ファーストスタッフィング",phone:"",linked:false,signature:"株式会社ファーストスタッフィング\n菅沼光輝",reply_to:""}]);
 function saveAll(){LS.set("templates",templates);LS.set("smsModes",smsModes);LS.set("operators",operators);LS.set("campaigns",state.campaigns);LS.set("responses",state.responses);LS.set("specialSent",state.specialSent);LS.set("imports",state.imports);LS.set("deliveries",state.deliveries);persistApplicants()}
@@ -628,7 +628,7 @@ function rankCasesForApplicant(applicant,cases,mode,asOf){const src=cases||CASES
 function salaryRange(a,c){if(c.job_type==="kango")return "時給2,100〜2,500円";return "時給1,450〜1,800円"} // 職種別標準帯 (D-49: 介護1,450-1,800 / 看護2,100-2,500)・資格別推定はしない・請求単価は出さない
 function displayCase(c){const d={...c};if(c.service==="デイ"){d.hours=String(c.hours).split("／").filter(p=>!/夜勤|翌/.test(p)).join("／");d.hours=d.hours.replace(/夜勤[^／]*/g,"").trim()}return d} // デイは夜勤除去(表示のみ・元データ不変)
 function recommend(a,limit,mode){return rankCasesForApplicant(a,CASES,mode||(state&&state.recSort==="distance"?"distance":"score")).slice(0,limit||99)}
-function caseSmsBody(a,raw,opts){const c=displayCase(raw);const job=(raw&&raw.job_type)||a.job_type;let body=smsRecipientName(a.name)+"様\n\nファーストスタッフィングです。お近くの派遣求人をご紹介します。\n\n"+c.facility+"\n"+c.address+"\n"+publicSalaryText(job)+"\n"+publicHoursText(job)+" ご希望の働き方をお聞かせください。\n\n1. 詳細希望 2. 見学希望 3. 別案件希望\n番号だけでも、ご返信いただけると幸いです";if(opts&&opts.withForm){const _fu=formUrlFor(a);if(_fu)body+="\n\n回答フォームからもご回答いただけます。\n"+_fu}return body} // LIVE §6 標準本文の型。請求単価は出さない。R3(E1): 実URLが発行済みのときだけフォーム案内を付ける。R3(#16): 時給は標準帯+注記、勤務時間は例示+相談可能 (対外表示ルール)。案件固有の時給・時間は出さない
+function caseSmsBody(a,raw,opts){const c=displayCase(raw);const job=(raw&&raw.job_type)||a.job_type;let body=smsRecipientName(a.name)+"様\n\n"+(function(){var n="";try{n=String(currentOpName()||"").replace(/\s+/g,"")}catch(e){}return n?"ご登録いただいておりますファーストスタッフィングの"+n+"です。":"ご登録いただいておりますファーストスタッフィングです。"})()+"お近くの派遣求人をご紹介します。\n\n"+c.facility+"\n"+c.address+"\n"+publicSalaryText(job)+"\n"+publicHoursText(job)+" ご希望の働き方をお聞かせください。\n\n1. 詳細希望 2. 見学希望 3. 別案件希望\n番号だけでも、ご返信いただけると幸いです";if(opts&&opts.withForm){const _fu=formUrlFor(a);if(_fu)body+="\n\n回答フォームからもご回答いただけます。\n"+_fu}return body} // LIVE §6 標準本文の型。請求単価は出さない。R3(E1): 実URLが発行済みのときだけフォーム案内を付ける。R3(#16): 時給は標準帯+注記、勤務時間は例示+相談可能 (対外表示ルール)。案件固有の時給・時間は出さない
 function reverseSmsBody(a,c){const job=(c&&c.job_type)||a.job_type;return smsRecipientName(a.name)+"様\n"+fsOpIntro_(false)+"。ご登録いただいた条件に合うお仕事がありましたので、ご案内します。\n\n"+c.facility+"\n"+c.address+"\n"+publicSalaryText(job)+"\n"+publicHoursText(job)+"\n\n1. 詳細希望 2. 見学希望 3. 別案件希望\nご連絡をお待ちしております。"} // LIVE §10 配信SMS本文の型。R3(#16): 時給は標準帯+注記、勤務時間は例示+相談可能
 /* ===== ルーティング ===== */
 
@@ -1269,7 +1269,7 @@ state.multiSel=state.multiSel||{};
 /* R3 (Z5/S3): まとめSMSの案件順はクリック順ではなくおすすめ順にそろえる */
 function sortIdsByRecommendOrder(a,ids){try{if(!a)return ids;const ord=recommend(a,50).map(function(c){return c.id});const rank=function(id){const i=ord.indexOf(id);return i<0?9999:i};return [...ids].sort(function(x,y){return rank(x)-rank(y)})}catch(e){return ids}}
 function toggleMultiCase(aid,cid,on){const cur=state.multiSel[aid]||[];if(on){if(cur.length>=3){alert("まとめて配信は最大3件です。");route();return}const a=applicants.find(x=>x.id===aid);state.multiSel[aid]=sortIdsByRecommendOrder(a,[...cur,cid])}else state.multiSel[aid]=cur.filter(x=>x!==cid);if(typeof _recHtmlCacheR2!=="undefined")_recHtmlCacheR2.clear();route()}
-function multiJobSmsBody(a,cases){const lines=[smsRecipientName(a.name)+"様","","株式会社ファーストスタッフィングです。","ご希望に近い求人を"+cases.length+"件ご紹介します。"];cases.forEach((c,i)=>{const d=displayCase(c);lines.push("","【"+(i+1)+"】"+d.facility);const fc=SERVICE_FULL[facilityCode(d)]||facilityCode(d);if(fc&&fc!=="形態未確認")lines.push("施設形態："+fc);lines.push("勤務地："+d.address);lines.push("時給の目安："+publicSalaryBandText(c.job_type||a.job_type))});lines.push("",PUBLIC_SALARY_NOTE,"気になる求人の番号をご返信ください。","勤務時間や日数など、ご希望に合わせた働き方ができるよう、施設へ相談できます。","","最寄駅に合わせた求人もご案内できます。","最寄駅（路線・駅名）を教えてください。");return lines.join("\n")} // R3(#16): 時給は案件固有値でなく標準帯+注記
+function multiJobSmsBody(a,cases){const lines=[smsRecipientName(a.name)+"様","",(function(){var n="";try{n=String(currentOpName()||"").replace(/\s+/g,"")}catch(e){}return n?"ご登録いただいておりますファーストスタッフィングの"+n+"です。":"ご登録いただいておりますファーストスタッフィングです。"})(),"ご希望に近い求人を"+cases.length+"件ご紹介します。"];cases.forEach((c,i)=>{const d=displayCase(c);lines.push("","【"+(i+1)+"】"+d.facility);const fc=SERVICE_FULL[facilityCode(d)]||facilityCode(d);if(fc&&fc!=="形態未確認")lines.push("施設形態："+fc);lines.push("勤務地："+d.address);lines.push("時給の目安："+publicSalaryBandText(c.job_type||a.job_type))});lines.push("",PUBLIC_SALARY_NOTE,"気になる求人の番号をご返信ください。","勤務時間や日数など、ご希望に合わせた働き方ができるよう、施設へ相談できます。","","最寄駅に合わせた求人もご案内できます。","最寄駅（路線・駅名）を教えてください。");return lines.join("\n")} // R3(#16): 時給は案件固有値でなく標準帯+注記
 function sendMultiCases(aid){const a=applicants.find(x=>x.id===aid);const ids=(state.multiSel||{})[aid]||[];if(a&&isOptoutForSms(a)){showToast(a.mail_optout?"配信停止中のためSMSは送れません":"連絡停止のためSMSは送れません","bad");return}if(!a||!ids.length){alert("まとめて配信に選ぶで案件を選んでください（最大3件）");return}const cases=sortIdsByRecommendOrder(a,ids).map(id=>CASES.find(c=>c.id===id)).filter(Boolean).slice(0,3);const body=multiJobSmsBody(a,cases);const sz=smsSize(body);showModal(`<h3>まとめてSMS作成（${cases.length}件）</h3><p class="kv">${esc(body)}</p><p>${smsCountHtml("multi",body,cases.length)}</p><div class="flex"><a class="btn primary" href="${smsLink(a.phone,body,"multi",cases.length)}">SMS作成を開く</a><button onclick="markMultiSms('${a.id}')">送ったので記録する</button><button onclick="closeModal()">閉じる</button></div>`)}
 function markMultiSms(aid){const a=applicants.find(x=>x.id===aid);const ids=(state.multiSel||{})[aid]||[];if(!a||!ids.length)return;const cases=ids.map(id=>CASES.find(c=>c.id===id)).filter(Boolean).slice(0,3);markSms(aid,true,{body_snapshot:multiJobSmsBody(a,cases),case_ids:cases.map(c=>c.id)})}
 function editCaseBody(aid,cid){const a=applicants.find(x=>x.id===aid);const c=CASES.find(x=>x.id===cid);if(!a||!c)return;const body=caseSmsBody(a,c,{withForm:state.includeFormCase});showModal(`<h3>本文を確認・編集</h3><textarea id="editBody">${esc(body)}</textarea><p id="editCount"></p><p class="small">編集はこの送信分だけに適用されます（テンプレ自体は変わりません）。</p><div class="flex">${isOptoutForSms(a)?optoutSmsBadge(a):`<a class="btn primary" id="editSmsLink" href="${smsLink(a.phone,body,"case")}">この本文でSMS作成を開く</a>`}<button onclick="markEditedCaseSms('${a.id}','${c.id}')" ${isOptoutForSms(a)?"disabled":""}>送ったので記録する</button><button onclick="closeModal()">閉じる</button></div>`);const ta=document.getElementById("editBody");var _pec=function(){var el=document.getElementById("editCount");if(el&&ta)el.innerHTML=smsCountHtml("case",ta.value)};if(ta){ta.addEventListener("input",()=>{const l=document.getElementById("editSmsLink");if(l)l.href=smsLink(a.phone,ta.value,"case");_pec()});_pec()}}
@@ -2834,7 +2834,7 @@ if(window.__APP_LOGIC__){Object.assign(window.__APP_LOGIC__,{buildCallDatetime_:
    デモ用フォールバックの追随 (案件最大2件・番号案内はメールから外す・「（サンプル）」除去) ===== */
 
 /* ---------- 初回SMS圧縮版 (sms_first_compact): デフォルトは init_sheets.gs のシード文面と一致 ---------- */
-var SMS_FIRST_COMPACT_DEFAULT="{宛名}様\nご登録ありがとうございます。ファーストスタッフィングです！\n直近でお近くに案件が出たところです。フォームからご回答いただけます。\n{フォームURL}\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\nよければ、{不足項目名}も分かる項目だけで返信ください（未定は「相談」でOKです）。\nお電話できる日時：○月○日 ○時〜○時ごろ ※候補をいくつか教えていただけると幸いです。";
+var SMS_FIRST_COMPACT_DEFAULT="{宛名}様\nご登録いただいておりますファーストスタッフィングの{担当者}です。\nご登録ありがとうございます。\n直近でお近くに案件が出たところです。フォームからご回答いただけます。\n{フォームURL}\n気になる案件があれば、まずはお電話で条件をすり合わせ、そのうえで法人へご提案し、先方の確認が取れましたら職場見学へ進みます。\nよければ、{不足項目名}も分かる項目だけで返信ください（未定は「相談」でOKです）。\nお電話できる日時：○月○日 ○時〜○時ごろ ※候補をいくつか教えていただけると幸いです。";
 try{
   if(templates.sms_first_compact==null||templates.sms_first_compact==="")templates.sms_first_compact=SMS_FIRST_COMPACT_DEFAULT;
   var _cmInit=smsModes.find(function(m){return m.id==="registration_compact"});
@@ -12348,7 +12348,7 @@ window._r633 = "9.3.0";
 var R633_URL = "https://docs.google.com/forms/d/e/1FAIpQLScNskySGOko_tswU5PwG1uTc44zWzCm2EFZyeeCBApFJy7C_Q/viewform";
 var R633_DEFAULT = [
   "{宛名}様",
-  "ファーストスタッフィングです。",
+  "ご登録いただいておりますファーストスタッフィングの{担当者}です。",
   "この度はご応募いただき、ありがとうございます。",
   "",
   "＼時給アップキャンペーン実施中／",
@@ -12638,7 +12638,7 @@ var R634_TPL = {
   kaigo: [
     "{宛名}様",
     "",
-    "株式会社ファーストスタッフィングです。",
+    "ご登録いただいておりますファーストスタッフィングの{担当者}です。",
     "お近くの介護士の派遣求人をご案内します。",
     "",
     "【求人詳細】",
@@ -12659,7 +12659,7 @@ var R634_TPL = {
   kango: [
     "{宛名}様",
     "",
-    "株式会社ファーストスタッフィングです。",
+    "ご登録いただいておりますファーストスタッフィングの{担当者}です。",
     "お近くの看護師の派遣求人をご案内します。",
     "",
     "【求人詳細】",
@@ -12752,7 +12752,7 @@ function r635Template_(c, job){
   return [
     "{宛名}様",
     "",
-    "株式会社ファーストスタッフィングです。",
+    "ご登録いただいておりますファーストスタッフィングの{担当者}です。",
     "お近くの" + (kango ? "看護師" : "介護士") + "の派遣求人をご案内します。",
     "",
     "【求人詳細】",
@@ -12778,7 +12778,8 @@ function r635CaseBody_(c, a){
 }
 reverseSmsBody = function(a, c){
   var name = ""; try { name = smsRecipientName(a && a.name); } catch(e) { name = String((a && a.name) || ""); }
-  return r635CaseBody_(c, a).replace(/\{宛名\}/g, name);
+  var op = ""; try { op = String(currentOpName() || "").replace(/\s+/g, ""); } catch(e) {}
+  return r635CaseBody_(c, a).replace(/\{宛名\}/g, name).replace(/\{担当者\}/g, op || "担当");
 };
 try { if (window.__APP_LOGIC__) window.__APP_LOGIC__.reverseSmsBody = reverseSmsBody; } catch(e) {}
 
@@ -14565,7 +14566,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v9.3.28";
+window.APP_VERSION_LABEL = "v9.3.29";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 

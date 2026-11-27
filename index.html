@@ -14576,7 +14576,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.2";
+window.APP_VERSION_LABEL = "v4.0.3";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15015,6 +15015,8 @@ try { r621PaintVersion_(); } catch(e) {}
         var t=sb0.apply(this,arguments);
         try{
           t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,isFs(a)?INTRO:PLAIN);
+          /* アンケートのURLを短い入口に (約100字 → 約45字) */
+          try{t=t.split(R633_URL).join("https://first-staffing.github.io/kansai-sms-app/q")}catch(e){}
           /* 読みやすく・短く: 宛名のあとに1行あける／「担当エージェント」→「担当者」／名乗りと同じ社名の署名は外す */
           t=t.replace(/^([^\n]*様)\n(?!\n)/,"$1\n\n");
           t=t.replace("ご回答後、担当エージェントよりご連絡いたします。","ご回答後、担当者よりご連絡いたします。");

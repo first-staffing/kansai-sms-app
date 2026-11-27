@@ -1025,7 +1025,7 @@ window._mailStep=3;paintMailSteps();
 const localCount=(window._mailTargets||[]).length;const opC=operators.find(o=>o.email===MF.sender)||operators[0];const senderLabel=opC?((opC.name||"")+"（"+(opC.email||"メール未登録")+"）"):"";const subjectC=($("#mSubj")?$("#mSubj").value:templates.mail_subject);const scheduledC=(MF.timing==="sched"&&MF.when)?MF.when:"";
 const showConfirm=function(serverRes){const info=buildMailConfirmInfo(serverRes,localCount,senderLabel,subjectC,MF.mode,scheduledC);window._mailConfirmInfo=info;showModal(`<h3>送信前の確認</h3><p class="kv">対象人数: ${info.count}名（${esc(info.countSource)}）\n送信者: ${esc(info.sender)}\n件名: ${esc(info.subject)}\n配信モード: ${esc(info.modeLabel)}${info.scheduledAt?`\n予約日時: ${esc(info.scheduledAt)}`:""}</p><div class="flex"><button class="primary" onclick="confirmSendMail()">この内容で送信する</button><button onclick="cancelMailConfirm()">戻る</button></div>`);return info};
 if(!CONFIG.API_URL){showConfirm(null);return Promise.resolve(null)}
-return fetchMailPreview().then(function(res){showConfirm(res);return res}).catch(function(e){showConfirm(null);return null})}
+return fetchMailPreview().then(function(res){showConfirm(res);return res}).catch(function(e){window._mailConfirmInfo=null;showModal('<h3>送信前の確認ができませんでした</h3><p>サーバーで対象者の確認ができなかったため、まだ送信できません。電波の状態を確かめて、もう一度お試しください。</p><div class="flex"><button class="primary" onclick="closeModal();sendMail()">もう一度確認する</button><button onclick="cancelMailConfirm()">戻る</button></div>');return null})}
 function doSendMail(){/* R4 01-#2: 最終ガード。確認後に条件・文面が変わっていたら送らず、再確認して止める */if(window._mailSnapshot&&window._mailSnapshot!==mailSnapshot()){checkMailTargets();const mpG=$("#mailProg");if(mpG)mpG.innerHTML=`<p class="badge warn">条件・文面が変更されたため、対象を再確認しました。内容を確認してから送信してください。</p>`;return Promise.resolve(null)}const t=window._mailTargets||[];const b=window._mailBreakdown||{};const op=operators.find(o=>o.email===MF.sender)||operators[0];const first=t[0];const snap=first?((window._mailPreviewServer&&window._mailPreviewServer.body&&(window._mailPreviewServer.applicant_id===first.applicant.id||(window._mailServerFirst&&window._mailPreviewServer.applicant_id===window._mailServerFirst.applicant_id)))?window._mailPreviewServer.body:(buildMailBody(first.applicant,($("#mBody")?$("#mBody").value:templates.mail_body),first.recommended)+mailFooter(op))):"";const d={id:"D"+Date.now(),at:new Date().toISOString(),sender:MF.sender,sender_name:op.name,count:t.length,status:"sending",preview:snap,preview_body:snap,snapshot_body:"",snapshot_pending:true,recipient_ids:t.map(function(x){return (x.applicant&&x.applicant.id)||x.applicant_id||x.id}).filter(Boolean)};state.deliveries.unshift(d);saveAll();const payload=Object.assign({subject:($("#mSubj")?$("#mSubj").value:templates.mail_subject),body_template:($("#mBody")?$("#mBody").value:templates.mail_body)},buildMailServerParams(),{scheduled_at:(MF.timing==="sched"&&MF.when)?MF.when:""});const mp0=$("#mailProg");if(mp0)mp0.innerHTML=`<p>送信を受け付けています…</p><p class="small">送信前確認: 対象 ${t.length}名 / 除外: 重複 ${b.dupEmail||0}・配信停止 ${b.optout||0}・終了系 ${b.terminal||0}・年齢上限 ${b.ageOver||0}・メールなし ${b.noEmail||0}・形式不正 ${b.invalidEmail||0}・案件なし ${b.noRecommend||0}・回答対応中 ${b.respInProgress||0} / 送信者: ${esc(op.name)} / タイミング: ${MF.timing==="sched"?"日時指定":"今すぐ"}</p>`;return Promise.resolve(enqueue("mail_delivery",payload)).then(function(opRes){const failed=!!(opRes&&opRes.status==="failed");const mp=$("#mailProg");if(failed){d.status="failed";saveAll();if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(opRes.error||"")}</p>`;return opRes}const res=(opRes&&opRes.result)||{};if(res.delivery_id)d.server_delivery_id=res.delivery_id;if(typeof res.target_count==="number"){d.count=res.target_count;d.server_target_count=res.target_count;if(typeof res.matched_count==="number")d.server_matched_count=res.matched_count;if(res.excluded!=null)d.server_excluded=res.excluded}if(res.idempotent_replay){d.status="done";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">同じ内容の配信が既に作成済みのため、二重送信はしませんでした。</p>`;return opRes}if(payload.scheduled_at){d.status="scheduled";saveAll();if(mp)mp.innerHTML=`<p class="badge ok">予約しました: ${(typeof res.target_count==="number"?res.target_count:t.length)}件の配信を作成しました。予約時刻になったら、この画面から送信できます（未送信の続きとして表示されます）。</p>`;return opRes}d.status="sending";saveAll();runSendBatches(d);return opRes}).catch(function(e){d.status="failed";saveAll();const mp=$("#mailProg");if(mp)mp.innerHTML=`<p class="badge bad">送信に失敗しました: ${esc(String(e&&e.message||e))}</p>`;return null})}
 /* ===== R3 方式変更: 画面からのバッチ送信 (施設メール配信と同じ方式) =====
    配信作成後、この画面が sendNextBatch を繰り返し呼んで自分のキューを送り切る。
@@ -5488,7 +5488,7 @@ try{
    回答同期) が完了するまで件数を「読み込み中…」にし、サンプル数字を
    絶対に出さない。疎通失敗が確定したら従来どおりローカル表示に落とす。
    有効化の完了時に入口にいれば1回だけ描き直し、本文も実数に揃える。
-   欠陥B (実地ブリーフ0): ID 検索 (A000001) と電話検索 (08091251382) は
+   欠陥B (実地ブリーフ0): ID 検索 (A000001) と電話検索 (090XXXXXXXX) は
    サーバーが 1件ヒットするのに画面が 0件。サーバー結果は
    serverApplicantToLocal で phone:"" に落とされ、ローカル再絞り込み
    (filteredCompute) の述語に id が無いため、電話・ID のどちらも
@@ -14086,7 +14086,7 @@ window.APP_VERSION_LABEL = "v9.3.25";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
-<script id="r648name">/* r648 (2026-11-25 ユーザー指示): 宛名から営業メモを外す。名前欄の「松芳美保子/橿原市」→「松芳美保子」。
+<script id="r648name">/* r648 (2026-11-25 ユーザー指示): 宛名から営業メモを外す。名前欄の「山田花子/○○市」→「山田花子」。
  従来の整形 (先頭コード除去・姓のみ) のあと、区切り記号や数字から後ろを落とし、末尾の様・さんを外す。サーバーの recipientName_ と同じ規則。 */
 (function(){try{var prev=smsRecipientName;var cut=function(s){s=String(s||"").split(/[\/\uFF0F\\\uFF3C(\uFF08\[\uFF3B<\uFF1C|\uFF5C,\uFF0C\u3001:\uFF1A;\uFF1B#\uFF03@\uFF20\u203B\u2605\u2606\u25CE\u25CF\u25CB\u25C6\u25A0\u25A1\u2192\u21D2~\uFF5E\uFF3F_0-9\uFF10-\uFF19]/)[0];return s.replace(/(\u69D8|\u3055\u307E|\u3055\u3093|\u6BBF)$/,"").replace(/[-\uFF0D\u30FB.\u3002]+$/,"").trim()};
 smsRecipientName=function(name){var r=prev(name);if(r==="\u3054\u767B\u9332\u8005")return r;return cut(r)||"\u3054\u767B\u9332\u8005"};window.smsRecipientName=smsRecipientName}catch(e){}})();</script>
@@ -14572,7 +14572,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v9.3.32";
+window.APP_VERSION_LABEL = "v4.0";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14716,4 +14716,206 @@ try { r621PaintVersion_(); } catch(e) {}
   _viewForm7b=function(){var r=prev.apply(this,arguments);try{slim()}catch(e){try{console.warn("r658",e)}catch(_){}}return r};
   try{var cur=String(location.hash||"");if(cur.indexOf("#/form")===0)setTimeout(function(){try{slim()}catch(e){}},0)}catch(e){}
 }catch(e){}})();</script>
+<style id="r659css">
+.r659bar{position:fixed;left:10px;right:10px;bottom:84px;z-index:9999;background:#0f172a;color:#fff;border-radius:14px;padding:10px 12px;display:flex;gap:8px;align-items:center;box-shadow:0 6px 24px rgba(0,0,0,.25);font-size:14px;line-height:1.5}
+.r659bar .r659t{flex:1;min-width:0}
+.r659bar button{min-height:42px;border-radius:10px;border:0;padding:6px 12px;font-weight:700;font-size:14px;white-space:nowrap}
+.r659bar .r659no{background:#fff;color:#0f172a}
+.r659bar .r659yes{background:#22c55e;color:#fff}
+#app article.card.r659next button[onclick*="openSmsDirect615("]{background:#fff!important;color:#1d4ed8!important;border:1.5px solid #bfdbfe!important;box-shadow:none!important}
+#app article.card.r659next a.btn[href^="tel:"]{background:#15803d!important;color:#fff!important;border-color:#15803d!important;font-weight:800!important}
+</style>
+<script id="r659v4">/* 4.0 (2026-11-27 ユーザー指示「全部お願い」「重いもの直しといて、バージョン4.0で」)
+ 1. 書き込み系の操作 (SMS送信済みの記録など) のあとは、手元に覚えた一覧・件数を必ず捨てる
+ 2. 通信の記録を残す (window._apiLog。どの通信が何秒かかったかを後から見られる)
+ 3. 立ち上げ時の名簿の読み込みを 200人ずつ40回 → 1000人ずつ8回にまとめる (サーバーが対応していれば)
+ 4. 初回SMS: 配信NGリストの読み込みを待ってから開く／送信済みの人には確認を出す／
+    SMSアプリから戻ったら自動で「送信済み」にする (8秒以内なら「送っていない」で取り消せる)
+ 5. 一覧カード: 送信済み・回答ありの人は「電話する」を主ボタンにする */
+(function(){try{
+  var clr=function(){try{if(window.r657ClearCache)window.r657ClearCache(false)}catch(e){}};
+  var esc9=function(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})};
+  var toast9=function(m,k){try{showToast(m,k)}catch(e){}};
+  var findA=function(id){var a=null;try{a=r6161FindApplicant_(id)}catch(e){}if(!a){try{a=applicants.find(function(x){return x.id===id})||null}catch(e){}}return a};
+  var digits=function(s){return String(s||"").replace(/[^0-9]/g,"").replace(/^81(?=[789]0)/,"0")};
+
+  /* 1 */
+  try{
+    if(typeof enqueue==="function"){
+      var enq0=enqueue;
+      enqueue=function(){clr();var r=enq0.apply(this,arguments);try{Promise.resolve(r).then(clr,clr)}catch(e){}return r};
+      if(window.__APP_LOGIC__&&window.__APP_LOGIC__.enqueue)window.__APP_LOGIC__.enqueue=enqueue;
+    }
+  }catch(e){}
+
+  /* 2 */
+  try{
+    window._apiLog=[];
+    var ap0=apiCall;
+    apiCall=function(req){
+      var a=req&&req.action,t=Date.now(),p=ap0.apply(this,arguments);
+      var put=function(ok){try{window._apiLog.push({a:a,ms:Date.now()-t,ok:ok,at:t});if(window._apiLog.length>300)window._apiLog.shift()}catch(e){}};
+      try{p.then(function(){put(1)},function(){put(0)})}catch(e){}
+      return p;
+    };
+    if(window.__APP_LOGIC__)window.__APP_LOGIC__.apiCall=apiCall;
+  }catch(e){}
+
+  /* 3 */
+  try{if(typeof R617_ROSTER==="object"&&R617_ROSTER)R617_ROSTER.pageSize=1000}catch(e){}
+
+  /* 4 */
+  var lastTap=null,okOnce={};
+  var PK="r659pend",pend={};
+  try{pend=JSON.parse(localStorage.getItem(PK)||"{}")||{}}catch(e){pend={}}
+  var save=function(){try{localStorage.setItem(PK,JSON.stringify(pend))}catch(e){}};
+  var isNg=function(id,a){try{var ng=window._r656Ng;if(ng&&ng.ids&&ng.ids[String(id)])return true;if(a&&window.r656IsNg&&window.r656IsNg(a))return true}catch(e){}return false};
+  var sentRecently=function(a){
+    if(!a)return null;
+    try{
+      var ls=String(a.last_sms_at||"").slice(0,10);
+      if(/^\d{4}-\d{2}-\d{2}$/.test(ls)){
+        var d=Math.round((Date.parse(todayStr()+"T00:00:00Z")-Date.parse(ls+"T00:00:00Z"))/864e5);
+        if(d===0)return "今日";if(d===1)return "昨日";
+      }
+      if(a.sms_sent&&(typeof state==="undefined"||!state||state.mode==="first"||!state.mode))return "すでに";
+    }catch(e){}
+    return null;
+  };
+  try{
+    if(typeof openSmsDirect615==="function"){
+      var open0=openSmsDirect615;
+      var go=function(self,args,id){lastTap={id:id,at:Date.now()};return open0.apply(self,args)};
+      openSmsDirect615=function(id){
+        id=String(id||"");var self=this,args=arguments,a=findA(id);
+        var when=sentRecently(a);
+        if(when&&!(okOnce[id]&&Date.now()-okOnce[id]<120000)){
+          window._r659Resend=function(){okOnce[id]=Date.now();try{closeModal()}catch(e){}openSmsDirect615.apply(self,args)};
+          try{
+            showModal('<h3>もう一度送りますか？</h3><p>'+esc9((a&&a.name)||"この方")+' さんには、'+when+'SMSを送信済みとして記録されています。</p><div class="flex"><button class="primary" onclick="_r659Resend()">もう一度送る</button><button onclick="closeModal()">やめる</button></div>');
+            return;
+          }catch(e){}
+        }
+        var ng=window._r656Ng;
+        if(ng&&!ng.loaded&&window._r6ServerMode){
+          /* NGリストがまだ届いていない: 最大3秒だけ待つ (サーバー側でもNGの人には発行しない) */
+          try{if(window.r656LoadNg)window.r656LoadNg()}catch(e){}
+          var t0=Date.now(),iv=setInterval(function(){
+            if(!ng.loaded&&Date.now()-t0<3000)return;
+            clearInterval(iv);
+            if(ng.loaded&&isNg(id,a)){toast9("この方は配信NGリストに入っているため、SMSを開きませんでした","bad");return}
+            go(self,args,id);
+          },150);
+          return;
+        }
+        return go(self,args,id);
+      };
+      if(window.__APP_LOGIC__)window.__APP_LOGIC__.openSmsDirect615=openSmsDirect615;
+    }
+  }catch(e){}
+
+  /* SMSアプリを開いたことを覚える */
+  var noteOpen=function(id,href){
+    try{
+      if(!id)return;
+      var a=findA(id);
+      if(a&&a.sms_sent)return;
+      if(isNg(id,a))return;
+      if(/^sms:/i.test(String(href||""))&&a&&a.phone){
+        var m=/^sms:([^?&;]*)/i.exec(String(href));var d=m?digits(decodeURIComponent(m[1])):"";
+        if(d&&digits(a.phone)&&d!==digits(a.phone))return; /* 別の人あてのリンク */
+      }
+      pend[id]={at:Date.now(),name:a?(a.name||""):"",left:false};save();
+    }catch(e){}
+  };
+  try{
+    document.addEventListener("click",function(ev){
+      try{
+        var an=ev.target&&ev.target.closest?ev.target.closest("a[href]"):null;if(!an)return;
+        var href=an.getAttribute("href")||"",id="";
+        var m=(an.getAttribute("data-r617id")||"").match(/openSmsDirect615\('([^']*)'/);if(m)id=m[1];
+        if(!id){var dk=an.closest("#r617SmsDock");if(dk)id=dk.getAttribute("data-id")||""}
+        if(!id){var S=window._r617Sms||{};Object.keys(S).forEach(function(k){if(S[k]&&S[k].url===href)id=k})}
+        var fresh=lastTap&&Date.now()-lastTap.at<20000;
+        if(!id&&fresh&&(/^sms:/i.test(href)||an.style.display==="none"))id=lastTap.id;
+        if(!id)return;
+        noteOpen(id,href);
+      }catch(e){}
+    },true);
+    if(typeof r615NavigateSms_==="function"){
+      var nav0=r615NavigateSms_;
+      r615NavigateSms_=function(href){try{if(lastTap&&Date.now()-lastTap.at<20000)noteOpen(lastTap.id,href)}catch(e){}return nav0.apply(this,arguments)};
+    }
+  }catch(e){}
+
+  /* 戻ってきたら「送信済みにします」と出して、8秒後に記録する */
+  var barTm=null;
+  var commit=function(id){
+    try{
+      var a=null;try{a=applicants.find(function(x){return x.id===id})}catch(e){}
+      if(a){if(!a.sms_sent)markSms(id,true)}
+      else enqueue("sms_sent",{applicant_id:id,checked:true});
+    }catch(e){}
+  };
+  var showBar=function(){
+    try{
+      if(document.hidden)return;
+      var ids=[];
+      Object.keys(pend).forEach(function(k){
+        var p=pend[k];
+        if(!p||Date.now()-p.at>30*60000){delete pend[k];return}
+        var a=findA(k);if(a&&a.sms_sent){delete pend[k];return}
+        if(p.left)ids.push(k);
+      });
+      save();
+      var bar=document.getElementById("r659Bar");
+      if(!ids.length){if(bar){clearInterval(barTm);bar.remove()}return}
+      if(bar)return;
+      bar=document.createElement("div");bar.id="r659Bar";bar.className="r659bar";bar.setAttribute("role","status");
+      var t=document.createElement("span");t.className="r659t";
+      var no=document.createElement("button");no.type="button";no.className="r659no";no.textContent="送っていない";
+      var yes=document.createElement("button");yes.type="button";yes.className="r659yes";yes.textContent="記録する";
+      bar.appendChild(t);bar.appendChild(no);bar.appendChild(yes);document.body.appendChild(bar);
+      var label=ids.length===1?((pend[ids[0]].name||"この方")+" さん"):(ids.length+"名");
+      var n=8,paint=function(){t.textContent=label+"にSMSを送った、と記録します（"+n+"秒）"};paint();
+      var fin=function(ok){
+        clearInterval(barTm);try{bar.remove()}catch(e){}
+        ids.forEach(function(id){delete pend[id]});save();
+        if(ok)ids.forEach(commit);
+        else toast9("記録しませんでした。送ったときは「送信後にチェック」を押してください","warn");
+      };
+      no.onclick=function(){fin(false)};yes.onclick=function(){fin(true)};
+      barTm=setInterval(function(){if(document.hidden)return;n--;if(n<=0)fin(true);else paint()},1000);
+    }catch(e){}
+  };
+  var onLeave=function(){var ch=false;Object.keys(pend).forEach(function(k){var p=pend[k];if(p&&!p.left&&Date.now()-p.at<90000){p.left=true;ch=true}});if(ch)save()};
+  try{
+    document.addEventListener("visibilitychange",function(){if(document.hidden)onLeave();else setTimeout(showBar,500)});
+    window.addEventListener("pagehide",onLeave);
+    window.addEventListener("pageshow",function(){setTimeout(showBar,800)});
+    window.addEventListener("focus",function(){setTimeout(showBar,500)});
+    setTimeout(showBar,3000);
+  }catch(e){}
+
+  /* 5 */
+  try{
+    var app=document.getElementById("app"),mkPend=false;
+    var mark=function(){
+      mkPend=false;
+      try{
+        var cards=document.querySelectorAll("#app article.card");
+        for(var i=0;i<cards.length;i++){
+          var c=cards[i];
+          if(!c.querySelector('button[onclick*="openSmsDirect615("]')||!c.querySelector('a.btn[href^="tel:"]')){if(c.classList.contains("r659next"))c.classList.remove("r659next");continue}
+          var cb=c.querySelector('input[type="checkbox"][onchange*="markSms("]');
+          var next=!!(cb&&cb.checked)||(c.textContent||"").indexOf("回答種別")>=0;
+          if(next!==c.classList.contains("r659next"))c.classList.toggle("r659next",next);
+        }
+      }catch(e){}
+    };
+    var kick=function(){if(mkPend)return;mkPend=true;if(window.requestAnimationFrame)requestAnimationFrame(mark);else setTimeout(mark,50)};
+    if(app&&window.MutationObserver){new MutationObserver(kick).observe(app,{childList:true,subtree:true});app.addEventListener("change",kick,true)}
+    kick();
+  }catch(e){}
+}catch(e){try{console.warn("r659",e)}catch(_){}}})();</script>
 </body></html>

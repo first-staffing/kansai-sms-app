@@ -107,5 +107,24 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
     A(/SMSを送る人\s*\d+人/.test(late.shown.replace(/\s+/g,' '))||/\d+人/.test(late.shown),'ホームの数字が自動で出る ['+late.todo+']');
     await ctx.close();
   }
+  // 10) 全員分の名簿が届く前でも、京都・奈良だけ先に取って、ピックアップと150名の一覧を出す
+  {
+    const ctx=await br.createBrowserContext();const pg3=await ctx.newPage();await pg3.setViewport({width:390,height:844,isMobile:true});pg3.on('dialog',d=>d.dismiss());pg3.on('pageerror',e=>res.push('PAGEERR '+e.message));
+    // 全員分の名簿 (searchApplicants で府県の指定なし・1000件ずつ) だけ、ずっと返事を返さない
+    await pg3.evaluateOnNewDocument(fs.readFileSync(path.join(__dirname,'mock.js'),'utf8')+';(function(){var f0=window.fetch;window.fetch=function(u,o){try{var q=JSON.parse(o&&o.body||"{}");if(q.action==="searchApplicants"&&q.page_size>=200&&!(q.filter&&q.filter.prefectures))return new Promise(function(){})}catch(e){}return f0.apply(this,arguments)}})();');
+    await pg3.goto('http://localhost:8766/#/',{waitUntil:'domcontentloaded'});await sleep(5000);
+    const h3=await pg3.evaluate(()=>({roster:!!(window._r616Roster&&window._r616Roster.items&&window._r616Roster.items.length),txt:((document.querySelector('.r800pick')||{}).textContent||'').replace(/\s+/g,' '),n:(r800.pickToday()||{sms:[]}).sms.length}));
+    A(!h3.roster&&h3.n>5&&/SMSを送る人 ?\d+人/.test(h3.txt),'名簿が届く前でも、ホームにピックアップが出る ('+h3.n+'人)');
+    await pg3.evaluate(()=>r800View('pick'));await sleep(1500);
+    const l3=await pg3.evaluate(()=>{var p=r800.pickToday();var cards=[].slice.call(document.querySelectorAll('#app article.card')).map(function(c){return c.getAttribute('data-anchor').slice(4)});return {cards:cards.length,order:cards.every(function(id,i){return id===p.sms[i]}),total:(document.getElementById('listTotal')||{}).textContent||'',more:!![].slice.call(document.querySelectorAll('button')).filter(function(b){return /さらに/.test(b.textContent)}).length}});
+    A(l3.cards===20&&l3.order,'名簿が届く前でも、150名の一覧が選んだ順に並ぶ ['+l3.total+']');
+    await pg3.evaluate(()=>{window.__navs=[];r615NavigateSms_=function(h){window.__navs.push(h)};document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="sms:"]');if(a){window.__navs.push(a.getAttribute('href'));e.preventDefault()}},false)});
+    const id10=await pg3.evaluate(()=>r800.pickToday().sms[0]);
+    await tap(pg3,id10);await sleep(2500);
+    const n10=await pg3.evaluate(()=>window.__navs.length);A(n10>=1,'その一覧から初回SMSを開ける');
+    await pg3.evaluate(id=>{var c=document.querySelector('#app article[data-anchor="app:'+id+'"] input[type=checkbox]');if(c&&!c.checked)c.click()},id10);await sleep(900);
+    const s10=await pg3.evaluate(id=>window.__sentReqs.filter(function(r){return r.applicant_id===id}).length,id10);A(s10===1,'送信済みの記録もできる');
+    await ctx.close();
+  }
   console.log(res.join('\n'));await br.close();srv.close();process.exit(res.some(r=>!/^OK/.test(r))?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});

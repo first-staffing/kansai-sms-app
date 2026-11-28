@@ -4,7 +4,7 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
 (async()=>{
   const srv=http.createServer((q,r)=>{let p=q.url.split('?')[0];if(p==='/')p='/index.html';const f=path.join(ROOT,p);if(!fs.existsSync(f)){r.writeHead(404);return r.end()}r.writeHead(200,{'content-type':'text/html; charset=utf-8'});r.end(fs.readFileSync(f))}).listen(8767);
   const br=await pp.launch({executablePath:process.env.CHROME||'/usr/bin/google-chrome',args:['--no-sandbox','--disable-gpu'],headless:'new'});
-  const mock=fs.readFileSync(path.join(__dirname,'mock.js'),'utf8').replace('for(var i=0;i<420;i++)','for(var i=0;i<2200;i++)').replace('k<1500','k<7000');
+  const mock=fs.readFileSync(path.join(__dirname,'mock.js'),'utf8').replace('for(var i=0;i<420;i++)','for(var i=0;i<'+(process.env.N||7800)+';i++)').replace('k<1500','k<7000');
   const pre=mock+`;(function(){
     window.__tl=[];var T0=performance.now();var LAT={ping:1200,getTemplates:1500,getOperators:1300,getApplicantSummary:2500,getResponses:2500,getResponseSummary:1800,getCaseMaster:6000,searchApplicants:1800,getMuniFacets:2500,ngList:1500,getSendQueueStats:1500,getApplicant:1500,issueFormToken:2500};
     var f0=window.fetch;
@@ -14,7 +14,7 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
         var a=req.action,st=Math.round(performance.now()-T0),lat=LAT[a]||1500;
         if(a==='searchApplicants')lat=1500+(req.page_size||50)*3; if(a==='getCaseMaster'&&req.updated_since)lat=2000;
         var d=window.__mock(req);if(d===undefined)d={};
-        var ent={a:(a==='getResponses'||a==='getResponseSummary'||a==='getSendQueueStats'||a==='ping'?JSON.stringify(req)+' ':'')+a+(a==='searchApplicants'?'('+(req.page_size||50)+(req.filter&&Object.keys(req.filter).length>1?',絞':'')+',p'+(req.page||1)+')':''),s:st};window.__tl.push(ent);
+        var ent={a:(a==='getResponses'||a==='getResponseSummary'||a==='getSendQueueStats'||a==='ping'?JSON.stringify(req)+' ':'')+a+(a==='searchApplicants'?'('+(req.page_size||50)+(req.filter&&req.filter.prefectures?',京奈':(req.filter&&Object.keys(req.filter).length>1?',絞':''))+',p'+(req.page||1)+')':''),s:st};window.__tl.push(ent);
         return new Promise(function(res){setTimeout(function(){ent.e=Math.round(performance.now()-T0);res({ok:true,status:200,json:function(){return Promise.resolve({ok:true,data:d})}})},lat)});
       }
       if(String(url).indexOf('script.google.com')>=0||String(url).indexOf('workers.dev')>=0)return Promise.resolve({ok:true,status:200,json:function(){return Promise.resolve({ok:true})},text:function(){return Promise.resolve('')}});
@@ -27,7 +27,7 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
       if(!M.cases&&typeof r617CasesReadyNow_==='function'&&window._r6ServerMode&&r617CasesReadyNow_())M.cases=t;
       var pk=document.querySelector('.r800todo.pick b');if(!M.pick&&pk&&/\\d/.test(pk.textContent))M.pick=t;
       var td=document.querySelector('.r800home .r800todo b');if(!M.todo&&td&&/\\d/.test(td.textContent))M.todo=t;
-      if(!M.server&&window._r6ServerMode)M.server=t;
+      if(!M.server&&window._r6ServerMode)M.server=t;if(!M.own){var so=JSON.parse(localStorage.getItem('r800srv')||'{}');if(so.own)M.own=t}
     }catch(e){}},50);
   })();`;
   async function run(hash,label,second){

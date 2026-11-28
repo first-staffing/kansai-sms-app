@@ -27,7 +27,7 @@
   window.__mockApps=apps;window.__mockResp=resp;window.__sentReqs=[];
   function filt(f){f=f||{};return apps.filter(function(a){
     if(f.area&&a.area!==f.area)return false;if(!f.include_test&&a.is_test)return false;
-    if(f.prefecture&&a.prefecture!==f.prefecture)return false;
+    if(f.prefecture&&a.prefecture!==f.prefecture)return false;if(f.prefectures&&f.prefectures.length&&f.prefectures.indexOf(a.prefecture)<0)return false;
     if(f.sms_state==="sent"&&!a.sms_sent)return false;if(f.sms_state==="unsent"&&a.sms_sent)return false;
     if(f.has_fs_history&&!a.has_fs_history)return false;
     if(f.keyword&&a.name.indexOf(f.keyword)<0)return false;

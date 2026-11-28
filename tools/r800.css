@@ -64,3 +64,34 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
 .r800tag.pick{background:#dbeafe;color:#1e40af}
 .r800mailNote{border:1.5px solid #2563eb;background:#eff6ff}
 .r800mailNote p{margin:6px 0 8px;font-size:13px;line-height:1.6}
+
+/* 反響一覧 (#/hankyo) */
+.r800hkks{display:flex;gap:8px;margin:0 0 10px}
+.r800hkk{flex:1;min-width:0;border:1px solid #cbd5e1;border-radius:14px;background:#fff;padding:8px 4px;text-align:center}
+.r800hkk span{display:block;font-size:12px;font-weight:700;color:#475569}
+.r800hkk b{font-size:22px;font-weight:800;color:#1e3a5f;line-height:1.2}
+.r800hkk b small{font-size:12px;margin-left:1px}
+.r800hkk.hot{border-color:#f59e0b;background:#fffbeb}
+.r800hkk.hot b{color:#b45309}
+.r800hkw{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 10px}
+.r800hkw .tabs{margin:0}
+.r800hkr{min-height:40px;padding:0 14px;border-radius:10px;white-space:nowrap}
+.r800hk{border-left:5px solid #f59e0b}
+.r800hk.st-in_progress{border-left-color:#2563eb}
+.r800hk.st-handled{border-left-color:#cbd5e1;opacity:.85}
+.r800hkh{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.r800hkn{font-size:17px}
+.r800hks{display:block;font-size:12.5px;color:#475569;margin-top:2px}
+.r800hkt{text-align:right;white-space:nowrap}
+.r800hkt b{display:block;font-size:14px;color:#b45309}
+.r800hkt span{font-size:11.5px;color:#64748b}
+.r800hk.st-handled .r800hkt b{color:#64748b}
+.r800hkb{display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 6px}
+.r800hkl{display:flex;gap:8px;font-size:13.5px;padding:3px 0;border-top:1px dashed #e2e8f0}
+.r800hkl span{flex:0 0 6.5em;color:#64748b}
+.r800hkl b{flex:1;min-width:0;font-weight:600;word-break:break-word}
+.r800hkf{margin:6px 0 0;padding:8px 10px;background:#f8fafc;border-radius:10px;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+.r800hka{margin-top:10px;flex-wrap:wrap}
+.r800hka button{min-height:44px;flex:1 1 auto}
+.r800hkm{width:100%;min-height:46px}
+.r800hkold{background:#fee2e2;color:#b91c1c;border-color:#fecaca}

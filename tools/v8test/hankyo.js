@@ -41,5 +41,31 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
   await pg.close();
   // 5) 回答一覧・掘り起こしに見本が残らない
   for(const rt of ['#/responses','#/dig']){pg=await open(rt,2500);await sleep(14000);const s=await pg.evaluate(()=>/サンプル/.test(document.getElementById('app').innerText));A(!s,rt+' を直接開いても見本が残らない');await pg.close()}
+  // 6) 電話の約束順・ホームの「止まっている反響」
+  pg=await open('#/hankyo',0);await sleep(9000);
+  o=await pg.evaluate(()=>({note:(document.querySelector('.r800hkdue')||{}).innerText||'',c:[].slice.call(document.querySelectorAll('.r800hk')).slice(0,3).map(c=>(c.querySelector('.r800hkd')||{}).className||'none')}));
+  A(/時間を過ぎた人 1名/.test(o.note)&&/今日 1名/.test(o.note),'電話の約束の件数が出る ['+o.note+']');
+  A(/late/.test(o.c[0])&&/today/.test(o.c[1])&&o.c[2]==='none','並び: 過ぎた約束 → 今日の約束 → 約束なし');
+  await pg.evaluate(()=>{location.hash='#/'});await sleep(4000);
+  o=await pg.evaluate(()=>(document.querySelector('.r800stuck')||{}).innerText||'');
+  A(/電話の約束を過ぎた反響 1件/.test(o)&&/対応中のまま2日以上/.test(o),'ホームに止まっている反響が出る');
+  await pg.evaluate(()=>document.querySelector('.r800stuck').click());await sleep(1500);
+  A(await pg.evaluate(()=>location.hash==='#/hankyo'),'押すと反響一覧へ');
+  await pg.close();
+  // 7) 再登録した送信済みの人が「まだ送っていない」に出て、もう一度送ると記録されて消える対象になる
+  pg=await open('#/list',0);await sleep(7000);
+  await pg.evaluate(()=>{window.__navs=[];r615NavigateSms_=function(h){window.__navs.push(h)};try{Object.defineProperty(document,'hidden',{configurable:true,get:function(){return !!window.__hid}});Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return window.__hid?'hidden':'visible'}})}catch(e){};window.__hide=function(v){window.__hid=v;document.dispatchEvent(new Event('visibilitychange'))};r800View('unsent')});await sleep(2500);
+  o=await pg.evaluate(()=>{var c=document.querySelector('#app article[data-anchor="app:A199001"]');return {inList:!!c,tag:c?/再登録（前回の送信より後に応募）/.test(c.innerText):false}});
+  A(o.inList&&o.tag,'再登録の人が「まだ送っていない」に出て、札が付く');
+  await pg.evaluate(()=>document.querySelector('#app article[data-anchor="app:A199001"] button[onclick*="openSmsDirect615("]').click());await sleep(6000);
+  await pg.evaluate(()=>{var a=document.querySelector('#app article[data-anchor="app:A199001"] .r614main a[href^="sms:"]');if(a&&!window.__navs.length){a.addEventListener('click',function(e){e.preventDefault()});a.click()}});await sleep(1200);
+  o=await pg.evaluate(()=>({navs:window.__navs.length,modal:/もう一度送りますか/.test(document.body.innerText)}));
+  A(!o.modal,'再登録の人には「もう一度送りますか」を出さない');
+  await pg.evaluate(()=>__hide(true));await sleep(300);await pg.evaluate(()=>__hide(false));await sleep(1200);
+  o=await pg.evaluate(()=>(document.getElementById('r659Bar')||{}).innerText||'');A(/送信済みにします/.test(o),'戻ると記録の帯が出る ['+o.replace(/\n/g,' ')+']');
+  await pg.evaluate(()=>{var y=document.querySelector('#r659Bar .r659yes');if(y)y.click()});await sleep(1500);
+  o=await pg.evaluate(()=>({server:window.__sentReqs.filter(r=>r.applicant_id==='A199001').length,isRe:window.r800.isRe(r6161FindApplicant_('A199001'))}));
+  A(o.server===1&&!o.isRe,'記録され、再登録の対象から外れる (サーバーへ'+o.server+'回)');
+  await pg.close();
   console.log(res.join('\n'));await br.close();srv.close();process.exit(res.some(x=>!/^OK/.test(x))?1:0);
 })();

@@ -101,6 +101,7 @@
       }catch(e){}
       ver++;
       try{if(arguments[1])sentNow[id]=1;else delete sentNow[id]}catch(e){}
+      try{if(arguments[1]){var iso=new Date().toISOString(),td8=today();[applicants.find(function(x){return x.id===id}),(typeof r6161FindApplicant_==="function")?r6161FindApplicant_(id):null].forEach(function(p){if(p){p.sms_last_sent_at=iso;p.last_sms_at=td8}})}}catch(e){}
       return mk0.apply(this,arguments);
     };
     if(window.__APP_LOGIC__&&window.__APP_LOGIC__.markSms)window.__APP_LOGIC__.markSms=markSms;
@@ -138,6 +139,13 @@
     var v=stopCalc(a);try{a._r8st={k:k,v:v}}catch(e){}return v;
   };
   var lastSent=function(a){return a?(a.sms_last_sent_at||a.last_sms_at||(a.sms_sent?a.last_contact_at:"")||""):""};
+  var isRe=function(a){ /* 再登録: 前にSMSを送ったあとで、もう一度応募してきた人。「まだ送っていない」に出す */
+    try{
+      if(!a||!a.sms_sent)return false;
+      var ds=daysSince(lastSent(a)),da=daysSince(appliedOf(a));
+      return ds!=null&&da!=null&&da<ds;
+    }catch(e){return false}
+  };
   var FOLLOW_MIN=3,FOLLOW_MAX=30;
   var isFollow=function(a){ /* 追いSMSの対象: 送って3〜30日・回答なし・まだ先へ進んでいない人 */
     try{
@@ -221,7 +229,7 @@
         var c={all:list.length,unsent:0,follow:0,full:false},out=[];
         try{c.full=localMode()||(rosterReady()&&applicants===window._r616Roster.items)}catch(e){}
         for(var i=0;i<list.length;i++){
-          var a=list[i],un=!a.sms_sent&&!isStop(a),fo=isFollow(a);
+          var a=list[i],un=(!a.sms_sent||isRe(a))&&!isStop(a),fo=isFollow(a)&&!isRe(a);
           if(un)c.unsent++;if(fo)c.follow++;
           if(v==="unsent"){if(un||(marked[a.id]&&!marked[a.id].follow))out.push(a)}
           else if(v==="follow"){if(fo||(marked[a.id]&&marked[a.id].follow))out.push(a)}
@@ -254,7 +262,7 @@
     var sf0=serverFilterForList_;
     serverFilterForList_=function(){
       var f=sf0.apply(this,arguments);
-      try{if(listOn()&&!F.sent){var v=viewOf();if(v==="unsent")f.sms_state="unsent";else if(v==="follow")f.sms_state="sent"}}catch(e){}
+      try{if(listOn()&&!F.sent){var v=viewOf();if(v==="unsent"){if(!rosterReady())f.sms_state="unsent"}else if(v==="follow")f.sms_state="sent"}}catch(e){}
       return f;
     };
   }catch(e){}
@@ -321,6 +329,7 @@
         if(d!=null)bits.push('<span class="r800tag'+(d<=3?" hot":"")+'">応募 '+ago(d)+'</span>');
         var n=nearCount(a);if(n>0)bits.push('<span class="r800tag">近くに案件 '+(n>=20?"20件以上":n+"件")+'</span>');
         if(a.sms_sent){var sd=daysSince(lastSent(a));var who=(a._ls&&a._ls.n)?"・"+esc8(a._ls.n):"";if(sd!=null)bits.push('<span class="r800tag sent">送信 '+ago(sd)+who+'</span>')}
+        if(isRe(a))bits.unshift('<span class="r800tag hot">再登録（前回の送信より後に応募）</span>');
         if(respIds()[a.id])bits.push('<span class="r800tag ok">回答あり</span>');
         if(F.r8view==="pick"&&state.mode==="first"){
           var mc=matchCases(a);
@@ -552,6 +561,27 @@
   var hkNextDate=function(r){ /* 電話の希望日のうち、今日以降でいちばん近い日 */
     try{var td=today();var ds=(r.phone_dates||[]).map(function(x){return String(x).slice(0,10)}).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x)&&x>=td}).sort();return ds[0]||""}catch(e){return ""}
   };
+  var HKH={morning:[9,12],daytime:[12,15],evening:[15,18],night:[18,21]};
+  /* 電話の約束: {s,e,day,late,today}。今日以降の希望日があればいちばん近い日、過ぎた日しか無ければいちばん新しい日 */
+  var hkDue=function(r){
+    try{
+      var ds=(r.phone_dates||[]).map(function(x){return String(x).slice(0,10)}).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x)}).sort();
+      var bs=(r.phone_bands||[]).filter(function(b){return HKH[b]});
+      if(!ds.length)return null; /* 日にちの指定が無い人は、約束としては扱わない */
+      var td=today(),up=ds.filter(function(x){return x>=td})[0],day=up||ds[ds.length-1];
+      var sh=9,eh=21;if(bs.length){sh=24;eh=0;bs.forEach(function(b){sh=Math.min(sh,HKH[b][0]);eh=Math.max(eh,HKH[b][1])})}
+      var p=day.split("-"),s=new Date(Number(p[0]),Number(p[1])-1,Number(p[2]),sh).getTime(),e=new Date(Number(p[0]),Number(p[1])-1,Number(p[2]),eh).getTime();
+      return {s:s,e:e,day:day,late:Date.now()>e,today:day===td,label:hkDateLabel(day)+(bs.length?" "+bs.map(function(b){return HKBAND[b]}).join("・"):"")};
+    }catch(e){return null}
+  };
+  var hkRank=function(r){ /* 並び順: 約束の時間を過ぎた人 → 今日の約束 → 約束なし (新しい順) → 明日以降の約束 */
+    if(hkSt(r)==="handled")return [2,0];
+    var d=hkDue(r);
+    if(!d)return [2,0];
+    if(d.late)return [0,d.s];
+    if(d.today)return [1,d.s];
+    return [3,d.s];
+  };
   var hkFacility=function(id){
     try{var c=(typeof CASES!=="undefined"?CASES:[]).find(function(x){return String(x.id)===String(id)});if(!c)return "";var p=null;try{p=publicCaseItem(c)}catch(e){}return String((p&&p.facility)||c.facility||"")}catch(e){return ""}
   };
@@ -614,6 +644,9 @@
       });
     }catch(e){}
   };
+  var hkIdle=function(r){ /* 何日動いていないか: 対応中は「対応中にした日」から、未対応は「反響が来た日」から */
+    try{var t=Date.parse((hkSt(r)==="in_progress"&&r.status_at)?r.status_at:r.at);return isFinite(t)?Math.floor((Date.now()-t)/DAY):0}catch(e){return 0}
+  };
   var hkCard=function(r){
     var a=hkPerson(r.applicant_id),st=hkSt(r),id=esc8(r.id),aid=esc8(r.applicant_id);
     var nm=a&&a.name?String(a.name):(r.applicant_name||"");
@@ -628,6 +661,8 @@
     var more=((r.selected_case_ids||[]).length>4)?" ほか"+((r.selected_case_ids||[]).length-4)+"件":"";
     var line=function(k,v){return v?'<div class="r800hkl"><span>'+k+'</span><b>'+esc8(v)+'</b></div>':""};
     var exp=[r.experience_band||r.experience||"",r.qualification||""].filter(Boolean).join("／");
+    var due=st!=="handled"?hkDue(r):null,dueHtml="";
+    if(due)dueHtml='<div class="r800hkd'+(due.late?" late":(due.today?" today":""))+'">'+(due.late?"電話の約束の時間を過ぎています：":(due.today?"今日電話する約束：":"電話の約束："))+esc8(due.label)+'</div>';
     var btn="";
     if(st!=="handled"){
       btn+='<button type="button" class="primary" onclick="r800HkCall(\''+aid+'\',this,\''+id+'\')">電話する</button>';
@@ -640,7 +675,8 @@
     return '<article class="card r800hk st-'+st+'" data-resp="'+id+'">'+
       '<div class="r800hkh"><div><b class="r800hkn">'+esc8(nm||"（名前を読み込み中）")+(nm?" 様":"")+'</b>'+(sub?'<span class="r800hks">'+esc8(sub)+'</span>':'')+'</div>'+
       '<div class="r800hkt"><b>'+esc8(hkAgo(r.at))+'</b><span>'+esc8(hkWhen(r.at))+'</span></div></div>'+
-      '<div class="r800hkb"><span class="badge '+(st==="unhandled"?"warn":"")+'">'+stLabel+esc8(who)+'</span>'+(st!=="handled"&&isFinite(Date.parse(r.at))&&Date.now()-Date.parse(r.at)>DAY?'<span class="badge r800hkold">'+Math.floor((Date.now()-Date.parse(r.at))/DAY)+'日そのまま</span>':'')+(r.intent?'<span class="badge">'+esc8(r.intent)+'</span>':'')+(ch?'<span class="badge">'+esc8(ch)+'</span>':'')+(r.sender_name?'<span class="badge">送信: '+esc8(r.sender_name)+'</span>':'')+'</div>'+
+      '<div class="r800hkb"><span class="badge '+(st==="unhandled"?"warn":"")+'">'+stLabel+esc8(who)+'</span>'+(st!=="handled"&&hkIdle(r)>=1?'<span class="badge r800hkold">'+hkIdle(r)+'日そのまま</span>':'')+(r.intent?'<span class="badge">'+esc8(r.intent)+'</span>':'')+(ch?'<span class="badge">'+esc8(ch)+'</span>':'')+(r.sender_name?'<span class="badge">送信: '+esc8(r.sender_name)+'</span>':'')+'</div>'+
+      dueHtml+
       line("気になる案件",cases.join("、")+more)+
       line("電話の希望",hkPhoneWish(r))+
       line("見学の希望",r.tour)+line("面談の希望",r.interview)+line("入職できる日",r.start)+
@@ -660,13 +696,16 @@
       var cnt={open:0,doing:0,done:0,all:base.length};
       base.forEach(function(r){var s=hkSt(r);if(s==="handled")cnt.done++;else if(s==="in_progress")cnt.doing++;else cnt.open++});
       var rows=base.filter(function(r){var s=hkSt(r);return HK.tab==="all"||(HK.tab==="open"&&s==="unhandled")||(HK.tab==="doing"&&s==="in_progress")||(HK.tab==="done"&&s==="handled")});
-      rows.sort(function(x,y){return String(y.at||"").localeCompare(String(x.at||""))});
+      var late=0,tdy=0,rk={};
+      rows.forEach(function(r){var k=hkRank(r);rk[r.id]=k;if(k[0]===0)late++;else if(k[0]===1)tdy++});
+      rows.sort(function(x,y){var a=rk[x.id],b=rk[y.id];if(a[0]!==b[0])return a[0]-b[0];if(a[0]!==2&&a[1]!==b[1])return a[1]-b[1];return String(y.at||"").localeCompare(String(x.at||""))});
       var tabs=[["open","未対応",cnt.open],["doing","対応中",cnt.doing],["done","対応済み",cnt.done],["all","すべて",cnt.all]];
       var h='<h2>反響一覧</h2>'+
         '<div class="tabs r800tabs">'+tabs.map(function(t){return '<button type="button" aria-pressed="'+(HK.tab===t[0])+'" onclick="r800HkTab(\''+t[0]+'\')">'+t[1]+' '+num(t[2])+'</button>'}).join("")+'</div>'+
         '<div class="r800hkw"><div class="tabs">'+[["all","全員の分"],["me","自分が送った分"]].map(function(t){return '<button type="button" aria-pressed="'+(HK.who===t[0])+'" onclick="r800HkWho(\''+t[0]+'\')">'+t[1]+'</button>'}).join("")+'</div>'+
         '<button type="button" class="r800hkr" onclick="r800HkReload()">'+(HK.busy?"読み込み中…":"更新")+'</button></div>'+
         (HK.err?'<p class="r800note">'+esc8(HK.err)+'</p>':'')+
+        ((late||tdy)&&HK.tab!=="done"?'<p class="r800hkdue">電話の約束：'+(late?'<b class="late">時間を過ぎた人 '+late+'名</b>':'')+(late&&tdy?'／':'')+(tdy?'<b>今日 '+tdy+'名</b>':'')+'（上から順に並べています）</p>':'')+
         (HK.tab==="done"||HK.tab==="all"?'<p class="r800note">対応済みは最近の100件までを表示します。</p>':'');
       if(!rows.length)h+='<div class="card"><p>'+(!ready?(HK.err?"読み込めませんでした。":"読み込み中です…"):"該当する反響はありません。")+'</p></div>';
       else{
@@ -687,7 +726,7 @@
       if(!items&&localMode())items=nonTestApplicants().filter(function(a){return a.area===state.area});
       if(items){
         respIds();var u=0,f=0;
-        items.forEach(function(a){if(!a||a.is_test)return;if(!a.sms_sent){if(!isStop(a))u++}else if(isFollow(a))f++});
+        items.forEach(function(a){if(!a||a.is_test)return;if(!a.sms_sent||isRe(a)){if(!isStop(a))u++}else if(isFollow(a))f++});
         out.unsent=u;out.follow=f;
         if(window._r6ServerMode)LSS(CNTK,{area:state.area,unsent:u,follow:f,day:today()});
       }else{
@@ -714,6 +753,17 @@
       },700);
     }catch(e){}
   };
+  var stuckHtml8=function(){ /* 手を付けたまま止まっている反響・過ぎた電話の約束 (サーバーから読めた回答だけで数える) */
+    try{
+      var ok=localMode()||(window._r6ServerMode&&window._respSync&&window._respSync.ok);
+      if(!ok)return "";
+      var stuck=0,late=0;
+      (state.responses||[]).forEach(function(r){if(!r||!r.id)return;var s=hkSt(r);if(s==="handled")return;if(s==="in_progress"&&hkIdle(r)>=2)stuck++;var d=hkDue(r);if(d&&d.late)late++});
+      if(!stuck&&!late)return "";
+      return '<button type="button" class="r800stuck" onclick="r800HkGo(\''+(late?"open":"doing")+'\')">'+(late?'<span>電話の約束を過ぎた反響 <b>'+late+'件</b></span>':'')+(stuck?'<span>対応中のまま2日以上 <b>'+stuck+'件</b></span>':'')+'<i>反響一覧で見る ›</i></button>';
+    }catch(e){return ""}
+  };
+  window.r800HkGo=function(t){try{HK.tab=(t==="doing"?"doing":"open");HK.n=40;LSS("r800hkTab",HK.tab);location.hash="#/hankyo";setTimeout(function(){try{route()}catch(e){}},0)}catch(e){}};
   var todoHtml=function(){
     try{
       var hc=homeCounts(),open=null;
@@ -723,6 +773,7 @@
         tile("まだ送っていない",hc.unsent,"名","r800View('unsent')")+
         tile("追いSMSの対象",hc.follow,"名","r800View('follow')",hc.follow?"hot":"")+
         tile("反響の未対応",open,"件","location.hash='#/hankyo'",open?"hot":"")+'</div>'+
+        stuckHtml8()+
         (hc.stale?'<p class="r800note">人数は前回開いたときのものです。最新の名簿を読み込み中…</p>':'')+'</div>';
     }catch(e){return ""}
   };
@@ -1198,7 +1249,7 @@
       }catch(e){}
     },500);
   }catch(e){}
-  window.r800={hkSmsBody:hkSmsBody,logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
+  window.r800={hkSmsBody:hkSmsBody,isRe:isRe,logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
   try{warm()}catch(e){}
   try{var h0=String(window._r800Hash0||"");if((h0.indexOf("#/hankyo")===0||h0.indexOf("#/stats")===0)&&(location.hash||"")!==h0)history.replaceState(null,"",h0)}catch(e){}
   try{route()}catch(e){} /* 上の組み込みを、いま出ている画面にも反映する */

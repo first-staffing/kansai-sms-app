@@ -23,6 +23,14 @@
     }
   }
   apps.push({applicant_id:"A000001",area:"kansai",name:"T_テスト 太郎",prefecture:"大阪府",municipality:"大阪市北区",job_type:"kaigo",source_company:"ファーストスタッフィング",applied_at:new Date(NOW-864e5).toISOString(),csv_status:"未対応",sms_sent:false,is_test:true,has_fs_history:true,phone:"09000000000"});
+  /* 再登録の人 (10日前にSMSを送ったあと、2日前にもう一度応募) と、電話の約束つきの回答 */
+  apps.push({applicant_id:"A199001",area:"kansai",name:"再登録花子",prefecture:"京都府",municipality:"宇治市",job_type:"kaigo",source_company:"ファーストスタッフィング",applied_at:new Date(NOW-2*864e5).toISOString(),csv_status:"未対応",sms_sent:true,sms_last_sent_at:new Date(NOW-10*864e5).toISOString(),has_fs_history:true,phone:"09011112222",lat:34.88,lon:135.8});
+  (function(){var d=function(n){var t=new Date(NOW+n*864e5+9*36e5);return t.toISOString().slice(0,10)};var un=resp.filter(function(r){return r.status==="unhandled"});
+    if(un[0]){un[0].phone_dates=[d(-2)];un[0].phone_bands=["morning"]}
+    if(un[1]){un[1].phone_dates=[d(0)];un[1].phone_bands=["night"]}
+    if(un[2]){un[2].phone_dates=[d(3)];un[2].phone_bands=["daytime"]}
+    var ip=resp.filter(function(r){return r.status==="in_progress"});if(ip[0]){ip[0].status_at=new Date(NOW-4*864e5).toISOString()}
+  })();
   apps.sort(function(x,y){return x.applied_at<y.applied_at?1:-1});
   window.__mockApps=apps;window.__mockResp=resp;window.__sentReqs=[];
   function filt(f){f=f||{};return apps.filter(function(a){

@@ -95,3 +95,12 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
 .r800hka button{min-height:44px;flex:1 1 auto}
 .r800hkm{width:100%;min-height:46px}
 .r800hkold{background:#fee2e2;color:#b91c1c;border-color:#fecaca}
+.r800hkd{margin:2px 0 6px;padding:7px 10px;border-radius:10px;background:#f1f5f9;color:#334155;font-size:13.5px;font-weight:700}
+.r800hkd.today{background:#fffbeb;color:#b45309}
+.r800hkd.late{background:#fee2e2;color:#b91c1c}
+.r800hkdue{margin:0 0 10px;font-size:13px;color:#475569}
+.r800hkdue b{color:#b45309}
+.r800hkdue b.late{color:#b91c1c}
+.r800stuck{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;width:100%;margin-top:8px;padding:10px 12px;min-height:46px;border-radius:12px;border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d;font-size:13.5px;text-align:left}
+.r800stuck b{color:#b91c1c;font-size:15px}
+.r800stuck i{font-style:normal;margin-left:auto;color:#475569;font-size:12.5px}

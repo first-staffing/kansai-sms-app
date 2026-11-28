@@ -14596,7 +14596,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v8.0.3";
+window.APP_VERSION_LABEL = "v8.0.4";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15196,7 +15196,11 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
  8. ピックアップを待たせない (8.0.2) … (2026-11-28 ユーザー指示「長いかな読み込み？」「smsは150名リスト出しといて」)
                        関西全体は約7,800名 (名簿8ページ)。ピックアップは全員分の名簿がそろうまで待っていた。
                        京都・奈良の人だけを別に取りに行き、そろった時点でピックアップと150名の一覧を出す。
-                       全員分の名簿は 4ページ同時に取りに行く (これまでは 2〜3ページずつ) */
+                       全員分の名簿は 4ページ同時に取りに行く (これまでは 2〜3ページずつ)
+ 9. 取り込みの直し (8.0.4) … (2026-11-28 ユーザー指示「京都府の後の住所ない」「これ治して」)
+                       CSVに「市区町村」の列が無く、住所が1つの列 (全文) のとき、市区町村が空のまま入っていた。
+                       住所から市区町村を読み取って入れる (関西5府県は国交省の位置表の市区町村名と照合。ほかは形で読む)。
+                       時差つきの日時 (末尾が Z や +00:00) は日本時間に直してから取り込む */
 (function(){try{
   var LSG=function(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}};
   var LSS=function(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
@@ -16003,6 +16007,90 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
     }catch(e){}
   };
 
+  /* ---- 9. 取り込み: 住所から市区町村を読み取る・時差つきの日時を日本時間に直す ---- */
+  var IMP_PREFS=[];try{IMP_PREFS=KANSAI.concat(KANTO)}catch(e){}
+  var muniNames={};
+  var muniMatch=function(pref,m){ /* m: 府県を除いた住所 (空白なし)。返り値 {name: 正式な市区町村名, used: 住所の先頭から何文字ぶんか} */
+    try{
+      var T=window._r639Towns,cities=T&&T[pref];
+      if(cities){
+        var names=muniNames[pref]||(muniNames[pref]=Object.keys(cities).sort(function(a,b){return b.length-a.length}));
+        for(var i=0;i<names.length;i++){
+          var n=names[i];if(m.indexOf(n)===0)return {name:n,used:n.length};
+          var n2=n.replace(/^.+?郡/,"");if(n2!==n&&m.indexOf(n2)===0)return {name:n,used:n2.length}; /* 郡を省いて書いた住所 */
+        }
+      }
+      /* 位置表に無い府県 (和歌山・関東) や、表に当たらなかった住所は、形で読む */
+      var r=m.match(/^([^市]{1,5}郡[^市町村]{1,6}[町村])/)||m.match(/^([^市]{1,6}市[^市区町村]{1,5}区)/)||m.match(/^(.{1,7}?市)/)||m.match(/^(.{1,6}?区)/)||m.match(/^(.{1,7}?[町村])/);
+      return r?{name:r[1],used:r[1].length}:null;
+    }catch(e){return null}
+  };
+  var splitAddress=function(address,prefHint){ /* 住所 → {pref, muni, rest}。読み取れなければ null */
+    try{
+      var clean=String(address||"").normalize("NFKC").replace(/^\s*〒?\s*\d{3}-?\d{4}\s*/,"").trim();
+      if(!clean)return null;
+      var m=clean.replace(/[\s　]+/g,""),pref="",used=0;
+      for(var i=0;i<IMP_PREFS.length;i++){if(m.indexOf(IMP_PREFS[i])===0){pref=IMP_PREFS[i];used=pref.length;break}}
+      if(!pref){if(prefHint&&IMP_PREFS.indexOf(prefHint)>=0)pref=prefHint;else return null}
+      var hit=muniMatch(pref,m.slice(used));if(!hit||!hit.name)return null;
+      used+=hit.used;
+      /* 残り (町名・番地・建物名) は、元の空白を残したまま切り出す */
+      var k=0,pos=0;for(;pos<clean.length&&k<used;pos++){if(!/[\s　]/.test(clean.charAt(pos)))k++}
+      return {pref:pref,muni:hit.name,rest:clean.slice(pos).trim()};
+    }catch(e){return null}
+  };
+  var tzToJst=function(v){ /* 「2026-11-24T04:36:00Z」のような時差つきの日時 → 日本時間の「2026-11-24 13:36」 */
+    try{
+      if(typeof v!=="string"||v.length<17||v.length>40)return v;
+      var m=/^\s*(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})\s*$/i.exec(v);if(!m)return v;
+      var off=0;if(!/^z$/i.test(m[7])){var o=/^([+-])(\d{2}):?(\d{2})$/.exec(m[7]);off=(o[1]==="-"?-1:1)*(Number(o[2])*60+Number(o[3]))}
+      var t=Date.UTC(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+(m[6]||0))-off*60000+JST;if(!isFinite(t))return v;
+      var d=new Date(t),p2=function(n){return ("0"+n).slice(-2)};
+      return d.getUTCFullYear()+"-"+p2(d.getUTCMonth()+1)+"-"+p2(d.getUTCDate())+" "+p2(d.getUTCHours())+":"+p2(d.getUTCMinutes());
+    }catch(e){return v}
+  };
+  var fixMapped=function(mapped){
+    try{
+      var n=0;
+      (mapped||[]).forEach(function(o){
+        if(!o||String(o.municipality||"").trim()||!o.address)return;
+        var sp=splitAddress(o.address,String(o.prefecture||""));if(!sp)return;
+        o.municipality=sp.muni;o._r8pref=sp.pref;o._r8rest=sp.rest;n++;
+      });
+      window._r800ImportFix={muni:n,at:Date.now()};
+    }catch(e){}
+    return mapped;
+  };
+  try{
+    var wrapMap=function(fn){return function(rows){
+      var args=Array.prototype.slice.call(arguments);
+      try{if(Array.isArray(rows))args[0]=rows.map(function(r,i){return (i&&Array.isArray(r))?r.map(tzToJst):r})}catch(e){}
+      return fixMapped(fn.apply(this,args));
+    }};
+    if(typeof mapRows==="function")mapRows=wrapMap(mapRows);
+    if(typeof genericMapRows==="function")genericMapRows=wrapMap(genericMapRows);
+    if(typeof importRowToServer==="function"){
+      var irs0=importRowToServer;
+      importRowToServer=function(r){
+        var out=irs0.apply(this,arguments);
+        try{if(r&&r._r8rest!=null&&out&&out.prefecture===r._r8pref&&out.municipality===r.municipality)out.address_rest=r._r8rest}catch(e){}
+        return out;
+      };
+      if(window.__APP_LOGIC__&&window.__APP_LOGIC__.importRowToServer)window.__APP_LOGIC__.importRowToServer=importRowToServer;
+    }
+    /* 市区町村名の表 (国交省の位置表) を、取り込みの画面を開いた時点・確認を押した時点で読んでおく */
+    var loadTowns=function(){try{return (typeof r639Load_==="function")?r639Load_():Promise.resolve(null)}catch(e){return Promise.resolve(null)}};
+    if(typeof viewImport==="function"){var vi0=viewImport;viewImport=function(){try{loadTowns()}catch(e){}return vi0.apply(this,arguments)}}
+    if(typeof previewImport==="function"){
+      var pv0=previewImport;
+      previewImport=function(){
+        var self=this,args=arguments,go=function(){return pv0.apply(self,args)};
+        if(window._r639Towns)return go();
+        return Promise.race([loadTowns(),new Promise(function(r){setTimeout(r,6000)})]).then(go,go);
+      };
+    }
+  }catch(e){}
+
   /* ---- 画面の切り替えに組み込む ----
      画面の切り替え (hashchange) は、いちばん元の route から「viewHome / viewList」を名前で呼ぶ作りなので、そちらに組み込む */
   var syncBody=function(){try{document.body.classList.toggle("r800list",(location.hash||"").indexOf("#/list")===0&&listOn())}catch(e){}};
@@ -16029,7 +16117,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       new MutationObserver(function(){if(pend8)return;pend8=true;setTimeout(function(){pend8=false;if(!document.getElementById("r800Bar"))decorateList()},60)}).observe(appEl,{childList:true});
     }
   }catch(e){}
-  window.r800={logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN}};
+  window.r800={logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
   try{warm()}catch(e){}
   try{route()}catch(e){} /* 上の組み込みを、いま出ている画面にも反映する */
 }catch(e){try{console.warn("r800",e)}catch(_){}}})();</script>

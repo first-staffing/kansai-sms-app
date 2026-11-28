@@ -4,6 +4,7 @@
 # (2) 応募者フォームの動作テスト (tools/test_form.js)
 # (3) 8.0 の部品 (tools/r800.js / r800.css) が index.html に正しく差し込まれているか
 #     ※ 担当者アプリの画面の動作テストは別: node tools/v8test/flow.js (Chrome と puppeteer-core が必要)
+#     ※ 取り込み (住所から市区町村・時差つき日時) のテストも別: node tools/v8test/import.js
 cd "$(dirname "$0")/.." || exit 1
 for f in index.html f.html q.html; do
   node -e "

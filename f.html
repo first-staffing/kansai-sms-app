@@ -147,7 +147,7 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
     var dist = (c.distance_km != null && c.distance_km !== "" && isFinite(Number(c.distance_km))) ? "お住まいの地域から約" + Number(c.distance_km).toFixed(1) + "km" : "";
     var meta = [c.municipality, c.service_type].filter(Boolean).join("／");
     var fresh = false; try { fresh = c.updated_at_src && (Date.now() - Date.parse(c.updated_at_src)) < 7 * 864e5; } catch (e) {}
-    return '<button type="button" class="case" data-cid="' + esc(c.case_id) + '" aria-pressed="false"' + (i >= 3 ? ' data-more="1"' : "") + ">"
+    return '<button type="button" class="case" data-cid="' + esc(c.case_id) + '" aria-pressed="false"' + (i >= 8 ? ' data-more="1"' : "") + ">"
       + '<span class="tick">✓</span><span><b>' + esc(c.facility_name || "お仕事") + (fresh ? '<span class="new">新着</span>' : "") + "</b>"
       + (dist ? '<small class="near">' + esc(dist) + "</small>" : "")
       + (meta ? "<small>" + esc(meta) + "</small>" : "")
@@ -164,7 +164,7 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
       + (ctx.sender_name ? '<p class="from">担当：' + esc(ctx.sender_name) + "</p>" : "") + "</div>";
     h += '<div class="card"><h2>1. 気になるお仕事</h2><p class="sub">いくつ選んでも大丈夫です。選んでも応募にはなりません。</p><div id="cases">'
       + cases.map(caseHtml).join("") + '</div><div class="row">'
-      + (n > 3 ? '<button type="button" class="ghost" id="more">ほか' + (n - 3) + "件も見る</button>" : "")
+      + (n > 8 ? '<button type="button" class="ghost" id="more">ほか' + (n - 8) + "件も見る</button>" : "")
       + '<button type="button" class="ghost" id="all">全部気になる</button></div>'
       + (cases[0] && cases[0].salary_note ? '<p class="sub" style="margin:10px 0 0">' + esc(cases[0].salary_note) + "</p>" : "") + "</div>";
     h += '<div class="card"><h2>2. お電話できる日時</h2><p class="sub">担当からお電話して、条件をご相談します。</p>'

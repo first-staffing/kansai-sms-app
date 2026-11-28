@@ -1,0 +1,49 @@
+/* 8.0 一覧の上: 絞り込みを折りたたむ (たたんでいる間は、エリア・市区町村・会社などの絞り込み欄を隠す) */
+body.r800list.r800fold #app .r618prefCard,body.r800list.r800fold #app a.bigNavBtn,body.r800list.r800fold #app .r614filterTop,body.r800list.r800fold #app #r618More,body.r800list.r800fold #app .r614filterBottom .r660fs,body.r800list.r800fold #app .r614filterBottom details{display:none!important}
+body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10px;margin-top:8px;border-top:1px solid var(--border,#e2e8f0);border-radius:14px}
+.r800bar{margin:8px 0 10px}
+.r800chips{display:flex;gap:6px}
+.r800chip{flex:1;min-width:0;min-height:52px;border-radius:12px;border:1.5px solid #cbd5e1;background:#fff;color:#1e293b;font-size:12.5px;font-weight:700;line-height:1.25;padding:5px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;cursor:pointer}
+.r800chip b{font-size:17px;font-weight:800;color:#1e3a5f}
+.r800chip[aria-pressed="true"]{background:#1e3a5f;border-color:#1e3a5f;color:#fff}
+.r800chip[aria-pressed="true"] b{color:#fff}
+.r800chip.hot:not([aria-pressed="true"]){border-color:#f59e0b;background:#fffbeb}
+.r800chip.hot:not([aria-pressed="true"]) b{color:#b45309}
+.r800sort{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13px;color:#475569}
+.r800sort button{min-height:36px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;color:#334155;font-size:13px;font-weight:700;padding:4px 12px;cursor:pointer}
+.r800sort button[aria-pressed="true"]{background:#e0e7ff;border-color:#6366f1;color:#3730a3}
+.r800note{margin:6px 2px 0;font-size:12px;color:#64748b;line-height:1.5}
+.r800note.warn{color:#b45309}
+.r800foldBtn{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:44px;margin-top:8px;border-radius:12px;border:1px solid #cbd5e1;background:#f8fafc;color:#1e293b;font-size:14px;font-weight:700;padding:6px 12px;cursor:pointer}
+.r800foldBtn em{font-style:normal;margin-left:8px;font-size:12px;background:#dbeafe;color:#1d4ed8;border-radius:999px;padding:2px 8px}
+.r800foldBtn i{width:9px;height:9px;border-right:2px solid #64748b;border-bottom:2px solid #64748b;transform:rotate(45deg);margin-right:4px;transition:transform .15s}
+.r800foldBtn[aria-expanded="true"] i{transform:rotate(-135deg)}
+#app .r800why{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 0}
+.r800tag{font-size:12px;font-weight:700;border-radius:999px;padding:2px 9px;background:#f1f5f9;color:#475569}
+.r800tag.hot{background:#fee2e2;color:#b91c1c}
+.r800tag.sent{background:#e0f2fe;color:#075985}
+.r800tag.ok{background:#dcfce7;color:#166534}
+.r800home{margin-bottom:6px}
+.r800todos{display:flex;gap:8px}
+.r800todo{flex:1;min-width:0;min-height:76px;border-radius:14px;border:1px solid #cbd5e1;background:#fff;color:#334155;padding:8px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px;font-weight:700;cursor:pointer}
+.r800todo b{font-size:22px;font-weight:800;color:#1e3a5f;line-height:1.1}
+.r800todo b small{font-size:12px;font-weight:700;margin-left:1px}
+.r800todo.hot{border-color:#f59e0b;background:#fffbeb}
+.r800todo.hot b{color:#b45309}
+.r800tabs{margin-bottom:10px}
+.r800card h3{margin:0 0 6px}
+.r800total{display:flex;gap:8px;text-align:center}
+.r800total>div{flex:1}
+.r800total span{display:block;font-size:12px;color:#64748b;font-weight:700}
+.r800total b{font-size:26px;font-weight:800;color:#1e3a5f}
+.r800total b small{font-size:13px;margin-left:1px}
+.r800row{padding:8px 0;border-top:1px solid #e2e8f0}
+.r800row:first-of-type{border-top:0}
+.r800rl{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.r800rl b{font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.r800rl span{font-size:12px;color:#64748b;white-space:nowrap}
+.r800rr{display:flex;align-items:center;gap:8px;margin-top:4px}
+.r800track{flex:1;height:10px;border-radius:999px;background:#e2e8f0;overflow:hidden}
+.r800track i{display:block;height:100%;border-radius:999px;background:#2563eb}
+.r800rr strong{width:56px;text-align:right;font-size:15px;color:#1e3a5f}
+.r800foot{line-height:1.6}

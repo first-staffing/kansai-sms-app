@@ -494,7 +494,6 @@
   var hkWhen=function(v){
     try{var d=new Date(v);if(isNaN(d.getTime()))return "";var f=function(n){return (n<10?"0":"")+n};return (d.getMonth()+1)+"/"+d.getDate()+" "+f(d.getHours())+":"+f(d.getMinutes())}catch(e){return ""}
   };
-  var hkDay=function(v){try{var d=new Date(v);if(isNaN(d.getTime()))return "";return d.getFullYear()+"-"+(d.getMonth()+1)+"-"+d.getDate()}catch(e){return ""}};
   var hkSt=function(r){try{return respStatus(r)}catch(e){return r&&r.handled?"handled":"unhandled"}};
   var hkMine=function(r){
     try{var em=currentOpEmail(),nm=currentOpName();return (!!em&&r.sender===em)||(!!nm&&r.sender_name===nm)}catch(e){return false}
@@ -513,8 +512,8 @@
     var out=[];
     try{
       if(r.phone_anytime)out.push("いつでも");
-      if(r.phone_dates&&r.phone_dates.length)out.push(r.phone_dates.join("・"));
-      if(r.phone_bands&&r.phone_bands.length)out.push(r.phone_bands.join("・"));
+      if(r.phone_dates&&r.phone_dates.length)out.push(r.phone_dates.map(hkDateLabel).join("・"));
+      var bs=hkBands(r);if(bs.length)out.push(bs.join("・"));
       if(!out.length&&r.phone_consult)out.push(r.phone_consult);
       if(!out.length&&r.phone_date_hint)out.push(r.phone_date_hint);
     }catch(e){}
@@ -523,9 +522,12 @@
   var hkSync=function(force){
     try{
       if(!CONFIG.API_URL||typeof syncResponsesFromServer!=="function"||HK.busy)return;
-      if(!force&&Date.now()-HK.sync<45000)return;
+      /* サーバーにつながる前に読むと、端末に残っている見本の回答と混ざる。つながってから読む */
+      if(!window._r6ServerMode){clearTimeout(HK.wait);HK.wait=setTimeout(function(){if(isHankyo())renderHankyo()},700);return}
+      if(!force&&HK.ok&&Date.now()-HK.sync<45000)return;
       HK.busy=true;HK.err="";HK.sync=Date.now();
-      syncResponsesFromServer().then(function(){HK.busy=false;if(isHankyo())renderHankyo(true)},function(e){HK.busy=false;HK.err="読み込みに失敗しました";if(isHankyo())renderHankyo(true)});
+      var fin=function(res){HK.busy=false;if(res&&res.ok)HK.ok=true;else HK.err="反響を読み込めませんでした。「更新」を押してください";if(isHankyo())renderHankyo(true)};
+      syncResponsesFromServer().then(fin,function(){fin(null)});
     }catch(e){HK.busy=false}
   };
   window.r800HkTab=function(t){HK.tab=t;HK.n=40;LSS("r800hkTab",t);renderHankyo(true)};
@@ -540,10 +542,38 @@
       openDetail(id);
     }catch(e){}
   };
-  var hkSmsBody=function(a){
+  var HKBAND={morning:"午前（9〜12時）",daytime:"昼（12〜15時）",evening:"夕方（15〜18時）",night:"夜（18〜21時）"};
+  var hkBands=function(r){try{return (r.phone_bands||[]).map(function(b){return HKBAND[b]||String(b)}).filter(Boolean)}catch(e){return []}};
+  var hkDateLabel=function(v){
+    var m=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(String(v||""));if(!m)return String(v||"");
+    var d=new Date(Number(m[1]),Number(m[2])-1,Number(m[3]));
+    return Number(m[2])+"/"+Number(m[3])+"（"+"日月火水木金土".charAt(d.getDay())+"）";
+  };
+  var hkNextDate=function(r){ /* 電話の希望日のうち、今日以降でいちばん近い日 */
+    try{var td=today();var ds=(r.phone_dates||[]).map(function(x){return String(x).slice(0,10)}).filter(function(x){return /^\d{4}-\d{2}-\d{2}$/.test(x)&&x>=td}).sort();return ds[0]||""}catch(e){return ""}
+  };
+  var hkFacility=function(id){
+    try{var c=(typeof CASES!=="undefined"?CASES:[]).find(function(x){return String(x.id)===String(id)});if(!c)return "";var p=null;try{p=publicCaseItem(c)}catch(e){}return String((p&&p.facility)||c.facility||"")}catch(e){return ""}
+  };
+  /* 反響の中身に合わせた文面: 選んだ案件へのお礼 + 電話の希望に合わせた予告 (希望が無ければ都合を聞く) */
+  var hkSmsBody=function(a,r){
+    r=r||{};
     var nm="";try{nm=smsRecipientName(a&&a.name)}catch(e){nm=String(a&&a.name||"")}
     var op="";try{op=String(currentOpName()||"").replace(/\s+/g,"")}catch(e){}
-    return (nm?nm+"様\n":"")+"ご回答ありがとうございます。株式会社ファーストスタッフィングの"+(op||"担当")+"です。\nお仕事の詳細をお電話でご案内したいのですが、ご都合の良いお時間を教えていただけますでしょうか。";
+    var ids=(r.selected_case_ids&&r.selected_case_ids.length)?r.selected_case_ids:[],fac="";
+    for(var i=0;i<ids.length&&!fac;i++)fac=hkFacility(ids[i]);
+    var L=[];
+    if(nm)L.push(nm+"様");
+    L.push("株式会社ファーストスタッフィングの"+(op||"担当")+"です。");
+    if(fac)L.push("「"+fac+"」"+(ids.length>1?"などの求人":"の求人")+"にご興味をお持ちいただき、ありがとうございます。");
+    else if(r.intent==="見学希望")L.push("見学のご希望をいただき、ありがとうございます。");
+    else L.push("ご回答いただき、ありがとうございます。");
+    var d=hkNextDate(r),bands=hkBands(r),when=(d?hkDateLabel(d):"")+(bands.length?(d?"の":"")+bands.join("・"):"");
+    var topic=r.intent==="見学希望"?"見学の日程について、":"お仕事の詳細について、";
+    if(when)L.push(topic+"ご希望の"+when+"にお電話いたします。ご都合が変わりましたら、このSMSにご返信ください。");
+    else if(r.phone_anytime)L.push(topic+"のちほどお電話いたします。ご都合の悪い時間帯がありましたら、このSMSにご返信ください。");
+    else L.push(topic+"お電話でご案内したいので、ご都合の良い日時をこのSMSにご返信いただけますでしょうか。");
+    return L.join("\n");
   };
   var hkPhone=function(id,el,done){ /* 電話番号が手元に無い人は、取りに行ってから進む */
     var a=hkPerson(id),ph=String(a&&a.phone||"").replace(/[^0-9+]/g,"");
@@ -559,10 +589,11 @@
     },function(){if(el)el.removeAttribute("data-r8busy");try{showToast("電話番号を取得できませんでした。もう一度お試しください","warn")}catch(e){}});
   };
   window.r800HkCall=function(id,el){try{hkPhone(id,el,function(ph){location.href="tel:"+ph})}catch(e){}};
-  window.r800HkSms=function(id,el){
+  window.r800HkSms=function(id,el,rid){
     try{
+      var r=null;try{r=(state.responses||[]).find(function(x){return x.id===rid})||null}catch(e){}
       hkPhone(id,el,function(ph,a){
-        var href=smsLink(ph,hkSmsBody(a));
+        var href=smsLink(ph,hkSmsBody(a,r));
         try{if(window.r659Note&&hkPerson(id))window.r659Note(id,{follow:true,k:"hankyo",t:"反響へのSMS"})}catch(e){}
         if(typeof r615NavigateSms_==="function")r615NavigateSms_(href);else location.href=href;
       });
@@ -585,7 +616,7 @@
     var btn="";
     if(st!=="handled"){
       btn+='<button type="button" class="primary" onclick="r800HkCall(\''+aid+'\',this)">電話する</button>';
-      btn+='<button type="button" class="primary" onclick="r800HkSms(\''+aid+'\',this)">SMSを送る</button>';
+      btn+='<button type="button" class="primary" onclick="r800HkSms(\''+aid+'\',this,\''+id+'\')">SMSを送る</button>';
       if(st==="unhandled")btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'in_progress\')">対応中にする</button>';
       btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'handled\')">対応済みにする</button>';
     }else btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'unhandled\')">未対応に戻す</button>';
@@ -606,7 +637,9 @@
       var app=document.getElementById("app");if(!app)return;
       if(!noSync)hkSync(false);
       if(window._r6ServerMode&&!rosterReady()){try{r616WarmRoster_(false)}catch(e){}clearTimeout(HK.poll);HK.poll=setTimeout(function(){if(isHankyo()&&rosterReady())renderHankyo(true)},2500)}
-      var all=(state.responses||[]).filter(function(r){return r&&r.id});
+      var srv=false;try{srv=!localMode()}catch(e){}
+      var ready=!srv||HK.ok; /* 本番では、サーバーから読めるまで何も出さない (見本の回答を本物のように見せない) */
+      var all=ready?(state.responses||[]).filter(function(r){return r&&r.id}):[];
       var base=HK.who==="me"?all.filter(hkMine):all;
       var cnt={open:0,doing:0,done:0,all:base.length};
       base.forEach(function(r){var s=hkSt(r);if(s==="handled")cnt.done++;else if(s==="in_progress")cnt.doing++;else cnt.open++});
@@ -619,7 +652,7 @@
         '<button type="button" class="r800hkr" onclick="r800HkReload()">'+(HK.busy?"読み込み中…":"更新")+'</button></div>'+
         (HK.err?'<p class="r800note">'+esc8(HK.err)+'</p>':'')+
         (HK.tab==="done"||HK.tab==="all"?'<p class="r800note">対応済みは最近の100件までを表示します。</p>':'');
-      if(!rows.length)h+='<div class="card"><p>'+(HK.busy&&!all.length?"読み込み中です…":"該当する反響はありません。")+'</p></div>';
+      if(!rows.length)h+='<div class="card"><p>'+(!ready?(HK.err?"読み込めませんでした。":"読み込み中です…"):"該当する反響はありません。")+'</p></div>';
       else{
         h+=rows.slice(0,HK.n).map(hkCard).join("");
         if(rows.length>HK.n)h+='<p><button type="button" class="r800hkm" onclick="r800HkMore()">さらに表示（残り'+num(rows.length-HK.n)+'件）</button></p>';
@@ -1134,7 +1167,22 @@
       new MutationObserver(function(){if(pend8)return;pend8=true;setTimeout(function(){pend8=false;if(!document.getElementById("r800Bar"))decorateList()},60)}).observe(appEl,{childList:true});
     }
   }catch(e){}
-  window.r800={logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
+  /* 回答一覧・掘り起こしを直接開いたとき、サーバーにつながる前の見本データのまま残っていた。つながったら描き直す */
+  try{
+    var bw={k:"",n:0},bwKey=function(){var rs=window._respSync;return (window._r6ServerMode?"1":"0")+"|"+(rs&&rs.ok?rs.at:"")};
+    bw.k=bwKey();
+    var bwTm=setInterval(function(){
+      try{
+        if(++bw.n>240){clearInterval(bwTm);return}
+        var k=bwKey();if(k===bw.k)return;bw.k=k;
+        var h=location.hash||"";if(h.indexOf("#/dig")!==0&&h.indexOf("#/responses")!==0)return;
+        var d=document.getElementById("dlg");if(d&&d.open)return;
+        var ae=document.activeElement;if(ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))return;
+        route();
+      }catch(e){}
+    },500);
+  }catch(e){}
+  window.r800={hkSmsBody:hkSmsBody,logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
   try{warm()}catch(e){}
   try{var h0=String(window._r800Hash0||"");if((h0.indexOf("#/hankyo")===0||h0.indexOf("#/stats")===0)&&(location.hash||"")!==h0)history.replaceState(null,"",h0)}catch(e){}
   try{route()}catch(e){} /* 上の組み込みを、いま出ている画面にも反映する */

@@ -27,11 +27,38 @@ F.get = function () {
   return fetch(F.GAS + "?path=form-context&token=" + encodeURIComponent(F.t), { method: "GET", credentials: "omit" })
     .then(function (r) { return r.json(); });
 };
+/* 開く速さ (2026-11-28「求職者の開くスピードが返信率を分ける」):
+   (1) 最初の問い合わせは2本同時に出し、先に中身が返ってきた方を使う (受け口の返事は1〜2秒で、ばらつきが大きいため)
+   (2) 一度開いた人は、中身をその人の端末に覚えておき、開き直したときはすぐ表示する (7日・期限内のものだけ)。
+       表示したあと裏で取り直し、期限切れになっていたら案内に切り替える */
+F.fast = function () {
+  return new Promise(function (resolve, reject) {
+    var left = 2, done = false, last = null;
+    var end = function () { if (done || --left > 0) return; done = true; if (last) resolve(last); else reject(new Error("net")); };
+    var ok = function (j) { if (done) return; if (j && j.ok && j.context) { done = true; resolve(j); return; } if (j) last = j; end(); };
+    var ng = function () { end(); };
+    try { F.get().then(ok, ng); } catch (e) { ng(); }
+    try { F.get().then(ok, ng); } catch (e) { ng(); }
+  });
+};
+F.key = "fctx:" + F.t;
+F.keep = function (j) {
+  try { if (j && j.ok && j.context) { var s = JSON.stringify({ at: Date.now(), j: j }); try { localStorage.setItem(F.key, s); } catch (e) {} try { sessionStorage.setItem(F.key, s); } catch (e) {} } } catch (e) {}
+  return j;
+};
+F.drop = function () { try { localStorage.removeItem(F.key); } catch (e) {} try { sessionStorage.removeItem(F.key); } catch (e) {} };
 F.saved = null;
-try { var sv = JSON.parse(sessionStorage.getItem("fctx:" + F.t) || "null"); if (sv && sv.at && Date.now() - sv.at < 30 * 60000 && sv.j && sv.j.ok) F.saved = sv.j; } catch (e) {}
+try {
+  var raw = null; try { raw = localStorage.getItem(F.key); } catch (e) {} if (!raw) { try { raw = sessionStorage.getItem(F.key); } catch (e) {} }
+  var sv = JSON.parse(raw || "null");
+  if (sv && sv.at && Date.now() - sv.at < 7 * 864e5 && sv.j && sv.j.ok && sv.j.context) {
+    var ex = Date.parse(sv.j.context.ctx_expires_at || "");
+    if (!(isFinite(ex) && ex <= Date.now())) F.saved = sv.j;
+  }
+} catch (e) {}
 if (!/^[A-Za-z0-9_-]{16,100}$/.test(F.t)) { F.legacy(); }
-else if (F.saved) { F.first = Promise.resolve(F.saved); }
-else { F.first = F.get().then(function (j) { try { if (j && j.ok && j.context) sessionStorage.setItem("fctx:" + F.t, JSON.stringify({ at: Date.now(), j: j })); } catch (e) {} return j; }, function () { return null; }); }
+else if (F.saved) { F.first = Promise.resolve(F.saved); F.bg = F.get().then(F.keep, function () { return null; }); }
+else { F.first = F.fast().then(F.keep, function () { return null; }); }
 /* 従来フォームへ切り替えるのは「このページ自体が動かないとき」だけ:
    (1) 下の本体が4秒たっても動き出さない (とても古いブラウザなど)
    (2) 本体の中で表示に失敗した (本体側の try/catch が F.legacy() を呼ぶ)
@@ -346,6 +373,16 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
     setTimeout(function () { F.get().then(handle, function () { handle(null); }); }, tries < 4 ? 1200 : 2500);
   }
   F.first.then(handle);
+  /* 端末に覚えていた中身で表示したとき: 裏で取り直した結果、期限切れだったら案内に切り替える (送信済み・送信中は触らない) */
+  if (F.bg) F.bg.then(function (j) {
+    try {
+      if (j && j.ok === false && /expired/.test(String(j.error || ""))) {
+        F.drop();
+        var was = 0; try { was = Number(localStorage.getItem("fsent:" + F.t) || 0); } catch (e) {}
+        if (!F.sent && !sending && !was) { var b = document.querySelector(".bar"); if (b) b.remove(); stop("このリンクは有効期限が切れています。お手数ですが、担当までご連絡ください。"); }
+      }
+    } catch (e) {}
+  });
 })();
 </script>
 <noscript><p style="padding:20px">このページを開くには、ブラウザの設定で JavaScript を有効にしてください。</p></noscript>

@@ -6,7 +6,7 @@ const { JSDOM } = require(process.env.JSDOM_PATH || 'jsdom');
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'f.html'), 'utf8').split('location.replace(').join('window.__replace(');
 const CASES = n => Array.from({ length: n }, (_, i) => ({ case_id: 'C' + i, facility_name: '施設' + i, municipality: '大阪市', service_type: '特養', distance_km: 1.5 + i, salary_band_text: '介護 1,400円', hours_short_text: '相談可', description: '11月入職できる方', updated_at_src: new Date().toISOString() }));
 const CTX = n => ({ ok: true, context: { applicant_id: 'A1', name: 'T_山田 花子', surname: '山田', sender_name: '株式会社ファーストスタッフィング', sender_unknown: false, recommended_cases: CASES(n) } });
-function run(name, { token = 'abcdefghij0123456789', replies, post, check, waitMs = 400 }) {
+function run(name, { token = 'abcdefghij0123456789', replies, post, check, waitMs = 400, pre }) {
   return new Promise(resolve => {
     const st = { gets: 0, posts: [], replaced: null };
     const dom = new JSDOM(SRC, {
@@ -16,6 +16,7 @@ function run(name, { token = 'abcdefghij0123456789', replies, post, check, waitM
         w.setTimeout = (f, ms) => st0(f, Math.max(0, (ms || 0) / 200));
         w.__replace = u => { st.replaced = u; };
         w.scrollTo = () => {};
+        if (pre) pre(w);
         w.fetch = (url, opt) => {
           if (opt && opt.method === 'POST') { st.posts.push(JSON.parse(opt.body)); const r = post ? post(st.posts.length) : { ok: true }; return r === 'fail' ? Promise.reject(new Error('net')) : Promise.resolve({ json: () => Promise.resolve(r) }); }
           const r = replies(++st.gets);
@@ -60,6 +61,39 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     A(st.posts.length === 2, 'posts ' + st.posts.length); A(st.posts[0].submit_id === st.posts[1].submit_id, '送信IDが変わった'); A(d.getElementById('send').textContent.indexOf('もう一度') >= 0, 'ボタン'); A(d.querySelectorAll('.case[aria-pressed=true]').length === 1, '入力が消えた');
   } }));
   res.push(await run('何も選ばず送信 → 送らず案内', { replies: () => CTX(2), check: async (w, st) => { w.document.getElementById('send').click(); await wait(50); A(st.posts.length === 0, '送ってしまった'); A(!w.document.getElementById('err').hidden, '案内なし'); } }));
+  /* --- 開く速さ (2026-11-28): 2本同時の問い合わせ／開き直しはすぐ表示 --- */
+  const SAVE = (n, extra, at) => w => { const j = CTX(n); Object.assign(j.context, extra || {}); w.localStorage.setItem('fctx:abcdefghij0123456789', JSON.stringify({ at: at || Date.now(), j })); };
+  res.push(await run('最初は2本同時に問い合わせる → 1本が通信失敗でも、もう1本で表示', { replies: n => n === 1 ? 'fail' : CTX(3), check: (w, st) => {
+    A(st.gets === 2, 'gets ' + st.gets); A(w.document.querySelectorAll('.case').length === 3, '表示されていない'); A(!st.replaced, '従来フォームへ移った');
+    A(!!w.localStorage.getItem('fctx:abcdefghij0123456789'), '端末に覚えていない');
+  } }));
+  res.push(await run('2本とも「まだ無い」→ 取り直しは1本ずつ', { waitMs: 60, replies: n => n < 4 ? { ok: false, error: 'context_not_found' } : CTX(2), check: (w, st) => {
+    A(st.gets === 4, 'gets ' + st.gets); A(w.document.querySelectorAll('.case').length === 2, '表示されていない');
+  } }));
+  res.push(await run('開き直し: 端末に覚えていれば、通信が全部失敗してもすぐ表示', { waitMs: 30, pre: SAVE(4), replies: () => 'fail', check: (w, st) => {
+    A(w.document.querySelectorAll('.case').length === 4, '表示されていない'); A(!st.replaced, '従来フォームへ移った'); A(st.gets === 1, '裏の取り直しは1本 ' + st.gets);
+    A(w.document.querySelector('h1').textContent.indexOf('山田様') >= 0, '宛名');
+  } }));
+  res.push(await run('開き直し: 覚えていた中身で表示 → 選んで送信できる', { pre: SAVE(3), replies: () => CTX(3), check: async (w, st) => {
+    const d = w.document; d.querySelectorAll('.case')[0].click(); d.querySelector('[data-g="anytime"]').click(); d.getElementById('send').click(); await wait(100);
+    A(st.posts.length === 1 && st.posts[0].selected_case_ids.join() === 'C0', '送信内容'); A(d.body.textContent.indexOf('送信しました') >= 0, '完了画面');
+  } }));
+  res.push(await run('開き直し: 裏で取り直したら期限切れ → 案内に切り替え、覚えも消す', { pre: SAVE(3), replies: () => ({ ok: false, error: 'context_expired' }), check: (w, st) => {
+    A(w.document.body.textContent.indexOf('有効期限が切れています') >= 0, '案内が出ていない'); A(!w.document.querySelector('.bar'), '送信ボタンが残っている');
+    A(!w.localStorage.getItem('fctx:abcdefghij0123456789'), '覚えが残っている'); A(!st.replaced, '従来フォームへ移った');
+  } }));
+  res.push(await run('開き直し: 送信済みの人には、期限切れでも「送信済み」のまま', { pre: w => { SAVE(3)(w); w.localStorage.setItem('fsent:abcdefghij0123456789', String(Date.now())); }, replies: () => ({ ok: false, error: 'context_expired' }), check: (w, st) => {
+    A(w.document.body.textContent.indexOf('回答は送信済みです') >= 0, '送信済みの表示が消えた');
+  } }));
+  res.push(await run('覚えが古い (8日前) → 使わず取り直す', { pre: SAVE(5, null, Date.now() - 8 * 864e5), replies: () => CTX(2), check: (w, st) => {
+    A(st.gets === 2, 'gets ' + st.gets); A(w.document.querySelectorAll('.case').length === 2, '古い中身を使った');
+  } }));
+  res.push(await run('覚えの中身が期限切れ → 使わず取り直す', { pre: SAVE(5, { ctx_expires_at: new Date(Date.now() - 1000).toISOString() }), replies: () => ({ ok: false, error: 'context_expired' }), check: (w, st) => {
+    A(w.document.querySelectorAll('.case').length === 0, '期限切れの中身を表示した'); A(w.document.body.textContent.indexOf('有効期限が切れています') >= 0, '案内が出ていない');
+  } }));
+  res.push(await run('覚えが壊れている → 無視して取り直す', { pre: w => w.localStorage.setItem('fctx:abcdefghij0123456789', '{こわれた'), replies: () => CTX(2), check: (w, st) => {
+    A(w.document.querySelectorAll('.case').length === 2, '表示されていない'); A(!st.replaced, '従来フォームへ移った');
+  } }));
   const ng = res.filter(x => !x).length;
   console.log(ng ? '\n' + ng + ' 件が NG。公開しないこと。' : '\nすべて OK');
   process.exit(ng ? 1 : 0);

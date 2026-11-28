@@ -14578,7 +14578,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.6";
+window.APP_VERSION_LABEL = "v4.0.7";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14875,23 +14875,28 @@ try { r621PaintVersion_(); } catch(e) {}
       });
       save();
       var bar=document.getElementById("r659Bar");
-      if(!ids.length){if(bar){clearInterval(barTm);bar.remove()}return}
+      if(!ids.length){if(bar&&!bar.getAttribute("data-auto")){clearInterval(barTm);bar.remove()}return}
       if(bar)return;
-      bar=document.createElement("div");bar.id="r659Bar";bar.className="r659bar";bar.setAttribute("role","status");
+      bar=document.createElement("div");bar.id="r659Bar";bar.className="r659bar";bar.setAttribute("role","status");bar.setAttribute("data-auto","1");
       var t=document.createElement("span");t.className="r659t";
       var no=document.createElement("button");no.type="button";no.className="r659no";no.textContent="送っていない";
       var yes=document.createElement("button");yes.type="button";yes.className="r659yes";yes.textContent="送った";
       bar.appendChild(t);bar.appendChild(no);bar.appendChild(yes);document.body.appendChild(bar);
       var label=ids.length===1?((pend[ids[0]].name||"この方")+" さん"):(ids.length+"名");
-      /* 4.0.6: 自動では記録しない (送っていないのに送信済みになる事故を防ぐ)。どちらかを押すまで出し続ける */
-      t.textContent=label+"にSMSを送りましたか？";
-      var fin=function(ok){
-        clearInterval(barTm);try{bar.remove()}catch(e){}
-        ids.forEach(function(id){delete pend[id]});save();
-        if(ok)ids.forEach(commit);
-        else toast9("送信済みにはしていません","warn");
+      /* 4.0.7 (2026-11-28 ユーザー指示「SMS開いたら自動チェックで処理できない？」):
+         SMSアプリを開いて戻ってきたら、聞かずに送信済みにする。送っていなかったときだけ「取り消す」を押す (8秒で消える) */
+      ids.forEach(function(id){delete pend[id]});save();
+      ids.forEach(commit);
+      t.textContent=label+"を送信済みにしました";
+      no.textContent="取り消す";yes.textContent="OK";
+      var close=function(){clearInterval(barTm);try{bar.remove()}catch(e){}};
+      no.onclick=function(){
+        close();
+        ids.forEach(function(id){try{var a=findA(id);if(a&&a.sms_sent)markSms(id,false);else enqueue("sms_sent",{applicant_id:id,checked:false})}catch(e){}});
+        toast9("送信済みを取り消しました","warn");
       };
-      no.onclick=function(){fin(false)};yes.onclick=function(){fin(true)};
+      yes.onclick=close;
+      barTm=setTimeout(close,8000);
 
     }catch(e){}
   };
@@ -14935,7 +14940,8 @@ try { r621PaintVersion_(); } catch(e) {}
     古い初期文面と見なして差し替えていた (新しい文面が実際には使われていなかった)。この差し替えを止める
  3. フォームのリンクがまだ出来ていない時点で本文を作っても、あとからリンクが必ず「▼」の行の下に入るようにする */
 (function(){try{
-  var INTRO="Indeed経由でご登録いただいております、株式会社ファーストスタッフィングです。";
+  var INTRO="Indeed経由でご登録いただいておりました、株式会社ファーストスタッフィングです。";
+  var INTRO_OLD="Indeed経由でご登録いただいております、株式会社ファーストスタッフィングです。";
   var MARK="▼気になるお仕事を選ぶだけ（約30秒）";
   var NEW="{宛名}様\n\n"+INTRO+"\n\n{宛名}様のお近くで、ご希望に合いそうなお仕事が見つかりました。\n\n"+MARK+"\n{フォームURL}\n\n「まずは話だけ聞きたい」も大歓迎です。\nこのSMSに「1」とご返信いただければ、ご都合のよい時間にお電話いたします。";
   var PLAIN="株式会社ファーストスタッフィングです。";
@@ -14945,7 +14951,7 @@ try { r621PaintVersion_(); } catch(e) {}
   try{OLDS.push(norm(SMS_FIRST_COMPACT_DEFAULT))}catch(e){}
   try{OLDS.push(norm(R625_FIRST_COMPACT))}catch(e){}
   var isOld=function(t){var n=norm(t);return !!n&&OLDS.indexOf(n)>=0};
-  var fixIntro=function(t){return String(t||"").replace(/株式会社ファーストスタッフィングです。\nご(?:応募|登録)ありがとうございます[！!。]?/g,INTRO)};
+  var fixIntro=function(t){return String(t||"").split(INTRO_OLD).join(INTRO).replace(/株式会社ファーストスタッフィングです。\nご(?:応募|登録)ありがとうございます[！!。]?/g,INTRO)};
   /* 2 */
   try{r625IsOldCompact_=function(){return false}}catch(e){}
   try{SMS_FIRST_COMPACT_DEFAULT=NEW}catch(e){}
@@ -14987,7 +14993,7 @@ try { r621PaintVersion_(); } catch(e) {}
             if(st.tpl.id==="registration_compact"&&isOld(st.tpl.body))st={tpl:st.tpl,body:personalize(NEW,a).replace("{不足ヒヤリング}",missingHearing(a))};
             else if(st.body)st.body=fixIntro(st.body);
             /* 「Indeed経由でご登録」はファーストスタッフィングの登録歴がある人だけ。それ以外の人には会社名だけを名乗る */
-            if(st.body&&!isFs(a))st.body=String(st.body).split(INTRO).join(PLAIN);
+            /* 4.0.7: 名乗りは登録会社にかかわらず全員に付ける (2026-11-28 ユーザー指示) */
           }
         }catch(e){}
         return st;
@@ -15017,7 +15023,7 @@ try { r621PaintVersion_(); } catch(e) {}
       r633Body_=function(a){
         var t=sb0.apply(this,arguments);
         try{
-          t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,isFs(a)?INTRO:PLAIN);
+          t=String(t).replace(/株式会社ファーストスタッフィングです。\nこの度はご応募いただき、ありがとうございます。/,INTRO);
           /* アンケートのURLを短い入口に (約100字 → 約45字) */
           try{t=t.split(R633_URL).join("https://first-staffing.github.io/kansai-sms-app/q")}catch(e){}
           /* 読みやすく・短く: 宛名のあとに1行あける／「担当エージェント」→「担当者」／名乗りと同じ社名の署名は外す */

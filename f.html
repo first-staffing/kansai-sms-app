@@ -334,9 +334,11 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
     var err = j ? String(j.error || "") : "";
     if (/expired/.test(err)) return stop("このリンクは有効期限が切れています。お手数ですが、担当までご連絡ください。");
     if (/invalid_token/.test(err)) return F.legacy();
-    if (tries >= 3) return F.legacy();
-    var w = $("wait"); if (w) w.textContent = "あなた専用のフォームを準備しています。このまま少しお待ちください…";
-    setTimeout(function () { F.get().then(handle, function () { handle(null); }); }, 2500);
+    /* 中身がまだ届いていないとき (SMSを作った直後に開いた場合など): 重い従来フォームへは移らず、
+       この画面のまま最大1分ほど取り直す。最初の数回は間隔を短くする */
+    if (tries >= 28) return F.legacy();
+    var w = $("wait"); if (w) w.textContent = tries < 3 ? "あなた専用のフォームを開いています…" : "お仕事の情報を準備しています。このまま少しお待ちください（最大1分ほど）…";
+    setTimeout(function () { F.get().then(handle, function () { handle(null); }); }, tries < 4 ? 1200 : 2500);
   }
   F.first.then(handle);
 })();

@@ -3,7 +3,8 @@
  *
  * 2026-11-28: CSV に「市区町村」の列が無く住所が1つの列 (全文) だったため、
  *   prefecture = 京都府 / municipality = 空 / address_rest = 京都府京都市伏見区深草…
- * の形で入った求職者がいる。住所から市区町村を読み取って municipality に入れ、
+ * (府県の列がある CSV では address_rest = 京都市伏見区深草…) の形で入った求職者がいる。
+ * 住所から市区町村を読み取って municipality に入れ、
  * address_rest を「町名・番地・建物名」だけに直す。座標 (lat/lon) やステータスには触らない。
  *
  * 使い方 (エディタから実行):
@@ -49,7 +50,9 @@ function munifixSplit_(address, prefHint) {
   var m = clean.replace(/\s+/g, ''), pref = '', used = 0;
   for (var i = 0; i < MUNIFIX_PREFS_.length; i++) { if (m.indexOf(MUNIFIX_PREFS_[i]) === 0) { pref = MUNIFIX_PREFS_[i]; used = pref.length; break; } }
   if (!pref) { if (prefHint && MUNIFIX_PREFS_.indexOf(prefHint) >= 0) pref = prefHint; else return null; }
-  var hit = munifixMatch_(pref, m.slice(used));
+  var body = m.slice(used), dup = /^(.{1,5}郡)\1/.exec(body); // 「泉北郡泉北郡忠岡町」のように郡が2回書かれた住所
+  if (dup) { body = body.slice(dup[1].length); used += dup[1].length; }
+  var hit = munifixMatch_(pref, body);
   if (!hit || !hit.name) return null;
   used += hit.used;
   var k = 0, pos = 0;
@@ -63,11 +66,24 @@ function backfillMunicipalityRun() { var r = backfillMunicipality_(false); Logge
 function backfillMunicipality_(dryRun) {
   var t0 = Date.now(), LIMIT = 300, MAX_MS = 4 * 60 * 1000;
   var rows = readTable_('applicants').rows;
-  var out = { dry_run: !!dryRun, total: rows.length, target: 0, fixed: 0, unknown: 0, pref_mismatch: 0, left: 0, by_pref: {}, samples: [], unknown_samples: [] };
+  var out = { dry_run: !!dryRun, total: rows.length, target: 0, fixed: 0, dup_target: 0, dup_fixed: 0, unknown: 0, pref_mismatch: 0, left: 0, by_pref: {}, samples: [], unknown_samples: [] };
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
-    if (String(r.municipality || '').replace(/\s/g, '') !== '') continue;        // 市区町村が入っている人は触らない
     var addr = String(r.address_rest || '');
+    var muni0 = String(r.municipality || '').replace(/\s/g, '');
+    if (muni0 !== '') {
+      // 市区町村が入っている人: 住所の残りに府県・市区町村が重ねて入っているときだけ、重なりを外す
+      // (8.0.5 の取り込みは、すでに入っている人を壊さないよう「府県だけ外した形」で送っている)
+      var sp0 = addr.replace(/\s/g, '') ? munifixSplit_(addr, String(r.prefecture || '')) : null;
+      if (sp0 && sp0.muni === muni0 && sp0.rest !== addr.replace(/^\s+|\s+$/g, '')) {
+        out.dup_target++;
+        if (dryRun) { out.dup_fixed++; continue; }
+        if (out.fixed + out.dup_fixed >= LIMIT || Date.now() - t0 > MAX_MS) { out.left++; continue; }
+        updateRowByPk_('applicants', r.applicant_id, { address_rest: sp0.rest, updated_at: nowIso_() });
+        out.dup_fixed++;
+      }
+      continue;
+    }
     if (!addr.replace(/\s/g, '')) continue;                                       // 住所が無い人は直しようがない
     out.target++;
     var pref = String(r.prefecture || '');
@@ -77,7 +93,7 @@ function backfillMunicipality_(dryRun) {
     out.by_pref[sp.pref] = (out.by_pref[sp.pref] || 0) + 1;
     if (out.samples.length < 5) out.samples.push({ id: String(r.applicant_id), municipality: sp.muni });
     if (dryRun) { out.fixed++; continue; }
-    if (out.fixed >= LIMIT || Date.now() - t0 > MAX_MS) { out.left++; continue; }
+    if (out.fixed + out.dup_fixed >= LIMIT || Date.now() - t0 > MAX_MS) { out.left++; continue; }
     var patch = { municipality: sp.muni, address_rest: sp.rest, updated_at: nowIso_() };
     if (!pref) patch.prefecture = sp.pref;
     updateRowByPk_('applicants', r.applicant_id, patch);

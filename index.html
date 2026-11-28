@@ -14596,7 +14596,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v8.0.4";
+window.APP_VERSION_LABEL = "v8.0.5";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15200,7 +15200,13 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
  9. 取り込みの直し (8.0.4) … (2026-11-28 ユーザー指示「京都府の後の住所ない」「これ治して」)
                        CSVに「市区町村」の列が無く、住所が1つの列 (全文) のとき、市区町村が空のまま入っていた。
                        住所から市区町村を読み取って入れる (関西5府県は国交省の位置表の市区町村名と照合。ほかは形で読む)。
-                       時差つきの日時 (末尾が Z や +00:00) は日本時間に直してから取り込む */
+                       時差つきの日時 (末尾が Z や +00:00) は日本時間に直してから取り込む
+                       (8.0.5) refo.link の CSV は「住所(市区町村)」の列が空で、「緯度」「経度」の列がある。
+                       ・緯度・経度は CSV の値を使う。無い人は住所から位置表で求める
+                       ・住所の残り (address_rest) は、これまでと同じ形 (府県だけ外した形) のまま送る。
+                         すでに入っている人は、サーバーが「空の市区町村は埋めない・違う住所は上書きする」作りなので、
+                         切り詰めた住所を送ると、市区町村が空のまま住所だけ短くなって市区町村が分からなくなる。
+                         サーバー側の入れ直し (tools/muni_fix_server.gs) が済んだら、切り詰めた形に切り替える */
 (function(){try{
   var LSG=function(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}};
   var LSS=function(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
@@ -16032,7 +16038,9 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       var m=clean.replace(/[\s　]+/g,""),pref="",used=0;
       for(var i=0;i<IMP_PREFS.length;i++){if(m.indexOf(IMP_PREFS[i])===0){pref=IMP_PREFS[i];used=pref.length;break}}
       if(!pref){if(prefHint&&IMP_PREFS.indexOf(prefHint)>=0)pref=prefHint;else return null}
-      var hit=muniMatch(pref,m.slice(used));if(!hit||!hit.name)return null;
+      var body=m.slice(used),dup=/^(.{1,5}郡)\1/.exec(body); /* 「泉北郡泉北郡忠岡町」のように郡が2回書かれた住所 */
+      if(dup){body=body.slice(dup[1].length);used+=dup[1].length}
+      var hit=muniMatch(pref,body);if(!hit||!hit.name)return null;
       used+=hit.used;
       /* 残り (町名・番地・建物名) は、元の空白を残したまま切り出す */
       var k=0,pos=0;for(;pos<clean.length&&k<used;pos++){if(!/[\s　]/.test(clean.charAt(pos)))k++}
@@ -16055,7 +16063,13 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       (mapped||[]).forEach(function(o){
         if(!o||String(o.municipality||"").trim()||!o.address)return;
         var sp=splitAddress(o.address,String(o.prefecture||""));if(!sp)return;
-        o.municipality=sp.muni;o._r8pref=sp.pref;o._r8rest=sp.rest;n++;
+        o.municipality=sp.muni;n++;
+        /* 住所の残りは、これまでの取り込みと同じ形にしておく (府県の列があれば府県だけ外す。無ければ全文) */
+        var raw=String(o.address),pf=String(o.prefecture||"");
+        o._r8keep=(pf&&raw.indexOf(pf)===0)?raw.slice(pf.length):raw;
+        if((o.lat==null||o.lat==="")&&typeof r639Geo_==="function"&&window._r639Towns){
+          try{var g=r639Geo_(o.address,sp.pref,sp.muni);if(g&&isFinite(g.lat)&&isFinite(g.lon)){o.lat=Number(g.lat.toFixed(6));o.lon=Number(g.lon.toFixed(6))}}catch(e){}
+        }
       });
       window._r800ImportFix={muni:n,at:Date.now()};
     }catch(e){}
@@ -16065,7 +16079,18 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
     var wrapMap=function(fn){return function(rows){
       var args=Array.prototype.slice.call(arguments);
       try{if(Array.isArray(rows))args[0]=rows.map(function(r,i){return (i&&Array.isArray(r))?r.map(tzToJst):r})}catch(e){}
-      return fixMapped(fn.apply(this,args));
+      var mapped=fn.apply(this,args);
+      /* CSV の「緯度」「経度」の列をそのまま使う (日本の範囲に入っている値だけ) */
+      try{
+        var head=(rows[0]||[]).map(function(h){return String(h).replace(/^\uFEFF+/,"").trim()}),li=head.indexOf("緯度"),oi=head.indexOf("経度");
+        if(li>=0&&oi>=0&&Array.isArray(mapped)&&mapped.length===rows.length-1){
+          mapped.forEach(function(o,i){
+            var r=rows[i+1]||[],la=Number(String(r[li]==null?"":r[li]).trim()),lo=Number(String(r[oi]==null?"":r[oi]).trim());
+            if(o&&String(r[li]||"").trim()&&isFinite(la)&&isFinite(lo)&&la>20&&la<46&&lo>122&&lo<154){o.lat=Number(la.toFixed(6));o.lon=Number(lo.toFixed(6))}
+          });
+        }
+      }catch(e){}
+      return fixMapped(mapped);
     }};
     if(typeof mapRows==="function")mapRows=wrapMap(mapRows);
     if(typeof genericMapRows==="function")genericMapRows=wrapMap(genericMapRows);
@@ -16073,11 +16098,30 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       var irs0=importRowToServer;
       importRowToServer=function(r){
         var out=irs0.apply(this,arguments);
-        try{if(r&&r._r8rest!=null&&out&&out.prefecture===r._r8pref&&out.municipality===r.municipality)out.address_rest=r._r8rest}catch(e){}
+        try{if(r&&r._r8keep!=null&&out)out.address_rest=r._r8keep}catch(e){}
         return out;
       };
       if(window.__APP_LOGIC__&&window.__APP_LOGIC__.importRowToServer)window.__APP_LOGIC__.importRowToServer=importRowToServer;
     }
+    /* 求職者詳細: 住所の残りに府県・市区町村が重ねて入っている人は、表示のときだけ重なりを外す (データは変えない) */
+    var apD=apiCall;
+    apiCall=function(req){
+      var p=apD.apply(this,arguments);
+      if(!req||req.action!=="getApplicant")return p;
+      return p.then(function(res){
+        try{
+          var d=res&&(res.applicant||res);
+          if(d&&typeof d.address_rest==="string"&&d.address_rest){
+            var rest=d.address_rest.replace(/^\s+/,""),pf=String(d.prefecture||""),mu=String(d.municipality||"");
+            if(pf&&rest.indexOf(pf)===0)rest=rest.slice(pf.length);
+            if(mu){var mu2=mu.replace(/^.+?郡/,"");if(rest.indexOf(mu)===0)rest=rest.slice(mu.length);else if(mu2!==mu&&rest.indexOf(mu2)===0)rest=rest.slice(mu2.length)}
+            d.address_rest=rest;
+          }
+        }catch(e){}
+        return res;
+      });
+    };
+    if(window.__APP_LOGIC__&&window.__APP_LOGIC__.apiCall)window.__APP_LOGIC__.apiCall=apiCall;
     /* 市区町村名の表 (国交省の位置表) を、取り込みの画面を開いた時点・確認を押した時点で読んでおく */
     var loadTowns=function(){try{return (typeof r639Load_==="function")?r639Load_():Promise.resolve(null)}catch(e){return Promise.resolve(null)}};
     if(typeof viewImport==="function"){var vi0=viewImport;viewImport=function(){try{loadTowns()}catch(e){}return vi0.apply(this,arguments)}}

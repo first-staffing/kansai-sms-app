@@ -14578,7 +14578,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v4.0.5";
+window.APP_VERSION_LABEL = "v4.0.6";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -14880,18 +14880,19 @@ try { r621PaintVersion_(); } catch(e) {}
       bar=document.createElement("div");bar.id="r659Bar";bar.className="r659bar";bar.setAttribute("role","status");
       var t=document.createElement("span");t.className="r659t";
       var no=document.createElement("button");no.type="button";no.className="r659no";no.textContent="送っていない";
-      var yes=document.createElement("button");yes.type="button";yes.className="r659yes";yes.textContent="記録する";
+      var yes=document.createElement("button");yes.type="button";yes.className="r659yes";yes.textContent="送った";
       bar.appendChild(t);bar.appendChild(no);bar.appendChild(yes);document.body.appendChild(bar);
       var label=ids.length===1?((pend[ids[0]].name||"この方")+" さん"):(ids.length+"名");
-      var n=8,paint=function(){t.textContent=label+"にSMSを送った、と記録します（"+n+"秒）"};paint();
+      /* 4.0.6: 自動では記録しない (送っていないのに送信済みになる事故を防ぐ)。どちらかを押すまで出し続ける */
+      t.textContent=label+"にSMSを送りましたか？";
       var fin=function(ok){
         clearInterval(barTm);try{bar.remove()}catch(e){}
         ids.forEach(function(id){delete pend[id]});save();
         if(ok)ids.forEach(commit);
-        else toast9("記録しませんでした。送ったときは「送信後にチェック」を押してください","warn");
+        else toast9("送信済みにはしていません","warn");
       };
       no.onclick=function(){fin(false)};yes.onclick=function(){fin(true)};
-      barTm=setInterval(function(){if(document.hidden)return;n--;if(n<=0)fin(true);else paint()},1000);
+
     }catch(e){}
   };
   var onLeave=function(){var ch=false;Object.keys(pend).forEach(function(k){var p=pend[k];if(p&&!p.left&&Date.now()-p.at<90000){p.left=true;ch=true}});if(ch)save()};

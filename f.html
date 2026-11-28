@@ -32,7 +32,11 @@ try { var sv = JSON.parse(sessionStorage.getItem("fctx:" + F.t) || "null"); if (
 if (!/^[A-Za-z0-9_-]{16,100}$/.test(F.t)) { F.legacy(); }
 else if (F.saved) { F.first = Promise.resolve(F.saved); }
 else { F.first = F.get().then(function (j) { try { if (j && j.ok && j.context) sessionStorage.setItem("fctx:" + F.t, JSON.stringify({ at: Date.now(), j: j })); } catch (e) {} return j; }, function () { return null; }); }
-window.addEventListener("error", function () { if (!F.rendered) F.legacy(); });
+/* 従来フォームへ切り替えるのは「このページ自体が動かないとき」だけ:
+   (1) 下の本体が4秒たっても動き出さない (とても古いブラウザなど)
+   (2) 本体の中で表示に失敗した (本体側の try/catch が F.legacy() を呼ぶ)
+   アプリ内ブラウザや拡張機能が出す無関係なエラーでは切り替えない */
+setTimeout(function () { if (!F.booted && !F.rendered) F.legacy(); }, 4000);
 </script>
 <style>
 :root{--main:#1e3a8a;--soft:#eef2fb;--ink:#17202b;--sub:#5b6676;--line:#d9dfe8;--bg:#f3f5f9;--ok:#0a7d4f;--warn:#b45309}
@@ -91,6 +95,7 @@ button:focus-visible,textarea:focus-visible{outline:3px solid #93b4ff;outline-of
 <script>
 (function () {
   "use strict";
+  F.booted = true;
   if (!F.first) return;
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };

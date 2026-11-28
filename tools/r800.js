@@ -588,7 +588,21 @@
       done(p2,b||{name:det.name||""});
     },function(){if(el)el.removeAttribute("data-r8busy");try{showToast("電話番号を取得できませんでした。もう一度お試しください","warn")}catch(e){}});
   };
-  window.r800HkCall=function(id,el){try{hkPhone(id,el,function(ph){location.href="tel:"+ph})}catch(e){}};
+  /* 電話・SMSを押したら、未対応の人は「対応中」に移す (手を付けた人と、まだの人を分けて取りこぼさない) */
+  var hkTouch=function(rid){
+    try{
+      if(!rid)return;
+      setTimeout(function(){
+        try{
+          var r=(state.responses||[]).find(function(x){return x.id===rid});
+          if(!r||hkSt(r)!=="unhandled")return;
+          setResponseStatus(rid,"in_progress");
+          try{showToast("「対応中」に移しました")}catch(e){}
+        }catch(e){}
+      },600);
+    }catch(e){}
+  };
+  window.r800HkCall=function(id,el,rid){try{hkPhone(id,el,function(ph){location.href="tel:"+ph;hkTouch(rid)})}catch(e){}};
   window.r800HkSms=function(id,el,rid){
     try{
       var r=null;try{r=(state.responses||[]).find(function(x){return x.id===rid})||null}catch(e){}
@@ -596,6 +610,7 @@
         var href=smsLink(ph,hkSmsBody(a,r));
         try{if(window.r659Note&&hkPerson(id))window.r659Note(id,{follow:true,k:"hankyo",t:"反響へのSMS"})}catch(e){}
         if(typeof r615NavigateSms_==="function")r615NavigateSms_(href);else location.href=href;
+        hkTouch(rid);
       });
     }catch(e){}
   };
@@ -615,9 +630,10 @@
     var exp=[r.experience_band||r.experience||"",r.qualification||""].filter(Boolean).join("／");
     var btn="";
     if(st!=="handled"){
-      btn+='<button type="button" class="primary" onclick="r800HkCall(\''+aid+'\',this)">電話する</button>';
+      btn+='<button type="button" class="primary" onclick="r800HkCall(\''+aid+'\',this,\''+id+'\')">電話する</button>';
       btn+='<button type="button" class="primary" onclick="r800HkSms(\''+aid+'\',this,\''+id+'\')">SMSを送る</button>';
       if(st==="unhandled")btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'in_progress\')">対応中にする</button>';
+      else btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'unhandled\')">未対応に戻す</button>';
       btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'handled\')">対応済みにする</button>';
     }else btn+='<button type="button" onclick="r800HkSet(\''+id+'\',\'unhandled\')">未対応に戻す</button>';
     btn+='<button type="button" onclick="r800HkOpen(\''+aid+'\')">詳細</button>';

@@ -42,7 +42,7 @@
       case "getTemplates":return {templates:[]};
       case "getApplicantSummary":var s=summ(req.area||"kansai");s.areas={kansai:summ("kansai"),kanto:summ("kanto")};return s;
       case "searchApplicants":var m=filt(req.filter),pg=req.page||1,ps=req.page_size||50;return {total:m.length,page:pg,page_size:ps,items:m.slice((pg-1)*ps,pg*ps)};
-      case "getApplicant":var a=apps.filter(function(x){return x.applicant_id===req.applicant_id})[0];return a||{};
+      case "getApplicant":var a=apps.filter(function(x){return x.applicant_id===req.applicant_id})[0];if(!a)throw new Error("NOT_FOUND");var o={applicant:a,events:[]};for(var k in a)o[k]=a[k];return o; /* 本番と同じ {applicant, events} の形 (古いテスト向けに、同じ中身を外側にも置く) */
       case "getResponses":var lim=req.limit||200,off=req.offset||0;var rows=resp.filter(function(r){return req.all_senders===true||!req.sender_email||r.sender_email===req.sender_email});if(req.all_senders!==true&&!req.sender_email)rows=resp.filter(function(r){return r.sender_email==="t-sugimoto@kikari.co.jp"});return {total:rows.length,unhandled_count:rows.filter(function(r){return r.status==="unhandled"}).length,open_count:rows.filter(function(r){return r.status!=="handled"}).length,summary:{unhandled_count:3,open_count:5},items:rows.slice(off,off+lim)};
       case "getResponseSummary":return {unhandled_count:3,open_count:5};
       case "markSmsSent":window.__sentReqs.push(req);var b=apps.filter(function(x){return x.applicant_id===req.applicant_id})[0];if(b){b.sms_sent=true;b.sms_last_sent_at=new Date().toISOString()}return {recorded:req.applicant_id,sms_last_sent_at:new Date().toISOString()};

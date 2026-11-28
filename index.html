@@ -14598,7 +14598,7 @@ window._r656 = "9.3.26";
     };
   }
 })();
-window.APP_VERSION_LABEL = "v8.2.0";
+window.APP_VERSION_LABEL = "v8.3.0";
 try { r621PaintVersion_(); } catch(e) {}
 </script>
 
@@ -15521,6 +15521,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
         (pk?'<button type="button" class="r800pickBtn" aria-pressed="'+(v==="pick")+'" onclick="r800View(\''+(v==="pick"?"":"pick")+'\')"><span>今日のピックアップ（京都・奈良）</span><b>'+num(pk.sms.length)+'<small>人</small></b><em>残り '+num(pickLeft(pk))+'人</em></button>':'')+
         '<div class="r800chips">'+
         chip("","すべて",c.all)+chip("unsent","まだ送っていない",c.unsent)+chip("follow","追いSMSの対象",c.follow,(c.follow?"hot":""))+'</div>';
+      try{if(window._r616Roster&&window._r616Roster.cached)h+='<p class="r800note" id="r800rcNote">前回開いたときの名簿を表示しています。最新に更新中…</p>'}catch(e){}
       if(v==="pick"){
         h+='<p class="r800note">新しいBOの近くに住んでいる人を、BOの取得日が新しい順 → 距離が近い順に選んでいます（登録元は問いません・送信済みかどうかも問いません）。直近'+PICK.recentSmsDays+'日以内にSMSを送った人と、この'+PICK.restDays+'日間にピックアップした人は外しています。</p>';
         if(activeFilters())h+='<p class="r800note warn">ほかの絞り込み（エリア・会社など）が効いているため、一部の人だけを表示しています。</p>';
@@ -15948,7 +15949,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       if(items){
         respIds();var u=0,f=0;
         items.forEach(function(a){if(!a||a.is_test)return;if(!a.sms_sent||isRe(a)){if(!isStop(a))u++}else if(isFollow(a))f++});
-        out.unsent=u;out.follow=f;
+        out.unsent=u;out.follow=f;try{if(window._r616Roster&&window._r616Roster.cached)out.stale=true}catch(e){}
         if(window._r6ServerMode)LSS(CNTK,{area:state.area,unsent:u,follow:f,day:today()});
       }else{
         var c=LSG(CNTK,null);
@@ -15960,14 +15961,14 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
   var homeTm=null,homeTries=0;
   var homeWatch=function(){ /* ホームを開いている間に名簿を先に読んでおく (一覧を開いたときに待たない)。名簿と案件がそろったら数字を出す */
     try{
-      if(localMode()||(rosterReady()&&casesReady()))return;
+      if(localMode()||(rosterReady()&&!rosterCached()&&casesReady()))return;
       clearTimeout(homeTm);
       homeTm=setTimeout(function tick(){
         try{
           var h=location.hash||"";if(!(h===""||h==="#"||h==="#/"||h==="#/home"||h.indexOf("#/menu")===0))return;
           var ep=document.querySelector(".r800pick");
           if(ep&&!ep.getAttribute("data-ok")){var ph=pickHtml();if(ph.indexOf('data-ok="1"')>=0||(ep.hidden&&ph.indexOf("hidden")<0))ep.outerHTML=ph}
-          if(rosterReady()&&casesReady()){var el=document.querySelector(".r800home");if(el)el.outerHTML=todoHtml();ep=document.querySelector(".r800pick");if(ep)ep.outerHTML=pickHtml();return}
+          if(rosterReady()&&casesReady()){var el=document.querySelector(".r800home");if(el&&(!rosterCached()||!el.getAttribute("data-c"))){el.outerHTML=todoHtml();if(rosterCached()){var e2=document.querySelector(".r800home");if(e2)e2.setAttribute("data-c","1")}}ep=document.querySelector(".r800pick");if(ep&&!rosterCached())ep.outerHTML=pickHtml();if(!rosterCached())return}
           if(window._r6ServerMode&&!document.hidden&&homeTries%3===0){try{r616WarmRoster_(false)}catch(e){}}
           if(++homeTries<240)homeTm=setTimeout(tick,700);
         }catch(e){}
@@ -16102,6 +16103,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
   };
   var pickSource=function(){ /* ピックアップの元にする名簿: 全員分があればそれ、無ければ京都・奈良だけの名簿 */
     var items=rosterItems();
+    try{if(items&&window._r616Roster&&window._r616Roster.cached)items=null}catch(e){} /* 端末に保存した前回の名簿からは、その日の顔ぶれを決めない */
     if(!items&&knReady())items=KN.items;
     if(!items&&localMode())items=nonTestApplicants().filter(function(a){return a.area===state.area});
     return items||null;
@@ -16455,6 +16457,112 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       new MutationObserver(function(){if(pend8)return;pend8=true;setTimeout(function(){pend8=false;if(!document.getElementById("r800Bar"))decorateList()},60)}).observe(appEl,{childList:true});
     }
   }catch(e){}
+  /* ---- 10. 名簿を端末に保存する (8.3): 開き直したとき、前回の名簿ですぐ一覧を出し、裏で最新に差し替える ----
+     ・保存するのは一覧用の項目だけ (電話番号・メール・番地などは保存しない)
+     ・7日使わなければ消す / 設定から消せる
+     ・前回の名簿を出している間に「初回SMS」を押したら、サーバーに送信済みかを聞いてから開く (他の担当との二重送信を防ぐ) */
+  var RC={key:"roster_v1",max:7*DAY,last:null,ovk:"r800sentOv",busy:false};
+  var RC_DROP={phone:1,email:1,address_rest:1,postal_code:1,name_raw:1,hearing_json:1,_serverFetched:1,_r8st:1};
+  var rcDb=function(){return (typeof r618Idb_==="function")?r618Idb_():Promise.reject(new Error("no idb"))};
+  var rcStore=function(){try{return R618_IDB.store}catch(e){return "kv"}};
+  var rcGet=function(k){return rcDb().then(function(db){return new Promise(function(res,rej){try{var rq=db.transaction(rcStore(),"readonly").objectStore(rcStore()).get(k);rq.onsuccess=function(){res(rq.result||null)};rq.onerror=function(){rej(rq.error)}}catch(e){rej(e)}})})};
+  var rcPut=function(k,v){return rcDb().then(function(db){return new Promise(function(res,rej){try{var tx=db.transaction(rcStore(),"readwrite");tx.objectStore(rcStore()).put(v,k);tx.oncomplete=function(){res(true)};tx.onerror=function(){rej(tx.error)};tx.onabort=function(){rej(tx.error)}}catch(e){rej(e)}})})};
+  var rcDel=function(k){return rcDb().then(function(db){return new Promise(function(res){try{var tx=db.transaction(rcStore(),"readwrite");tx.objectStore(rcStore()).delete(k);tx.oncomplete=function(){res(true)};tx.onerror=function(){res(false)}}catch(e){res(false)}})})};
+  var rosterCached=function(){try{return !!(window._r616Roster&&window._r616Roster.cached)}catch(e){return false}};
+  var rcSave=function(R){
+    try{
+      if(!R||R.cached||!R.items||!R.items.length||RC.busy||!window._r6ServerMode)return;
+      RC.busy=true;
+      var items=R.items.map(function(a){var o={};for(var k in a){if(!RC_DROP[k]&&Object.prototype.hasOwnProperty.call(a,k))o[k]=a[k]}return o});
+      var at=Date.now();
+      rcPut(RC.key,{v:1,area:R.area,at:R.at||at,saved:at,total:R.serverTotalAtLand,items:items}).then(function(){
+        RC.busy=false;
+        try{var ov=LSG(RC.ovk,{}),o2={};for(var id in ov){if(ov[id]>(R.at||at))o2[id]=ov[id]}LSS(RC.ovk,o2)}catch(e){} /* 保存した名簿に入っている送信の控えは捨てる */
+      },function(){RC.busy=false});
+    }catch(e){RC.busy=false}
+  };
+  var rcRestore=function(){
+    try{
+      if(!CONFIG.API_URL||window._r616Roster)return;
+      var h=location.hash||"";if(h.indexOf("#/form")===0||h.indexOf("#/optout")===0)return;
+      var st=LSG(SRVK,null);if(!st||!st.on)return; /* 前回サーバーにつながっていた端末だけ */
+      rcGet(RC.key).then(function(rec){
+        try{
+          if(!rec||!Array.isArray(rec.items)||!rec.items.length)return;
+          if(Date.now()-(rec.saved||0)>RC.max){rcDel(RC.key);return}
+          if(rec.area!==state.area||window._r616Roster)return;
+          var ov=LSG(RC.ovk,{}),iso;
+          rec.items.forEach(function(a){if(a&&ov[a.id]&&ov[a.id]>(rec.at||0)){iso=new Date(ov[a.id]).toISOString();a.sms_sent=true;a.sms_last_sent_at=iso;a.last_sms_at=iso.slice(0,10)}});
+          window._r616Roster={area:rec.area,items:rec.items,at:rec.at||rec.saved,serverTotalAtLand:rec.total,cached:true,via:"cache"};
+          ver++;
+          var n=0,tm=setInterval(function(){ /* つながったら、すぐ最新を取りに行き、いまの画面を前回の名簿で出しておく */
+            try{
+              if(++n>120||!rosterCached()){clearInterval(tm);return}
+              if(!window._r6ServerMode)return;
+              clearInterval(tm);
+              try{r616WarmRoster_(true)}catch(e){}
+              var hh=location.hash||"";
+              if(hh.indexOf("#/list")===0){try{if(typeof r617RequestListRepaint_==="function")r617RequestListRepaint_();else route()}catch(e){}}
+            }catch(e){}
+          },250);
+        }catch(e){}
+      },function(){});
+    }catch(e){}
+  };
+  try{ /* 最新の名簿が届くたびに保存する */
+    setInterval(function(){
+      try{var R=window._r616Roster;if(!R||R===RC.last||R.cached||R.area!==state.area)return;RC.last=R;setTimeout(function(){rcSave(R)},1500)}catch(e){}
+    },3000);
+  }catch(e){}
+  try{ /* 自分が送った分は小さな控えに残す (次に開いたとき、前回の名簿の上に重ねる) */
+    var mk8=markSms;
+    markSms=function(id,checked){
+      try{var ov=LSG(RC.ovk,{});if(checked)ov[id]=Date.now();else delete ov[id];var ks=Object.keys(ov);if(ks.length>3000){ks.sort(function(x,y){return ov[x]-ov[y]}).slice(0,ks.length-3000).forEach(function(k){delete ov[k]})}LSS(RC.ovk,ov)}catch(e){}
+      return mk8.apply(this,arguments);
+    };
+    if(window.__APP_LOGIC__&&window.__APP_LOGIC__.markSms)window.__APP_LOGIC__.markSms=markSms;
+  }catch(e){}
+  try{ /* 前回の名簿を出している間の「初回SMS」: 先にサーバーへ送信済みかを聞く */
+    if(typeof openSmsDirect615==="function"){
+      var os8=openSmsDirect615,chk8={};
+      openSmsDirect615=function(id){
+        var self=this,args=arguments;
+        try{
+          id=String(id||"");
+          var a=(typeof r6161FindApplicant_==="function")?r6161FindApplicant_(id):null;
+          if(rosterCached()&&window._r6ServerMode&&a&&!a.sms_sent&&typeof apiCall==="function"){
+            if(chk8[id])return;chk8[id]=1;
+            var done=false,go=function(){if(done)return;done=true;delete chk8[id];os8.apply(self,args)};
+            setTimeout(go,3000); /* 返事が遅いときは待たせすぎない */
+            apiCall({action:"getApplicant",applicant_id:id}).then(function(res){
+              if(done)return;
+              var det=(res&&(res.applicant||res))||{};
+              if(det.sms_sent){
+                done=true;delete chk8[id];
+                a.sms_sent=true;a.sms_last_sent_at=String(det.sms_last_sent_at||new Date().toISOString());a.last_sms_at=a.sms_last_sent_at.slice(0,10);ver++;
+                try{showToast("ほかの担当がすでに送信済みでした。一覧を更新しました","warn")}catch(e){}
+                try{route()}catch(e){}
+                return;
+              }
+              go();
+            },go);
+            return;
+          }
+        }catch(e){}
+        return os8.apply(self,args);
+      };
+      if(window.__APP_LOGIC__)window.__APP_LOGIC__.openSmsDirect615=openSmsDirect615;
+    }
+  }catch(e){}
+  window.r800RosterClear=function(){try{rcDel(RC.key).then(function(){try{localStorage.removeItem(RC.ovk)}catch(e){}try{showToast("この端末に保存した名簿を消しました")}catch(e){}})}catch(e){}};
+  try{ /* 設定画面に「消す」ボタン */
+    var vs8=viewSettings;
+    viewSettings=function(){
+      var r=vs8.apply(this,arguments);
+      try{var app=document.getElementById("app");if(app&&!document.getElementById("r800rc"))app.insertAdjacentHTML("beforeend",'<div class="card" id="r800rc"><h3>この端末に保存した名簿</h3><p class="small">次に開いたときにすぐ一覧を出せるよう、名簿（名前・市区町村・応募状況など。電話番号とメールは含みません）をこの端末に保存しています。7日使わないと自動で消えます。共用の端末で使ったあとは、ここから消してください。</p><button type="button" onclick="r800RosterClear()">保存した名簿を消す</button></div>')}catch(e){}
+      return r;
+    };
+  }catch(e){}
   /* 回答一覧・掘り起こしを直接開いたとき、サーバーにつながる前の見本データのまま残っていた。つながったら描き直す */
   try{
     var bw={k:"",n:0},bwKey=function(){var rs=window._respSync;return (window._r6ServerMode?"1":"0")+"|"+(rs&&rs.ok?rs.at:"")};
@@ -16470,8 +16578,9 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       }catch(e){}
     },500);
   }catch(e){}
-  window.r800={hkSmsBody:hkSmsBody,isRe:isRe,logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
+  window.r800={rosterCached:rosterCached,hkSmsBody:hkSmsBody,isRe:isRe,logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,renderHankyo:renderHankyo,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner,kn:function(){return KN},splitAddress:splitAddress,tzToJst:tzToJst};
   try{warm()}catch(e){}
+  try{rcRestore()}catch(e){}
   try{var h0=String(window._r800Hash0||"");if((h0.indexOf("#/hankyo")===0||h0.indexOf("#/stats")===0)&&(location.hash||"")!==h0)history.replaceState(null,"",h0)}catch(e){}
   try{route()}catch(e){} /* 上の組み込みを、いま出ている画面にも反映する */
 }catch(e){try{console.warn("r800",e)}catch(_){}}})();</script>

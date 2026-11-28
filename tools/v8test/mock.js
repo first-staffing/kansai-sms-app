@@ -32,6 +32,7 @@
     var ip=resp.filter(function(r){return r.status==="in_progress"});if(ip[0]){ip[0].status_at=new Date(NOW-4*864e5).toISOString()}
   })();
   apps.sort(function(x,y){return x.applied_at<y.applied_at?1:-1});
+  window.__otherSent=function(id){var b=apps.filter(function(x){return x.applicant_id===id})[0];if(b){b.sms_sent=true;b.sms_last_sent_at=new Date().toISOString()}}; /* テスト用: ほかの担当が送信済みにした */
   window.__mockApps=apps;window.__mockResp=resp;window.__sentReqs=[];
   function filt(f){f=f||{};return apps.filter(function(a){
     if(f.area&&a.area!==f.area)return false;if(!f.include_test&&a.is_test)return false;
@@ -72,7 +73,7 @@
         window.__acts.push(req.action||JSON.stringify(req).slice(0,80));
         var d=(window.__mock&&window.__mock(req));
         if(d===undefined)d={};
-        return new Promise(function(res){setTimeout(function(){res({ok:true,status:200,json:function(){return Promise.resolve({ok:true,data:d})}})},window.__delay||30)});
+        return new Promise(function(res){setTimeout(function(){res({ok:true,status:200,json:function(){return Promise.resolve({ok:true,data:d})}})},(req.action==="searchApplicants"&&req.page_size>=1000&&window.__rosterDelay)?window.__rosterDelay:(window.__delay||30))});
       }
       if(String(url).indexOf('workers.dev')>=0){return Promise.resolve({ok:true,status:200,json:function(){return Promise.resolve({ok:true})},text:function(){return Promise.resolve('')}})}
     }catch(e){}

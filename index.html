@@ -15220,6 +15220,11 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
   var ago=function(n){if(n==null)return "";if(n<=0)return "今日";if(n===1)return "昨日";if(n<60)return n+"日前";if(n<730)return Math.round(n/30)+"か月前";return Math.round(n/365)+"年前"};
   var rosterReady=function(){try{return typeof r616RosterReady_==="function"&&r616RosterReady_()}catch(e){return false}};
   var rosterItems=function(){try{if(rosterReady())return window._r616Roster.items}catch(e){}return null};
+  /* 8.0.1 修正: 本番では、サーバーにつながる前の一瞬だけ、手元に見本の応募者 (サンプル) が入っている。
+     その見本でピックアップや人数を計算して覚えてしまう不具合があったため、
+     手元のデータを使うのは「サーバーの設定が無いとき (手元の試験用)」だけにする */
+  var localMode=function(){try{if(window._r6ServerMode)return false;return !((typeof r611ServerExpected_==="function")?r611ServerExpected_():(typeof CONFIG!=="undefined"&&CONFIG.API_URL))}catch(e){return false}};
+  var casesReady=function(){try{return typeof r617CasesReadyNow_!=="function"||r617CasesReadyNow_()}catch(e){return true}};
   var ver=0; /* 並び・件数の覚え直しの合図 */
 
   /* ---- 0. サーバーが返している「最後に送った日時・送った人」を捨てずに持つ ---- */
@@ -15374,7 +15379,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
           }
         }catch(e){}
         var c={all:list.length,unsent:0,follow:0,full:false},out=[];
-        try{c.full=!window._r6ServerMode||(rosterReady()&&applicants===window._r616Roster.items)}catch(e){}
+        try{c.full=localMode()||(rosterReady()&&applicants===window._r616Roster.items)}catch(e){}
         for(var i=0;i<list.length;i++){
           var a=list[i],un=!a.sms_sent&&!isStop(a),fo=isFollow(a);
           if(un)c.unsent++;if(fo)c.follow++;
@@ -15438,7 +15443,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       document.body.classList.toggle("r800list",on);
       if(!on)return;
       if(document.getElementById("r800Bar"))return;
-      if(window._r6ServerMode&&!rosterReady())counts=null;
+      if(!localMode()&&!rosterReady())counts=null;
       var anchor=app.querySelector(".r618tabs")||app.querySelector("h2");if(!anchor)return;
       var v=viewOf(),c=counts||{};
       var chip=function(val,label,n,cls){return '<button type="button" class="r800chip'+(cls?" "+cls:"")+'" aria-pressed="'+(v===val)+'" onclick="r800View(\''+val+'\')">'+label+(n!=null?'<b>'+num(n)+'</b>':'')+'</button>'};
@@ -15457,7 +15462,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
         h+='<div class="r800sort"><span>並び順</span><button type="button" aria-pressed="'+(sm==="smart")+'" onclick="r800Sort(\'smart\')">おすすめ順</button><button type="button" aria-pressed="'+(sm==="new")+'" onclick="r800Sort(\'new\')">応募が新しい順</button></div>';
         if(sm==="smart")h+='<p class="r800note">応募が新しい人・近くに案件が多い人が上、送信済みの人は下に並びます。</p>';
       }
-      if(window._r6ServerMode&&!rosterReady()&&(v||sortMode()==="smart"))h+='<p class="r800note warn">全員分の名簿を読み込み中です。終わると、全員の中から並べ直します。</p>';
+      if(!localMode()&&!rosterReady()&&(v||sortMode()==="smart"))h+='<p class="r800note warn">全員分の名簿を読み込み中です。終わると、全員の中から並べ直します。</p>';
       var nf=activeFilters(),open=LSG("r800open",false);
       h+='<button type="button" id="r800FoldBtn" class="r800foldBtn" aria-expanded="'+(open?"true":"false")+'" onclick="r800Fold()"><span>エリア・条件で絞り込む'+(nf?'<em>'+nf+'件 指定中</em>':'')+'</span><i></i></button></div>';
       anchor.insertAdjacentHTML("afterend",h);
@@ -15583,7 +15588,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       var items=rosterItems();
       var head='<h2>SMSの反響</h2><div class="tabs r800tabs">'+[[7,"直近7日"],[30,"直近30日"],[0,"全期間"]].map(function(x){return '<button type="button" aria-pressed="'+(ST.days===x[0])+'" onclick="r800Days('+x[0]+')">'+x[1]+'</button>'}).join("")+'</div>';
       if(!items){
-        var local=null;try{if(!window._r6ServerMode)local=nonTestApplicants().filter(function(a){return a.area===state.area})}catch(e){}
+        var local=null;try{if(localMode())local=nonTestApplicants().filter(function(a){return a.area===state.area})}catch(e){}
         if(local)items=local;
         else{
           try{r616WarmRoster_(false)}catch(e){}
@@ -15640,7 +15645,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
     var out={unsent:null,follow:null,stale:false};
     try{
       var items=rosterItems();
-      if(!items&&!window._r6ServerMode)items=nonTestApplicants().filter(function(a){return a.area===state.area});
+      if(!items&&localMode())items=nonTestApplicants().filter(function(a){return a.area===state.area});
       if(items){
         respIds();var u=0,f=0;
         items.forEach(function(a){if(!a||a.is_test)return;if(!a.sms_sent){if(!isStop(a))u++}else if(isFollow(a))f++});
@@ -15654,25 +15659,24 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
     return out;
   };
   var homeTm=null,homeTries=0;
-  var homeWatch=function(){ /* ホームを開いている間に名簿を先に読んでおく (一覧を開いたときに待たない)。届いたら数字を更新 */
+  var homeWatch=function(){ /* ホームを開いている間に名簿を先に読んでおく (一覧を開いたときに待たない)。名簿と案件がそろったら数字を出す */
     try{
-      if(!window._r6ServerMode||rosterReady())return;
+      if(localMode()||(rosterReady()&&casesReady()))return;
       clearTimeout(homeTm);
       homeTm=setTimeout(function tick(){
         try{
           var h=location.hash||"";if(!(h===""||h==="#"||h==="#/"||h==="#/home"||h.indexOf("#/menu")===0))return;
-          var casesOk=true;try{casesOk=typeof r617CasesReadyNow_!=="function"||r617CasesReadyNow_()}catch(e){}
-          if(rosterReady()&&casesOk){var el=document.querySelector(".r800home");if(el)el.outerHTML=todoHtml();var ep=document.querySelector(".r800pick");if(ep)ep.outerHTML=pickHtml();return}
-          if(!document.hidden){try{r616WarmRoster_(false)}catch(e){}}
-          if(++homeTries<90)homeTm=setTimeout(tick,2000);
+          if(rosterReady()&&casesReady()){var el=document.querySelector(".r800home");if(el)el.outerHTML=todoHtml();var ep=document.querySelector(".r800pick");if(ep)ep.outerHTML=pickHtml();return}
+          if(window._r6ServerMode&&!document.hidden&&homeTries%3===0){try{r616WarmRoster_(false)}catch(e){}}
+          if(++homeTries<240)homeTm=setTimeout(tick,700);
         }catch(e){}
-      },2500);
+      },700);
     }catch(e){}
   };
   var todoHtml=function(){
     try{
       var hc=homeCounts(),open=null;
-      try{var rs=window._r6RespSummary;if(rs&&typeof rs.unhandled_count==="number")open=rs.unhandled_count;else if(!window._r6ServerMode)open=(state.responses||[]).filter(function(r){return r&&!r.handled}).length}catch(e){}
+      try{var rs=window._r6RespSummary;if(rs&&typeof rs.unhandled_count==="number")open=rs.unhandled_count;else if(localMode())open=(state.responses||[]).filter(function(r){return r&&!r.handled}).length}catch(e){}
       var tile=function(label,n,unit,act,cls){return '<button type="button" class="r800todo'+(cls?" "+cls:"")+'" onclick="'+act+'"><span>'+label+'</span><b>'+(n==null?"…":num(n))+'<small>'+(n==null?"":unit)+'</small></b></button>'};
       return '<div class="r800home"><h2 class="r633h">今日やること</h2><div class="r800todos">'+
         tile("まだ送っていない",hc.unsent,"名","r800View('unsent')")+
@@ -15697,13 +15701,14 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
 
   /* ---- 6. 今日のピックアップ (京都・奈良) ---- */
   var PICK={prefs:["京都府","奈良県"],sms:150,mail:200,cases:7,radius:20,freshDays:92,restDays:7,recentSmsDays:3};
-  var PICKK="r800pick",MAILK="r800mail";
+  var PICKK="r800pick2",MAILK="r800mail2";
+  try{localStorage.removeItem("r800pick");localStorage.removeItem("r800mail")}catch(e){} /* 8.0 が見本データで覚えた分を捨てる */
   var mdOf=function(d){var m=/^\d{4}-(\d{2})-(\d{2})/.exec(String(d||""));return m?(Number(m[1])+"/"+Number(m[2])):""};
   var isOwner=function(){ /* 杉本さんの分だけ出す (ほかの担当者が同じ150人に重ねて送らないように) */
     try{
       var pr=window._pingResult,em=String((pr&&pr.activeUserEmail)||"").toLowerCase(),nm="";
       try{nm=pingUserName_(pr)||""}catch(e){}
-      if(!nm&&!window._r6ServerMode){try{nm=currentOpName()||""}catch(e){}}
+      if(!nm&&localMode()){try{nm=currentOpName()||""}catch(e){}}
       return /杉本/.test(nm)||/^t-sugimoto@/.test(em);
     }catch(e){return false}
   };
@@ -15747,9 +15752,9 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
       var st=LSG(PICKK,null);
       if(st&&st.day===td&&st.area===state.area&&Array.isArray(st.sms)&&st.sms.length){pickMem=st;return st}
       var items=rosterItems();
-      if(!items&&!window._r6ServerMode)items=nonTestApplicants().filter(function(a){return a.area===state.area});
+      if(!items&&localMode())items=nonTestApplicants().filter(function(a){return a.area===state.area});
       if(!items)return null;
-      try{if(window._r6ServerMode&&typeof r617CasesReadyNow_==="function"&&!r617CasesReadyNow_())return null}catch(e){}
+      if(!localMode()&&!casesReady())return null;
       var hist=(st&&Array.isArray(st.hist))?st.hist.slice():[];
       if(st&&st.day&&st.day!==td&&Array.isArray(st.sms))hist.push({day:st.day,ids:st.sms});
       hist=hist.filter(function(h){var n=daysSince(h.day);return n!=null&&n<PICK.restDays});
@@ -15797,7 +15802,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
   var mailWindow=function(){
     try{
       var items=rosterItems();
-      if(!items&&!window._r6ServerMode)items=nonTestApplicants().filter(function(a){return a.area===state.area});
+      if(!items&&localMode())items=nonTestApplicants().filter(function(a){return a.area===state.area});
       if(!items)return null;
       var td=today(),st=LSG(MAILK,null)||{};
       if(st.day===td&&st.area===state.area&&st.from&&st.to)return st;
@@ -15872,7 +15877,7 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
   }catch(e){}
   var pickHtml=function(){ /* ホームに出す「今日のピックアップ」 */
     try{
-      if(!isOwner())return "";
+      if(!isOwner())return '<div class="r800pick" hidden></div>'; /* あとで差し替えられるよう、場所だけ置いておく */
       var pk=pickToday(),w=mailWindow();
       var sms=pk&&pk.sms.length?pk.sms.length:null,left=sms!=null?pickLeft(pk):null;
       var h='<div class="r800pick"><h2 class="r633h">今日のピックアップ<small>京都・奈良</small></h2><div class="r800todos">'+

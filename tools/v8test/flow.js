@@ -75,7 +75,7 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
   A(fc.same&&fc.n>=5,'フォームに載せる案件も同じ決め方 ('+fc.n+'件)');
   const again=await pg.evaluate(()=>{var p1=r800.pickToday().sms.join(',');var a=r6161FindApplicant_(r800.pickToday().sms[0]);a.sms_sent=true;a.sms_last_sent_at=new Date().toISOString();return p1===r800.pickToday().sms.join(',')});
   A(again,'その日のうちは顔ぶれが変わらない');
-  const nextDay=await pg.evaluate(()=>{var st=JSON.parse(localStorage.getItem('r800pick'));var old=st.sms.slice();st.day='2026-01-01';var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);st.day=y;localStorage.setItem('r800pick',JSON.stringify(st));location.reload();return old});
+  const nextDay=await pg.evaluate(()=>{var st=JSON.parse(localStorage.getItem('r800pick2'));var old=st.sms.slice();st.day='2026-01-01';var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);st.day=y;localStorage.setItem('r800pick2',JSON.stringify(st));location.reload();return old});
   await sleep(7500);
   const nd=await pg.evaluate(old=>{var p=r800.pickToday();return {n:p?p.sms.length:-1,overlap:p?p.sms.filter(function(id){return old.indexOf(id)>=0}).length:-1}},nextDay);
   A(nd.n>=0&&nd.overlap===0,'次の日は、前の日に選んだ人を外して選び直す (重なり '+nd.overlap+'人・'+nd.n+'人)');
@@ -86,12 +86,26 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
   A(ml.prefs==='京都府,奈良県'&&ml.fs===true,'宛先は京都・奈良のファーストスタッフィング登録者だけ');
   A(ml.from===ml.w.from&&ml.to===ml.w.to&&ml.top===ml.w.n,'今日の範囲 ('+ml.from+'〜'+ml.to+'・'+ml.top+'人) で対象を確認');
   A(ml.created===0,'開いただけでは送信しない');
-  const rot=await pg.evaluate(()=>{var w=r800.mailWindow();return apiCall({action:'mailCreateDelivery',subject:'x',filter:{applied_from:w.from,applied_to:w.to}}).then(function(){var s=JSON.parse(localStorage.getItem('r800mail'));var sent=s.sent,ratio=s.ratio;var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);s.day=y;localStorage.setItem('r800mail',JSON.stringify(s));var w2=r800.mailWindow();return {sent:sent,ratio:ratio,next:w.next,to2:w2.to,from1:w.from,n2:w2.n}})});
+  const rot=await pg.evaluate(()=>{var w=r800.mailWindow();return apiCall({action:'mailCreateDelivery',subject:'x',filter:{applied_from:w.from,applied_to:w.to}}).then(function(){var s=JSON.parse(localStorage.getItem('r800mail2'));var sent=s.sent,ratio=s.ratio;var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);s.day=y;localStorage.setItem('r800mail2',JSON.stringify(s));var w2=r800.mailWindow();return {sent:sent,ratio:ratio,next:w.next,to2:w2.to,from1:w.from,n2:w2.n}})});
   A(rot.sent===true,'送信したら、その日の分は送信済みになる');
   A(rot.next?(rot.to2===rot.next&&rot.to2<rot.from1):(rot.to2>=rot.from1),'次の日は続きの人から (前日 〜'+rot.from1+' → 次 '+rot.to2+'〜・'+rot.n2+'人)');
   await pg.evaluate(()=>r800MailOff());await sleep(600);
   const off=await pg.evaluate(()=>({note:!!document.getElementById('r800MailNote'),f:mailFilterToServer(MF)}));
   A(!off.note&&!off.f.applied_to,'「この条件を外す」で元に戻る');
   await pg.close();
+  // 9) サーバーの返事が遅いとき: つながる前に、手元の見本データでピックアップや人数を出さない・覚えない (8.0 の不具合の再発防止)
+  {
+    const ctx=await br.createBrowserContext();const pg2=await ctx.newPage();await pg2.setViewport({width:390,height:844,isMobile:true});pg2.on('dialog',d=>d.dismiss());pg2.on('pageerror',e=>res.push('PAGEERR '+e.message));
+    await pg2.evaluateOnNewDocument('window.__delay=1500;'+fs.readFileSync(path.join(__dirname,'mock.js'),'utf8'));
+    await pg2.goto('http://localhost:8766/#/',{waitUntil:'domcontentloaded'});await sleep(900);
+    const early=await pg2.evaluate(()=>({server:!!window._r6ServerMode,stored:localStorage.getItem('r800pick2'),storedMail:localStorage.getItem('r800mail2'),pickShown:(function(){var e=document.querySelector('.r800pick');return e&&!e.hidden?e.textContent:''})(),todo:[].slice.call(document.querySelectorAll('.r800home .r800todo b')).map(function(b){return b.textContent}).join(',')}));
+    A(!early.server&&!early.stored&&!early.storedMail,'つながる前は、ピックアップを計算も保存もしない');
+    A(!/\d/.test(early.pickShown)&&!/\d/.test(early.todo.split(',').slice(0,2).join('')),'つながる前は、見本データの人数を出さない ['+early.todo+']');
+    await sleep(9000);
+    const late=await pg2.evaluate(()=>{var st=JSON.parse(localStorage.getItem('r800pick2')||'null');return {n:st?st.sms.length:-1,real:st?st.sms.every(function(id){return /^A1\d{5}$/.test(id)}):false,shown:(document.querySelector('.r800pick')||{}).textContent||'',todo:[].slice.call(document.querySelectorAll('.r800home .r800todo b')).map(function(b){return b.textContent}).join(',')}});
+    A(late.n>5&&late.real,'つながったあと、本物の名簿でピックアップする ('+late.n+'人)');
+    A(/SMSを送る人\s*\d+人/.test(late.shown.replace(/\s+/g,' '))||/\d+人/.test(late.shown),'ホームの数字が自動で出る ['+late.todo+']');
+    await ctx.close();
+  }
   console.log(res.join('\n'));await br.close();srv.close();process.exit(res.some(r=>!/^OK/.test(r))?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});

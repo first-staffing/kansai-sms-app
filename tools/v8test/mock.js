@@ -64,7 +64,7 @@
         window.__acts.push(req.action||JSON.stringify(req).slice(0,80));
         var d=(window.__mock&&window.__mock(req));
         if(d===undefined)d={};
-        return new Promise(function(res){setTimeout(function(){res({ok:true,status:200,json:function(){return Promise.resolve({ok:true,data:d})}})},30)});
+        return new Promise(function(res){setTimeout(function(){res({ok:true,status:200,json:function(){return Promise.resolve({ok:true,data:d})}})},window.__delay||30)});
       }
       if(String(url).indexOf('workers.dev')>=0){return Promise.resolve({ok:true,status:200,json:function(){return Promise.resolve({ok:true})},text:function(){return Promise.resolve('')}})}
     }catch(e){}

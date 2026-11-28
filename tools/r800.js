@@ -185,7 +185,8 @@
   };
 
   /* ---- 並び順と、上のボタン (すべて／まだ送っていない／追いSMSの対象) ---- */
-  var sortMode=function(){return LSG("r800sort","smart")==="new"?"new":"smart"};
+  /* 既定は「応募が新しい順」(2026-11-28 ユーザー指示)。「おすすめ順」は押した人だけ */
+  var sortMode=function(){return LSG("r800sort","new")==="smart"?"smart":"new"};
   var marked={}; /* この画面を開いている間に送信済みにした人 (並びを動かさない・一覧から急に消さない) */
   var listOn=function(){try{return state.mode==="first"||state.mode==="follow"}catch(e){return false}};
   var memo={base:null,key:"",out:null},seed={key:"",n:-1,ord:{}};
@@ -289,7 +290,7 @@
       else if(v==="follow")h+='<p class="r800note">初回SMSを送って'+FOLLOW_MIN+'〜'+FOLLOW_MAX+'日たち、まだ回答がない人です。送ってからの日数が短い順に並べています。</p>';
       else if(state.mode==="first"){
         var sm=sortMode();
-        h+='<div class="r800sort"><span>並び順</span><button type="button" aria-pressed="'+(sm==="smart")+'" onclick="r800Sort(\'smart\')">おすすめ順</button><button type="button" aria-pressed="'+(sm==="new")+'" onclick="r800Sort(\'new\')">応募が新しい順</button></div>';
+        h+='<div class="r800sort"><span>並び順</span><button type="button" aria-pressed="'+(sm==="new")+'" onclick="r800Sort(\'new\')">応募が新しい順</button><button type="button" aria-pressed="'+(sm==="smart")+'" onclick="r800Sort(\'smart\')">おすすめ順</button></div>';
         if(sm==="smart")h+='<p class="r800note">応募が新しい人・近くに案件が多い人が上、送信済みの人は下に並びます。</p>';
       }
       if(!localMode()&&!rosterReady()&&v!=="pick"&&(v||sortMode()==="smart"))h+='<p class="r800note warn">全員分の名簿を読み込み中です。終わると、全員の中から並べ直します。</p>';

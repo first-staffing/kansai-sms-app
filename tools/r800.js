@@ -10,7 +10,12 @@
                        「5〜7個くらいピックアップで取得日が一番、2番目に距離」「配信してるしてない・応募日のこだわりない」
                        「gmailは今日の200人とかでボタン押したら送信」「杉本さんの分だけで150人」「この画面(ホーム)に出して」)
                        毎朝 (その日はじめて開いたとき)、京都・奈良の求職者と新しいBOを照らし合わせて、SMS 150人を選ぶ。
-                       Gmailは京都・奈良の約200人ぶんの条件を入れてGmail送信の画面を開く (送るのは中身を確認してから) */
+                       Gmailは京都・奈良の約200人ぶんの条件を入れてGmail送信の画面を開く (送るのは中身を確認してから)
+ 7. 起動を速く (8.0.1) … (2026-11-28 ユーザー指示「最高の高速もお願い」)
+                       これまでは「接続確認 → その返事を待ってから名簿・回答・一覧を取りに行く」の順だった。
+                       前回サーバーにつながっていた端末では、接続確認と同時に取りに行く (返事を1回ぶん待たない)。
+                       名簿は1ページ目の返事を待たずに全ページを同時に取りに行く。同時に出ていた接続確認4回は1回にまとめる。
+                       ※ 求職者のデータを端末に保存することはしない (これまでどおり、開いている間だけ持つ) */
 (function(){try{
   var LSG=function(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}catch(e){return d}};
   var LSS=function(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
@@ -701,6 +706,39 @@
     }catch(e){return ""}
   };
 
+  /* ---- 7. 起動を速く ---- */
+  var SRVK="r800srv";
+  try{
+    /* 同時に出る同じ問い合わせを1回にまとめる処理は tools/r800early.js (通信の関数のすぐ後ろで読み込む) */
+    /* 名簿が何ページあるかを覚えておく (次に開いたとき、全ページを同時に取りに行くため。人数とページ数だけで、中身は保存しない) */
+    if(typeof r617FetchRosterPage_==="function"){
+      var fp0=r617FetchRosterPage_;
+      r617FetchRosterPage_=function(area,page,size){
+        var p=fp0.apply(this,arguments);
+        try{p.then(function(res){try{
+          var n=(res&&Array.isArray(res.items))?res.items.length:0,tot=res&&res.total;
+          if(page===1&&typeof tot==="number"&&n>0){var eff=(n<size&&tot>n)?n:size;LSS(SRVK,{on:1,roster:{area:area,size:eff,pages:Math.ceil(tot/eff)}})}
+        }catch(e){}},function(){})}catch(e){}
+        return p;
+      };
+    }
+  }catch(e){}
+  var warm=function(){ /* 前回つながっていた端末だけ。ここで出した問い合わせは、あとから来る同じ問い合わせにそのまま使われる (二重には出ない) */
+    try{
+      if(!CONFIG.API_URL||typeof apiCall!=="function")return;
+      var h=location.hash||"";if(h.indexOf("#/form")===0||h.indexOf("#/optout")===0)return;
+      var st=LSG(SRVK,null);if(!st||!st.on)return;
+      var q=function(req){try{apiCall(req).then(null,function(){})}catch(e){}};
+      var area=state.area,ps=1000;try{ps=R617_ROSTER.pageSize||1000}catch(e){}
+      q({action:"getResponses",all_senders:true,handled:false,limit:200,offset:0});
+      q({action:"getResponses",all_senders:true,handled:true,sort:"recent",limit:100});
+      if(h.indexOf("#/list")===0){try{q({action:"searchApplicants",filter:serverFilterForList_(),page:1,page_size:50})}catch(e){}}
+      q({action:"searchApplicants",filter:{area:area},page:1,page_size:ps});
+      var rs=(st.roster&&st.roster.area===area)?st.roster:null;
+      if(rs)for(var p=2;p<=Math.min(rs.pages,3);p++)q({action:"searchApplicants",filter:{area:area},page:p,page_size:rs.size});
+    }catch(e){}
+  };
+
   /* ---- 画面の切り替えに組み込む ----
      画面の切り替え (hashchange) は、いちばん元の route から「viewHome / viewList」を名前で呼ぶ作りなので、そちらに組み込む */
   var syncBody=function(){try{document.body.classList.toggle("r800list",(location.hash||"").indexOf("#/list")===0&&listOn())}catch(e){}};
@@ -726,5 +764,6 @@
     }
   }catch(e){}
   window.r800={logSend:logSend,tplInfo:tplInfo,isFollow:isFollow,nearCount:nearCount,scoreOf:scoreOf,counts:function(){return counts},renderStats:renderStats,pickToday:pickToday,matchCases:matchCases,mailWindow:mailWindow,isOwner:isOwner};
+  try{warm()}catch(e){}
   try{route()}catch(e){} /* 上の組み込みを、いま出ている画面にも反映する */
 }catch(e){try{console.warn("r800",e)}catch(_){}}})();

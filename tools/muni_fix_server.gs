@@ -9,7 +9,8 @@
  *
  * 使い方 (エディタから実行):
  *   backfillMunicipalityDry()  … 試し。書き込まない。何人直るか・読み取れない人が何人かを数える
- *   backfillMunicipalityRun()  … 本番。1回の実行で最大 300人 (約4分で打ち切り)。「残り」が 0 になるまで繰り返す
+ *   backfillMunicipalityRun()  … 本番。1回の実行で最大 600人 (約4分で打ち切り)。「残り (left)」が 0 になるまで繰り返す
+ *   書き込みは1人ずつ・行がずれていないか確かめてから行う (全体の鍵は取らないので、実行中もアプリは使える)
  * 読み取り方は画面側 (tools/r800.js の splitAddress) と同じ:
  *   関西5府県は国交省の位置表 (town_coords.json) の市区町村名と前方一致 (郡を省いた住所も正式名に)。
  *   表に無い府県・当たらない住所は形 (〜郡〜町 / 〜市〜区 / 〜市 / 〜区 / 〜町・村) で読む。
@@ -64,9 +65,25 @@ function backfillMunicipalityDry() { var r = backfillMunicipality_(true); Logger
 function backfillMunicipalityRun() { var r = backfillMunicipality_(false); Logger.log(JSON.stringify(r, null, 1)); return r; }
 
 function backfillMunicipality_(dryRun) {
-  var t0 = Date.now(), LIMIT = 300, MAX_MS = 4 * 60 * 1000;
-  var rows = readTable_('applicants').rows;
-  var out = { dry_run: !!dryRun, total: rows.length, target: 0, fixed: 0, dup_target: 0, dup_fixed: 0, unknown: 0, pref_mismatch: 0, left: 0, by_pref: {}, samples: [], unknown_samples: [] };
+  var t0 = Date.now(), LIMIT = 600, MAX_MS = 4 * 60 * 1000;
+  var t = readTable_('applicants'), rows = t.rows, headers = t.headers;
+  var cId = headers.indexOf('applicant_id'), cM = headers.indexOf('municipality'), cA = headers.indexOf('address_rest'),
+    cP = headers.indexOf('prefecture'), cU = headers.indexOf('updated_at');
+  if (cId < 0 || cM < 0 || cA < 0) throw new Error('applicants に applicant_id / municipality / address_rest の列がありません');
+  var sh = dryRun ? null : sheet_('applicants'), now = nowIso_();
+  // 1人ぶんを書く。書く直前に、その行がまだ同じ人かを確かめる (行がずれていたら書かない)。
+  // 「1-2-3」のような住所が日付に化けないよう、文字列の書式にしてから入れる。
+  function writeRow_(r, patch) {
+    if (!r._row) return false;
+    if (String(sh.getRange(r._row, cId + 1).getValue()) !== String(r.applicant_id)) return false;
+    Object.keys(patch).forEach(function (k) {
+      var c = headers.indexOf(k);
+      if (c >= 0) sh.getRange(r._row, c + 1).setNumberFormat('@').setValue(String(patch[k] == null ? '' : patch[k]));
+    });
+    if (cU >= 0) sh.getRange(r._row, cU + 1).setValue(now);
+    return true;
+  }
+  var out = { dry_run: !!dryRun, total: rows.length, target: 0, fixed: 0, dup_target: 0, dup_fixed: 0, unknown: 0, pref_mismatch: 0, moved: 0, left: 0, by_pref: {}, samples: [], unknown_samples: [] };
   for (var i = 0; i < rows.length; i++) {
     var r = rows[i];
     var addr = String(r.address_rest || '');
@@ -79,8 +96,7 @@ function backfillMunicipality_(dryRun) {
         out.dup_target++;
         if (dryRun) { out.dup_fixed++; continue; }
         if (out.fixed + out.dup_fixed >= LIMIT || Date.now() - t0 > MAX_MS) { out.left++; continue; }
-        updateRowByPk_('applicants', r.applicant_id, { address_rest: sp0.rest, updated_at: nowIso_() });
-        out.dup_fixed++;
+        if (writeRow_(r, { address_rest: sp0.rest })) out.dup_fixed++; else out.moved++;
       }
       continue;
     }
@@ -94,11 +110,11 @@ function backfillMunicipality_(dryRun) {
     if (out.samples.length < 5) out.samples.push({ id: String(r.applicant_id), municipality: sp.muni });
     if (dryRun) { out.fixed++; continue; }
     if (out.fixed + out.dup_fixed >= LIMIT || Date.now() - t0 > MAX_MS) { out.left++; continue; }
-    var patch = { municipality: sp.muni, address_rest: sp.rest, updated_at: nowIso_() };
-    if (!pref) patch.prefecture = sp.pref;
-    updateRowByPk_('applicants', r.applicant_id, patch);
-    out.fixed++;
+    var patch = { municipality: sp.muni, address_rest: sp.rest };
+    if (!pref && cP >= 0) patch.prefecture = sp.pref;
+    if (writeRow_(r, patch)) out.fixed++; else out.moved++;
   }
+  if (!dryRun && (out.fixed || out.dup_fixed)) { SpreadsheetApp.flush(); invalidateTableCache_('applicants'); }
   out.ms = Date.now() - t0;
   return out;
 }

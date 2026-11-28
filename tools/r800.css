@@ -47,3 +47,20 @@ body.r800list.r800fold #app .r614filterBottom{padding-top:10px;padding-bottom:10
 .r800track i{display:block;height:100%;border-radius:999px;background:#2563eb}
 .r800rr strong{width:56px;text-align:right;font-size:15px;color:#1e3a5f}
 .r800foot{line-height:1.6}
+
+/* 今日のピックアップ */
+.r800pick{margin-bottom:10px}
+.r800pick h2 small{font-size:12px;font-weight:700;color:#1d4ed8;background:#dbeafe;border-radius:999px;padding:2px 9px;margin-left:8px;vertical-align:middle}
+.r800todo.pick{border:1.5px solid #2563eb;background:#eff6ff;min-height:92px}
+.r800todo.pick b{color:#1d4ed8}
+.r800todo em{font-style:normal;font-size:11.5px;color:#475569;font-weight:700}
+.r800pickBtn{display:flex;align-items:center;gap:8px;width:100%;min-height:50px;margin-bottom:6px;border-radius:12px;border:1.5px solid #2563eb;background:#eff6ff;color:#1e3a8a;font-size:14px;font-weight:800;padding:6px 12px;cursor:pointer;text-align:left}
+.r800pickBtn span{flex:1;min-width:0}
+.r800pickBtn b{font-size:19px}
+.r800pickBtn b small{font-size:12px;margin-left:1px}
+.r800pickBtn em{font-style:normal;font-size:12px;font-weight:700;color:#1d4ed8;background:#fff;border-radius:999px;padding:2px 8px;white-space:nowrap}
+.r800pickBtn[aria-pressed="true"]{background:#1d4ed8;color:#fff}
+.r800pickBtn[aria-pressed="true"] em{color:#1d4ed8}
+.r800tag.pick{background:#dbeafe;color:#1e40af}
+.r800mailNote{border:1.5px solid #2563eb;background:#eff6ff}
+.r800mailNote p{margin:6px 0 8px;font-size:13px;line-height:1.6}

@@ -10,7 +10,7 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
   async function open(){
     const pg=await br.newPage();await pg.setViewport({width:390,height:844,isMobile:true,hasTouch:true});
     pg.on('dialog',d=>d.dismiss());pg.on('pageerror',e=>res.push('PAGEERR '+e.message));
-    await pg.evaluateOnNewDocument(fs.readFileSync(path.join(__dirname,'mock.js'),'utf8')+`
+    await pg.evaluateOnNewDocument((process.env.BIG?fs.readFileSync(path.join(__dirname,'mock.js'),'utf8').replace('for(var i=0;i<420;i++)','for(var i=0;i<2200;i++)').replace('k<1500','k<7000'):fs.readFileSync(path.join(__dirname,'mock.js'),'utf8'))+`
       ;window.__navs=[];try{Object.defineProperty(document,'hidden',{configurable:true,get:function(){return !!window.__hid}});Object.defineProperty(document,'visibilityState',{configurable:true,get:function(){return window.__hid?'hidden':'visible'}})}catch(e){}
       window.__hide=function(v){window.__hid=v;document.dispatchEvent(new Event('visibilitychange'))};`);
     await pg.goto('http://localhost:8766/#/list',{waitUntil:'domcontentloaded'});await sleep(6500);
@@ -60,6 +60,38 @@ const ROOT=path.join(__dirname,'..','..');const sleep=ms=>new Promise(r=>setTime
   const g=await pg.evaluate(()=>{var cs=document.querySelectorAll('#app article.card');var c=cs[1];var id=c.getAttribute('data-anchor').slice(4);var a=r6161FindApplicant_(id);a.phone="";route();c=document.querySelector('#app article[data-anchor="app:'+id+'"]');var an=c.querySelector('a[href^="sms:"]');window.__navs=[];var href0=an.getAttribute('href');an.click();return {id:id,href0:href0.slice(0,14)}});
   await sleep(700);const nav=await pg.evaluate(()=>(window.__navs[0]||'')+' | '+location.href.slice(0,40));
   A(/^sms:0\d{9,}/.test(nav)||/^sms:0\d{9,}/.test(await pg.evaluate(id=>document.querySelector('#app article[data-anchor="app:'+id+'"] a[href^="sms:"]').getAttribute('href'),g.id)),'番号が無い人: 取りに行ってから開く ['+g.href0+' → '+nav.slice(0,20)+']');
+  await pg.close();
+  // 7) 今日のピックアップ (SMS): 京都・奈良だけ・登録元は問わない・送信済みも入る・取得日が新しい順 → 近い順
+  pg=await open();await pg.evaluate(()=>{location.hash='#/'});await sleep(1500);
+  const home=await pg.evaluate(()=>({pick:!!document.querySelector('.r800pick'),txt:(document.querySelector('.r800pick')||{}).textContent||''}));
+  A(home.pick&&/SMSを送る人/.test(home.txt)&&/Gmailを送る人/.test(home.txt),'ホームに「今日のピックアップ」が出る');
+  await pg.evaluate(()=>r800View('pick'));await sleep(1800);
+  const pk=await pg.evaluate(()=>{var p=r800.pickToday();var as=p.sms.map(function(id){return r6161FindApplicant_(id)});var keys=as.map(function(a){var m=r800.matchCases(a);return m[0].acq+'|'+('00000'+Math.round(m[0].d*100)).slice(-6)});var ordered=keys.every(function(k,i){if(!i)return true;var p0=keys[i-1].split('|'),p1=k.split('|');return p0[0]>p1[0]||(p0[0]===p1[0]&&p0[1]<=p1[1])});
+    return {n:p.sms.length,prefs:as.every(function(a){return a.prefecture==='京都府'||a.prefecture==='奈良県'}),cos:as.map(function(a){return a.source_company}).filter(function(v,i,x){return x.indexOf(v)===i}).length,sent:as.filter(function(a){return a.sms_sent}).length,ordered:ordered,cards:document.querySelectorAll('#app article.card').length,tag:(document.querySelector('#app article.card .r800tag.pick')||{}).textContent||'',first:document.querySelector('#app article.card').getAttribute('data-anchor').slice(4)===p.sms[0],max:Math.max.apply(null,as.map(function(a){return r800.matchCases(a).length}))}});
+  A(pk.n>0&&pk.n<=150&&pk.prefs,'ピックアップは京都・奈良だけ・150人まで ('+pk.n+'人)');
+  A(pk.cos>=2,'登録元は問わない ('+pk.cos+'社)');A(pk.sent>0,'送信済みの人も入る ('+pk.sent+'人)');
+  A(pk.ordered&&pk.first,'BOの取得日が新しい順 → 近い順に並ぶ');A(/新着BO .*取得・[\d.]+km/.test(pk.tag),'カードに理由が出る ['+pk.tag+']');A(pk.max<=7,'1人につき案件は最大7件');
+  const fc=await pg.evaluate(()=>{var p=r800.pickToday();var a=r6161FindApplicant_(p.sms[0]);var m=r800.matchCases(a).map(function(x){return x.id});return {same:JSON.stringify(r622FiveCases_(a))===JSON.stringify(m),n:m.length}});
+  A(fc.same&&fc.n>=5,'フォームに載せる案件も同じ決め方 ('+fc.n+'件)');
+  const again=await pg.evaluate(()=>{var p1=r800.pickToday().sms.join(',');var a=r6161FindApplicant_(r800.pickToday().sms[0]);a.sms_sent=true;a.sms_last_sent_at=new Date().toISOString();return p1===r800.pickToday().sms.join(',')});
+  A(again,'その日のうちは顔ぶれが変わらない');
+  const nextDay=await pg.evaluate(()=>{var st=JSON.parse(localStorage.getItem('r800pick'));var old=st.sms.slice();st.day='2026-01-01';var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);st.day=y;localStorage.setItem('r800pick',JSON.stringify(st));location.reload();return old});
+  await sleep(7500);
+  const nd=await pg.evaluate(old=>{var p=r800.pickToday();return {n:p?p.sms.length:-1,overlap:p?p.sms.filter(function(id){return old.indexOf(id)>=0}).length:-1}},nextDay);
+  A(nd.n>=0&&nd.overlap===0,'次の日は、前の日に選んだ人を外して選び直す (重なり '+nd.overlap+'人・'+nd.n+'人)');
+  // 8) 今日のGmail: 条件を入れてGmail送信の画面へ。送るのは確認してから
+  await pg.evaluate(()=>{window.__mailReqs=[];r800Mail()});await sleep(2500);
+  const ml=await pg.evaluate(()=>{var w=r800.mailWindow();var q=(window.__mailReqs||[]).filter(function(r){return r.action==='mailPreviewTargets'}).pop()||{};var f=q.filter||{};return {hash:location.hash,note:!!document.getElementById('r800MailNote'),prefs:(f.prefectures||[]).join(','),fs:f.has_fs_history,from:f.applied_from,to:f.applied_to,top:q.top_n,w:w,created:(window.__mailReqs||[]).filter(function(r){return r.action==='mailCreateDelivery'}).length}});
+  A(ml.hash.indexOf('#/mail')===0&&ml.note,'Gmail送信の画面が開き、条件の説明が出る');
+  A(ml.prefs==='京都府,奈良県'&&ml.fs===true,'宛先は京都・奈良のファーストスタッフィング登録者だけ');
+  A(ml.from===ml.w.from&&ml.to===ml.w.to&&ml.top===ml.w.n,'今日の範囲 ('+ml.from+'〜'+ml.to+'・'+ml.top+'人) で対象を確認');
+  A(ml.created===0,'開いただけでは送信しない');
+  const rot=await pg.evaluate(()=>{var w=r800.mailWindow();return apiCall({action:'mailCreateDelivery',subject:'x',filter:{applied_from:w.from,applied_to:w.to}}).then(function(){var s=JSON.parse(localStorage.getItem('r800mail'));var sent=s.sent,ratio=s.ratio;var y=new Date(Date.now()+9*36e5-864e5).toISOString().slice(0,10);s.day=y;localStorage.setItem('r800mail',JSON.stringify(s));var w2=r800.mailWindow();return {sent:sent,ratio:ratio,next:w.next,to2:w2.to,from1:w.from,n2:w2.n}})});
+  A(rot.sent===true,'送信したら、その日の分は送信済みになる');
+  A(rot.next?(rot.to2===rot.next&&rot.to2<rot.from1):(rot.to2>=rot.from1),'次の日は続きの人から (前日 〜'+rot.from1+' → 次 '+rot.to2+'〜・'+rot.n2+'人)');
+  await pg.evaluate(()=>r800MailOff());await sleep(600);
+  const off=await pg.evaluate(()=>({note:!!document.getElementById('r800MailNote'),f:mailFilterToServer(MF)}));
+  A(!off.note&&!off.f.applied_to,'「この条件を外す」で元に戻る');
   await pg.close();
   console.log(res.join('\n'));await br.close();srv.close();process.exit(res.some(r=>!/^OK/.test(r))?1:0);
 })().catch(e=>{console.error(e);process.exit(1)});
